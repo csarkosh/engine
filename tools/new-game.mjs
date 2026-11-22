@@ -251,7 +251,8 @@ export function newGame({ target, name, id, engineRoot }) {
   const origin = devOrigin(readFileSync(join(emptyGame, 'vite.config.ts'), 'utf8'));
   out.set('README.md', readme({ name, version, origin }));
   out.set('game.json', json({
-    app: `game-${id}`,
+    // The app's id as an admin host lists it: `game-<id>`, and the id itself where it already begins so.
+    app: id.startsWith('game-') ? id : `game-${id}`,
     telemetryDataset: `${id.replace(/-/g, '_')}_telemetry`,
     telemetryBucket: `${id}-telemetry`,
     allowedOrigins: [origin],

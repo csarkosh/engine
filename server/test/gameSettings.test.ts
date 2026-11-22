@@ -58,7 +58,7 @@ describe("the settings a new game is given", () => {
     const run = spawnSync(process.execPath, [script, target, "--name", "Game Two"], { encoding: "utf8" });
     expect(run.status, run.stderr).toBe(0);
     const settings = parseGameSettings(readFileSync(join(target, "game.json"), "utf8"), "game.json");
-    expect(settings).toEqual({ app: "game-game-two", telemetryDataset: "game_two_telemetry", telemetryBucket: "game-two-telemetry", allowedOrigins: ["http://localhost:5174"] });
+    expect(settings).toEqual({ app: "game-two", telemetryDataset: "game_two_telemetry", telemetryBucket: "game-two-telemetry", allowedOrigins: ["http://localhost:5174"] });
   });
 });
 

@@ -67,7 +67,7 @@ describe('a new game made from the empty game', () => {
   it('has a server for development: settings under the game\'s id, accepted by the server\'s rules, and the files of its image', () => {
     const mine = json(ENGINE, 'package.json');
     const settings = json(target, 'game.json');
-    expect(settings).toEqual({ app: 'game-game-two', telemetryDataset: 'game_two_telemetry', telemetryBucket: 'game-two-telemetry', allowedOrigins: ['http://localhost:5174'] });
+    expect(settings).toEqual({ app: 'game-two', telemetryDataset: 'game_two_telemetry', telemetryBucket: 'game-two-telemetry', allowedOrigins: ['http://localhost:5174'] });
     // The server's own rules (server/src/gameSettings.ts), held here as the tools suite cannot import TypeScript.
     expect(settings.app).not.toBe('');
     expect(settings.telemetryDataset).toMatch(/^[A-Za-z0-9_-]+$/);
@@ -222,5 +222,17 @@ describe('the command line', () => {
     expect(() => parseArgs(['out'])).toThrow(/usage/);
     expect(() => parseArgs(['out', '--name', 'x', '--force'])).toThrow(/unknown option --force/);
     expect(() => parseArgs(['out', '--name'])).toThrow(/--name needs a value/);
+  });
+  it("names the app game-<id>, and by the id alone where the id already begins so", async () => {
+    const { mkdtempSync, readFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { newGame: make } = await import('../../new-game.mjs');
+    const engineRoot = new URL('../../../', import.meta.url).pathname;
+    for (const [id, app] of [['harbor', 'game-harbor'], ['game-two', 'game-two']]) {
+      const target = join(mkdtempSync(join(tmpdir(), 'new-game-app-')), 'made');
+      make({ target, name: 'A Game', id, engineRoot });
+      expect(JSON.parse(readFileSync(join(target, 'game.json'), 'utf8')).app, id).toBe(app);
+    }
   });
 });
