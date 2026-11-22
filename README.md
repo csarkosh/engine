@@ -85,8 +85,8 @@ The tools read two:
 
 - `ENGINE_GATE` names a runner the push gate (`tools/gate.mjs`) hands the checkout and its
   arguments to, when the gate is not run in place.
-- `ENGINE_LAB` names the disk the frame-budget rig scripts write large output to, by default
-  `/Volumes/CyrusExtSSD/dayhike-lab`.
+- `ENGINE_LAB` names the folder the frame-budget rig scripts write large output to; the scripts
+  hold a default and refuse to run where it is not there.
 
 ## Cutting a release
 
