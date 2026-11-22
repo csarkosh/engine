@@ -4,7 +4,7 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { limitOffenders, scanTestSource, wallClockOffenders, type ScannedFile } from "../testing/testCalls.js";
-import { PAGE_ENTRIES, PURE_ENTRIES, TERRAIN_ENTRIES } from "../testing/pageEntries.js";
+import { babylonFreeModules, engineModules, pureModules, reaches, terrainModules, valueImports } from "../testing/moduleFacts.js";
 
 /**
  * The engine's own rules of layout: what its modules may import, what its pages and shell may name, and the
@@ -441,34 +441,23 @@ describe("layer boundaries", () => {
   it("registers Day Hike's world in every thread that asks for one: the page, the admin page and each worker that reaches the terrain reach the registration: the engine's half", () => {
     // The engine's terrain registers nothing of its own, so a thread that reaches it without a game's registration would
     // throw at its first world. None of the engine's own workers reaches it. A game's thread that names one of
-    // `TERRAIN_ENTRIES` reaches it, and the game's half holds that each such thread reaches the game's registration.
-    const loads = (file: string): string[] => {
-      const text = stripComments(readFileSync(file, "utf8"));
-      return [
-        ...[...text.matchAll(/^\s*(?:import|export)\s+(?!type\s)(?:[^"'();]*?\s+from\s+)?["']([^"'?]+)["']/gm)].map((m) => m[1] as string),
-        ...[...text.matchAll(/\bimport\(\s*["']([^"'?]+)["']\s*\)/g)].map((m) => m[1] as string),
-      ];
-    };
-    const reach = (entry: string): Set<string> => {
-      const seen = new Set<string>();
-      const stack = [entry];
-      while (stack.length > 0) {
-        const file = stack.pop() as string;
-        if (seen.has(file) || !existsSync(file)) continue;
-        seen.add(file);
-        for (const spec of loads(file)) {
-          const next = followed(file, spec);
-          if (next !== null) stack.push(next);
-        }
-      }
-      return seen;
-    };
-    const entries = sourceFiles(SRC).filter((file) => file.endsWith(".worker.ts"));
-    expect(entries.length).toBeGreaterThan(2);
-    const terrain = at("sim", "terrain.ts");
-    expect(entries.filter((entry) => reach(entry).has(terrain)).map(logical)).toEqual([]);
-    // The modules a game's page names that load the terrain are exactly the list the game's half reads.
-    expect(PAGE_ENTRIES.filter((entry) => reach(at(`${entry}.ts`)).has(terrain))).toEqual([...TERRAIN_ENTRIES]);
+    // `terrainModules()` reaches it, and the game's half holds that each such thread reaches the game's registration.
+    const workers = engineModules().filter((module) => module.endsWith(".worker"));
+    expect(workers.length).toBeGreaterThan(2);
+    expect(workers.filter((worker) => reaches(worker).has("sim/terrain"))).toEqual([]);
+    // The modules that load the terrain are computed from the engine's source; these are known ones and known others.
+    const terrain = terrainModules();
+    for (const member of ["sim/terrain", "sim/tick", "sim/movement", "game/worldWork", "game/lite/renderer", "net/host", "net/client", "shell"]) {
+      expect(terrain, member).toContain(member);
+    }
+    for (const other of ["sim/field", "sim/core", "sim/constants", "net/wire", "game/colour", "game/weather", "game/ambientAudio"]) {
+      expect(terrain, other).not.toContain(other);
+    }
+    expect(terrain.length).toBeGreaterThan(100);
+    // Each one but the terrain itself loads another that loads it: a module is in the set by an import, not by name.
+    for (const module of terrain.filter((m) => m !== "sim/terrain")) {
+      expect(valueImports(module).some((next) => terrain.includes(next)), module).toBe(true);
+    }
   });
 
   it("registers Day Hike's shipped files as the page starts, and nowhere else: the engine's half", () => {
@@ -516,10 +505,10 @@ describe("layer boundaries", () => {
   });
 
   it("loads no Babylon.js with the page: nothing the page's entry (main.ts), the engine's shell (shell.ts) and the game's page (hikePageGame.ts) import for themselves reaches it, by an import or a dynamic one: the engine's half", () => {
-    // The shell's own imports and the modules a game's page reaches (`PAGE_ENTRIES`: the ones the game's entry, its page and its hike name), each
+    // The shell's own imports and every module of the engine (`engineModules()`: each is one a game's page may reach), each
     // followed through everything it loads, static or dynamic, name no module of Babylon.js (the hike, which is the
-    // page that runs a session, `app.ts`, has its own test below and is left out here). Babylon Lite, which the hike
-    // is drawn with, is another library.
+    // page that runs a session, `app.ts`, has its own test below, and is walked here too, as one more module). Babylon
+    // Lite, which the hike is drawn with, is another library.
     const code = (file: string): string => stripComments(readFileSync(file, "utf8"));
     const loads = (file: string): string[] => [
       ...[...code(file).matchAll(/^\s*(?:import|export)\s+(?!type\s)(?:[^"'();]*?\s+from\s+)?["']([^"']+)["']/gm)].map((m) => m[1] as string),
@@ -533,7 +522,7 @@ describe("layer boundaries", () => {
     const seen = new Map<string, string | null>();
     const stack: [string, string | null][] = [
       ...ofShell.filter((spec) => spec !== "./app.js").map((spec): [string, null] => [followed(shellFile, spec) as string, null]),
-      ...PAGE_ENTRIES.filter((entry) => entry !== "shell").map((entry): [string, null] => [at(`${entry}.ts`), null]),
+      ...engineModules().filter((entry) => entry !== "shell").map((entry): [string, null] => [at(`${entry}.ts`), null]),
     ];
     const bad: string[] = [];
     while (stack.length > 0) {
@@ -552,8 +541,8 @@ describe("layer boundaries", () => {
         if (next !== null) stack.push([next, file]);
       }
     }
-    // The renderer on Babylon Lite and everything it is made with are among them: this is the page's whole graph but the hike's.
-    // (The game's half holds its own modules of it; the two together are over three hundred.)
+    // The renderer on Babylon Lite and everything it is made with are among them: this is every module of the engine.
+    // (The game's half holds its own modules of it, on top of these.)
     expect(seen.size).toBeGreaterThan(250);
     expect([...seen.keys()].map((file) => logical(file))).toContain("game/lite/renderer.ts");
     expect(bad).toEqual([]);
@@ -647,8 +636,8 @@ describe("layer boundaries", () => {
       }
       return seen;
     };
-    // What a game's page reaches of the engine (`PAGE_ENTRIES`) loads no module of Babylon.js, with the hike under it or without.
-    expect([...graph(PAGE_ENTRIES.map((entry) => at(`${entry}.ts`)))].filter((f) => f.includes("@babylonjs"))).toEqual([]);
+    // What a game's page may reach of the engine (every module, `engineModules()`) loads no module of Babylon.js, with the hike under it or without.
+    expect([...graph(engineModules().map((entry) => at(`${entry}.ts`)))].filter((f) => f.includes("@babylonjs"))).toEqual([]);
   });
 
   /**
@@ -897,8 +886,8 @@ describe("layer boundaries", () => {
       "hollowLook.ts", "lampParams.ts", "skinParams.ts", "creatureAssets.ts", "wingParams.ts",
       "wildlifeScene.ts", "wildlifeField.ts", "wildlifeBehaviour.ts", "wildlifeDirector.ts", "groundTilt.ts", "skinInstances.ts", "wildlifeInputs.ts",
     ];
-    // And what Day Hike's own modules of this kind (`characterAssets.ts`, `entityPoses.ts`, `droppedCap.ts`) load of the engine: the modules of `PURE_ENTRIES`.
-    const stack = [...ENGINE_FREE.map((name) => at("game", name)), ...PURE_ENTRIES.map((entry) => at(`${entry}.ts`))];
+    // And what Day Hike's own modules of this kind (`characterAssets.ts`, `entityPoses.ts`, `droppedCap.ts`) load of the engine: the modules of `pureModules()`.
+    const stack = [...ENGINE_FREE.map((name) => at("game", name)), ...pureModules().map((entry) => at(`${entry}.ts`))];
     for (const file of stack) expect(existsSync(file), file).toBe(true);
     const { seen, bad } = babylonIn(stack);
     expect(seen.size).toBeGreaterThan(ENGINE_FREE.length);
@@ -953,13 +942,14 @@ describe("layer boundaries", () => {
 
   /**
    * What a scene and an ending are played with is computed by Day Hike's own modules that load no Babylon
-   * (the game's half of this rule). What they load of the engine is the modules of `PURE_ENTRIES`, which load none either.
+   * (the game's half of this rule). What they load of the engine is the modules of `pureModules()`, which load none either.
    */
   it("what the scenes and the endings are played with is computed without loading Babylon, whatever it imports: the engine's half", () => {
-    const stack = PURE_ENTRIES.map((entry) => at(`${entry}.ts`));
+    const stack = pureModules().map((entry) => at(`${entry}.ts`));
     for (const file of stack) expect(existsSync(file), file).toBe(true);
     const { seen, bad } = babylonIn(stack);
-    expect(seen.size).toBeGreaterThan(PURE_ENTRIES.length);
+    // The modules that load no Babylon load only such modules: walking from them all finds no other.
+    expect(seen.size).toBe(pureModules().length);
     expect(bad).toEqual([]);
   });
 
@@ -1103,9 +1093,9 @@ describe("layer boundaries", () => {
   it("draws the hike with Babylon Lite alone: nothing under game/lite/ loads Babylon.js, whatever it imports: the engine's half", () => {
     const own = sourceFiles(at("game", "lite"));
     expect(own.length).toBeGreaterThan(5);
-    // And what a game's own modules under `game/lite/` load of the engine: the modules of `PAGE_ENTRIES`.
+    // And what a game's own modules under `game/lite/` load of the engine: any module of it (`engineModules()`).
     const seen = new Set<string>();
-    const stack = [...own, ...PAGE_ENTRIES.map((entry) => at(`${entry}.ts`))];
+    const stack = [...own, ...engineModules().map((entry) => at(`${entry}.ts`))];
     const bad: string[] = [];
     const lite: string[] = [];
     while (stack.length > 0) {
@@ -1206,9 +1196,9 @@ describe("layer boundaries", () => {
       return { seen: from.size, babylon, lite: [...new Set(lite)] };
     };
     // A hike is the page's half (`app.ts`) and the game it is handed, which the page names by type alone: the walk
-    // starts from both, the game's by the modules it names (`PAGE_ENTRIES`).
+    // starts from both, the game's by the modules it may name (every module, `engineModules()`).
     const page = reach([at("app.ts")]);
-    const hike = reach([at("app.ts"), ...PAGE_ENTRIES.map((entry) => at(`${entry}.ts`))]);
+    const hike = reach([at("app.ts"), ...engineModules().map((entry) => at(`${entry}.ts`))]);
     // Guards against the guard: the walk goes through the whole hike and finds the engine it does load.
     expect(hike.seen).toBeGreaterThan(250);
     expect(page.seen).toBeGreaterThan(50);
@@ -1284,6 +1274,69 @@ describe("layer boundaries", () => {
  * not written out in a TypeScript module. What stays in a module is what code makes at run time: a number
  * formatted in, lines written by a loop, a binding made from a layout, and the choice between pieces.
  */
+describe("the engine's module facts, which a game's own architecture test reads", () => {
+  it("lists every module under src/ by its path, sorted and once: the declaration files are none", () => {
+    const modules = engineModules();
+    expect(modules.length).toBeGreaterThan(300);
+    expect(modules).toEqual([...modules].sort());
+    expect(new Set(modules).size).toBe(modules.length);
+    for (const module of modules) expect(existsSync(at(`${module}.ts`)), module).toBe(true);
+    expect(modules.filter((module) => module.endsWith(".d"))).toEqual([]);
+    // Read another way: the files of src/ that are not declarations.
+    expect(
+      sourceFiles(SRC)
+        .filter((file) => !file.endsWith(".d.ts"))
+        .map((file) => logical(file).replace(/\.ts$/, "").split("\\").join("/"))
+        .sort(),
+    ).toEqual(modules);
+    expect(modules).toContain("game/engineCredits");
+    expect(modules).toContain("game/lite/renderer");
+    expect(modules).not.toContain("env");
+  });
+
+  it("holds the modules that load no Babylon at all inside those that load no Babylon.js, inside all of them", () => {
+    const all = new Set(engineModules());
+    const free = new Set(babylonFreeModules());
+    const pure = pureModules();
+    expect(pure.length).toBeGreaterThan(100);
+    for (const module of pure) expect(free.has(module), module).toBe(true);
+    for (const module of free) expect(all.has(module), module).toBe(true);
+    expect(pure.length).toBeLessThan(free.size);
+    // The engine draws with Babylon Lite alone, so no module of it loads Babylon.js.
+    expect(free.size).toBe(all.size);
+    expect([...pure]).toEqual([...pure].sort());
+  });
+
+  it("tells which modules load Babylon Lite and which load nothing of Babylon", () => {
+    expect(pureModules()).not.toContain("game/lite/renderer");
+    expect(babylonFreeModules()).toContain("game/lite/renderer");
+    expect(pureModules()).toContain("sim/field");
+    expect(babylonFreeModules()).toContain("shell");
+    expect(pureModules()).toContain("game/weather");
+    // The shell holds the renderer by a type and is handed one by the game, so it loads no Babylon at all either.
+    expect(pureModules()).toContain("shell");
+    expect(pureModules()).not.toContain("game/lite/forestModels");
+  });
+
+  it("holds every module of sim/ and net/ to loading no Babylon at all: the layering rule, seen from the facts", () => {
+    const layered = engineModules().filter((module) => module.startsWith("sim/") || module.startsWith("net/"));
+    expect(layered.length).toBeGreaterThan(50);
+    const pure = new Set(pureModules());
+    expect(layered.filter((module) => !pure.has(module))).toEqual([]);
+  });
+
+  it("reads a module's imports by value only, and its graph with the module in it", () => {
+    // A type's import is erased and loads nothing: the swap loads the identity alone.
+    expect(valueImports("game/rendererSwap")).toEqual(["identity"]);
+    expect(valueImports("identity")).toEqual([]);
+    expect(valueImports("game/rendererTypes")).toEqual([]);
+    expect([...reaches("game/rendererSwap")].sort()).toEqual(["game/rendererSwap", "identity"]);
+    expect(reaches("sim/terrain").has("sim/terrain")).toBe(true);
+    expect(reaches("sim/terrain")).toBe(reaches("sim/terrain"));
+    expect(() => valueImports("game/noSuchModule")).toThrow(/game\/noSuchModule/);
+  });
+});
+
 describe("the engine's WGSL is kept in files", () => {
   /** What WGSL is told by: a stage's entry point, a binding, a built-in, a sampling call, a function's return type, the tag. */
   const TOKENS: readonly RegExp[] = [

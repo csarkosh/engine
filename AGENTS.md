@@ -13,6 +13,9 @@ stable API. See `README.md` for what it is and how a game takes it.
 - `rust/`: the field kernel's crate. Its built module is committed as `src/sim/kernel/fieldWasm.ts`
   and is written only by `npm run kernel:build` (needs rustup); `npm run kernel:check` checks it.
 - `test/`: the engine's tests. `testing/`: helpers a game's tests import.
+  `testing/moduleFacts.ts` computes, from `src/`, the facts about the engine's modules a game's architecture
+  test holds its imports to (which exist, which reach the terrain, which load no Babylon). `testing/pageEntries.ts`
+  keeps the old three lists, now computed from it, for games written against 0.1.x.
 - `tools/`: plain Node scripts a game runs from its own root, and their tests in `tools/**/test/`.
   `tools/gate.mjs` and `tools/gate/plan.mjs` are a game's push gate, not this repository's.
   `tools/new-game.mjs` is run from this checkout, not a game's: it copies `empty/` into a new game under
