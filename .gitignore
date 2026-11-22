@@ -1,0 +1,26 @@
+node_modules/
+dist/
+# The empty game's build.
+empty/dist/
+# The Rust crate's build output (tools/rust/build.mjs builds into it).
+rust/field/target/
+target/
+.DS_Store
+*.log
+.env
+.env.local
+coverage/
+.vite/
+.vitest/
+
+# Packed tarballs: a release attaches one, the tree never holds it.
+*.tgz
+
+# Git worktrees for isolated agent runs: a whole second checkout of this repository. ESLint's flat
+# config does not read .gitignore, so eslint.config.js ignores the same path separately.
+.claude/worktrees/
+
+# Editor files.
+.idea/
+.vscode/
+*.swp

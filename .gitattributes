@@ -1,0 +1,29 @@
+# Shipped binaries go through Git LFS: models, ground textures and stills, wildlife calls, the
+# vendored KTX2 decoder's wasm, and the images and icons the engine ships. A packed tarball
+# must hold them whole, so `npm pack` runs on a checkout where they are real files.
+*.glb  filter=lfs diff=lfs merge=lfs -text
+*.webp filter=lfs diff=lfs merge=lfs -text
+*.ktx2 filter=lfs diff=lfs merge=lfs -text
+*.mp3  filter=lfs diff=lfs merge=lfs -text
+*.mp4  filter=lfs diff=lfs merge=lfs -text
+*.wasm filter=lfs diff=lfs merge=lfs -text
+*.png  filter=lfs diff=lfs merge=lfs -text
+*.jpg  filter=lfs diff=lfs merge=lfs -text
+*.ico  filter=lfs diff=lfs merge=lfs -text
+
+*.json text eol=lf
+*.md   text eol=lf
+*.ts   text eol=lf
+*.mjs  text eol=lf
+
+# Shader text: the WGSL the engine compiles, and the GLSL recorded for its tests
+# to read, which they compare to the character: a checkout keeps their line endings.
+*.glsl text eol=lf
+*.wgsl text eol=lf
+
+# The simulation's field kernel as WebAssembly, in base64 (tools/rust/build.mjs writes it from rust/field):
+# generated, kept out of the host's language statistics, its diffs folded.
+src/sim/kernel/fieldWasm.ts linguist-generated=true
+*.rs   text eol=lf
+*.toml text eol=lf
+*.lock text eol=lf
