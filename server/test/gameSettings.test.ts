@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,6 +34,18 @@ describe("Day Hike's settings file", () => {
       "https://admin.csarko.sh",
       "http://localhost:8788",
     ]);
+  });
+});
+
+describe("the example settings", () => {
+  const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
+  it("are good settings for a game of nothing but localhost:5174", () => {
+    const settings = parseGameSettings(read("../game.example.json"), "game.example.json");
+    expect(settings.app).toBe("game-example");
+    expect(settings.allowedOrigins).toEqual(["http://localhost:5174"]);
+  });
+  it("are the same file the example image carries", () => {
+    expect(JSON.parse(read("../example/game.json"))).toEqual(JSON.parse(read("../game.example.json")));
   });
 });
 

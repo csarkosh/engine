@@ -1,0 +1,6 @@
+{
+  "app": "game-example",
+  "telemetryDataset": "example_telemetry",
+  "telemetryBucket": "example-telemetry",
+  "allowedOrigins": ["http://localhost:5174"]
+}
