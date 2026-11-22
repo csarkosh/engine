@@ -1,7 +1,8 @@
 name: test
 
 # The same gates as `npm run typecheck && npm run lint && npm run test:tools && npm run test:empty
-# && npm test`, split into jobs so each one reports on its own, and a build of the empty game. The
+# && npm run test:server && npm test`, split into jobs so each one reports on its own, a build of
+# the empty game, and a pack of the server's tarball. The
 # commands are package.json's, so a local run and this one test the same thing, with two
 # differences, both because the runners are shared machines slower than a development one: every
 # test time limit is scaled (TEST_TIME_SCALE), and the tests tagged `wall-clock`, whose assertion
@@ -172,6 +173,32 @@ jobs:
       - run: npm ci
       - run: npx vitest run '--tags-filter=!wall-clock'
 
+  # The server package (`server/`, released as `csarkosh-engine-server-<version>.tgz`): its tests,
+  # and a pack of its tarball, which compiles it first (`prepack`), so a build that does not compile
+  # fails here and not at a release. It reads no LFS object and imports nothing of the engine.
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: false
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - id: install
+        run: npm ci
+      - run: npm run test:server
+      # Packed even where the tests failed, so one run reports both.
+      - name: pack the server tarball
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: server
+        run: |
+          npm pack --pack-destination "$RUNNER_TEMP"
+          tar -tzf "$RUNNER_TEMP"/csarkosh-engine-server-*.tgz
+
   # The empty game, built as a game builds its page. The suites build only fixtures; this is the
   # one place the real build runs. It imports the engine's shipped models and textures, so it
   # restores them as the engine job does.
@@ -225,7 +252,7 @@ jobs:
   # failure to chase.
   gates:
     if: always()
-    needs: [lfs, static, tools-and-empty, engine, build]
+    needs: [lfs, static, tools-and-empty, server, engine, build]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:

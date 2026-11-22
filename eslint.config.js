@@ -10,10 +10,27 @@ const NET = [
 ];
 const ENGINE = [
   { group: ["@csarkosh/engine", "@csarkosh/engine/**"], message: "Inside the engine, name a module by its relative path." },
+  ...serverOff(),
 ];
 const GAME_ON_ENGINE = [
   { group: ["../../src/**", "../../../src/**"], message: "The empty game names the engine by its package, as a game does." },
+  ...serverOff(),
 ];
+// The server (`server/`) is a package of its own, released as its own tarball: the engine and the
+// empty game never import it, by a path or by its package name.
+function serverOff() {
+  return [
+    {
+      group: ["**/server/**", "@csarkosh/engine-server", "@csarkosh/engine-server/**"],
+      message: "The server is a package of its own; the engine and the empty game import nothing of it.",
+    },
+  ];
+}
+// The server imports nothing of the engine: it ships as a tarball without it. Its files are two
+// folders deep (`server/src`, `server/test`), so `../../` leaves the package; its config files
+// stand in `server/`, where `../` does.
+const SERVER_LEAVES = "The server is a package of its own and imports nothing of the engine (src/, testing/, vite/, tools/ ...), by a path or by its package name.";
+const SERVER_NAMES = ["@csarkosh/engine", "@csarkosh/engine/**"];
 
 export default tseslint.config(
   // `.claude/worktrees/` holds whole second checkouts of this repository. Each carries its own
@@ -28,8 +45,18 @@ export default tseslint.config(
   // matched twice takes the last rule whole, so the engine's layers below repeat it.
   {
     files: ["**/*.ts"],
-    ignores: ["empty/**"],
+    ignores: ["empty/**", "server/**"],
     rules: { "no-restricted-imports": ["error", { patterns: [...ENGINE] }] },
+  },
+  // The server is linted by the general rules above (typescript-eslint's) and by this one alone
+  // of the engine's rules of layout.
+  {
+    files: ["server/src/**/*.ts", "server/test/**/*.ts"],
+    rules: { "no-restricted-imports": ["error", { patterns: [{ group: ["../../**", ...SERVER_NAMES], message: SERVER_LEAVES }] }] },
+  },
+  {
+    files: ["server/*.ts"],
+    rules: { "no-restricted-imports": ["error", { patterns: [{ group: ["../**", ...SERVER_NAMES], message: SERVER_LEAVES }] }] },
   },
   // The empty game lives in the engine's repository but is a game: it names the engine by the
   // package, as any game does, so that a copy of it is a new game's start; it never reaches into
