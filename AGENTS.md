@@ -24,6 +24,9 @@ stable API. See `README.md` for what it is and how a game takes it.
 - `vite/`: the preset. `empty/`: the empty game, which names the engine by the package name
   (`@csarkosh/engine/...`), resolved here through `exports`; ESLint holds that it never uses a relative
   path into `../src`.
+- `server/`: the game server, a workspace and its own package, `@csarkosh/engine-server`, released as a second
+  tarball of compiled JavaScript. It imports nothing of the engine and the engine nothing of it (ESLint holds
+  it); a game gives it a `game.json` (`server/README.md`, `server/example/`). `npm run test:server`.
 - `CREDITS.md`: credits of the works of others the engine ships; a test pins it to the shipped files.
 
 Inside the engine, name a module by its relative path, never as `@csarkosh/engine`.
@@ -31,7 +34,7 @@ Inside the engine, name a module by its relative path, never as `@csarkosh/engin
 ## Scripts
 
 `npm run typecheck`, `npm run lint`, `npm test` (the engine's suite), `npm run test:tools`,
-`npm run test:empty`, `npm run dev:empty`, `npm run build:empty`, `npm run new-game -- <folder> --name <name>`,
+`npm run test:empty`, `npm run test:server`, `npm run dev:empty`, `npm run build:empty`, `npm run new-game -- <folder> --name <name>`,
 `npm run kernel:check`.
 
 ## Rules

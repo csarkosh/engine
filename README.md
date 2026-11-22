@@ -24,6 +24,7 @@ It ships as TypeScript source, not as compiled code. The game's own Vite build c
 | `testing/` | Test helpers a game's tests import as `@csarkosh/engine/testing/<name>`. |
 | `tools/` | Plain Node scripts a game runs from its own root: the push gate, the frame-budget harness, the README stills, the build comparison, the kernel's build and the KTX2 vendoring. Their tests stand in `tools/**/test/`. |
 | `vite/` | The Vite preset a game's build starts from. |
+| `server/` | The game server, its own package `@csarkosh/engine-server`: the signaling server that introduces WebRTC peers in a room, and the telemetry route, in plain Node. Released as its own tarball, compiled, apart from the engine's. A workspace of this repository. |
 | `empty/` | The empty game: a game of nothing on the engine alone, with its own `index.html`, Vite config and tests. The smallest example of a game. |
 
 ## Taking it for a game
@@ -48,6 +49,19 @@ import { enginePreset } from "@csarkosh/engine/vite/preset";
 A game hands the shell one page definition and one identity (`startShell` in `src/shell.ts`). Read
 `empty/` for the least a game is: `empty/src/main.ts` starts the shell, `empty/src/page.ts` is its
 page definition, and `empty/vite.config.ts` is its build.
+
+A game's server is a package of the engine's, released as a second tarball beside the engine's, so
+that running a server needs none of the engine's 116 MB of game files:
+
+```json
+"@csarkosh/engine-server": "https://github.com/csarkosh/engine/releases/download/v0.2.0/csarkosh-engine-server-0.2.0.tgz"
+```
+
+It holds compiled JavaScript and is told which game it serves by the game's own `game.json`. A game's
+server is that file, its saved telemetry queries if it has an admin page, a small `package.json` that
+depends on the tarball, and a Dockerfile that installs it and runs it. `server/README.md` says what
+the server does, which environment variables it reads and what `game.json` holds, and `server/example/`
+is the Dockerfile and the files of such an image.
 
 ## The empty game
 
@@ -74,11 +88,12 @@ In the new folder, the first install is `npm install --legacy-peer-deps`: with n
 
 | Script | What it does |
 | --- | --- |
-| `npm run typecheck` | `tsc` over the engine and over the empty game. |
-| `npm run lint` | ESLint, including the rules of layout between `sim/`, `net/` and `game/`. |
+| `npm run typecheck` | `tsc` over the engine, over the empty game and over the server. |
+| `npm run lint` | ESLint, including the rules of layout between `sim/`, `net/` and `game/`, and the one that keeps `server/` and the engine from importing each other. |
 | `npm test` | The engine's own tests (`test/`). |
 | `npm run test:tools` | The tools' tests. |
 | `npm run test:empty` | The empty game's tests. |
+| `npm run test:server` | The server's tests (`server/test/`). |
 | `npm run dev:empty` | The empty game on a dev server. |
 | `npm run build:empty` | The empty game built into `empty/dist/`. |
 | `npm run new-game` | Starts a new game from the empty game (see "Starting a game"). |
@@ -102,11 +117,15 @@ The tools read two:
 
 ## Cutting a release
 
-1. Set `version` in `package.json` and commit it.
+1. Set `version` in `package.json` and in `server/package.json` (they are the same number) and commit
+   them.
 2. Tag the commit `v<version>`.
 3. On a checkout where the Git LFS files are whole (`git lfs ls-files` shows `*`, not `-`), run
    `npm pack`. It writes `csarkosh-engine-<version>.tgz`, with the shipped files inside.
-4. Attach the tarball to a release of that tag.
+4. In `server/`, run `npm pack`. It compiles the server and writes
+   `csarkosh-engine-server-<version>.tgz`, which holds the compiled code and its README and none of
+   the engine's files.
+5. Attach both tarballs to a release of that tag.
 
 ## Licence
 
