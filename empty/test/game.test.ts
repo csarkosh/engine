@@ -6,6 +6,7 @@ import { noGameSound } from "@csarkosh/engine/game/ambientAudio";
 import { isMode } from "@csarkosh/engine/game/modeList";
 import { NO_ACTIONS, type InputCommand } from "@csarkosh/engine/sim/core";
 import { turnedAwayModel } from "@csarkosh/engine/game/turnedAwayModel";
+import { engineCatalog } from "@csarkosh/engine/testing/engineFiles";
 import { createForest } from "@csarkosh/engine/sim/forest";
 import { parseLevel } from "@csarkosh/engine/sim/level";
 import { EMPTY_GAME, WALK_MODES, WALK_SIDE } from "../src/game.js";
@@ -128,7 +129,7 @@ describe("the empty game's folder", () => {
     expect(code("assets.ts")).not.toMatch(/["']\.\.\//);
     // Nothing of Day Hike's own is asked for: no ranger, no car, no sign, no voice, no film. The engine's catalog is
     // what is registered, so its ids are what is held to that.
-    const catalog = JSON.parse(readFileSync(fileURLToPath(new URL("../../assets/catalog.json", import.meta.url)), "utf8")) as Record<string, { id: string }[]>;
+    const catalog = engineCatalog as Record<string, { id: string }[]>;
     const ids = Object.values(catalog).flatMap((entries) => entries.map((entry) => entry.id));
     expect(ids.length).toBeGreaterThan(80);
     expect(ids.filter((id) => /ranger|hollow|intro|summit|trailhead|sign\.|voice|video|board/.test(id))).toEqual([]);
