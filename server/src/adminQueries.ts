@@ -1,5 +1,5 @@
 /**
- * The saved queries (`tools/telemetry/queries/`), as the admin routes run
+ * The saved queries (a game's own files, by default `tools/telemetry/queries/`), as the admin routes run
  * them: read from their files, the Log Analytics table name turned into the
  * linked dataset's, the `-- range` line's days turned into a parameter, the
  * zone the files are written in (`'America/New_York'`, every calendar day and
@@ -106,7 +106,11 @@ export function forBigQuery(sql: string, projectId: string, dataset: string, buc
   return { sql: out, params };
 }
 
-/** The saved queries' directory: beside the server in the repository, and in the image. */
+/**
+ * The saved queries' directory where the game's settings name none: `tools/telemetry/queries`
+ * under the directory the server runs in (`queriesDirOf` in `gameSettings.ts` says which
+ * directory the settings name). Nothing reads a file there until an admin route is asked.
+ */
 export function queriesDir(root: string = process.cwd()): string {
   return join(root, "tools", "telemetry", "queries");
 }

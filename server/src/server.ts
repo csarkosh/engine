@@ -162,7 +162,7 @@ export type SignalingServerOptions = {
   sweepIntervalMs?: number;
   /**
    * Origins whose pages may open a socket. Defaults to the game's own list
-   * (`allowedOrigins` of `server/game.json`, `gameSettings.ts`); the
+   * (`allowedOrigins` of the game's settings file, `gameSettings.ts`); the
    * deployment overrides it from the environment so a new domain does not
    * need a code change.
    */

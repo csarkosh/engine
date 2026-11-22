@@ -8,10 +8,11 @@ import { SharedRegistry } from "./sharedRegistry.js";
 import { createAdminAuth, parseAllowlist } from "./adminAuth.js";
 import { createAdminData } from "./adminData.js";
 import { createPlacer } from "./place.js";
-import { loadGameSettings } from "./gameSettings.js";
+import { loadGameSettings, queriesDirOf } from "./gameSettings.js";
 
-// Which game this is (`server/game.json`, or the file `GAME_SETTINGS` names):
-// read first, so a missing or malformed file stops the process before it listens.
+// Which game this is (the file `GAME_SETTINGS` names, else `server/game.json`
+// or `game.json` under the directory the process runs in): read first, so a
+// missing or malformed file stops the process before it listens.
 const SETTINGS = loadGameSettings();
 
 const PORT = Number(process.env.PORT ?? 8080);
@@ -105,7 +106,7 @@ const server = createSignalingServer(PORT, {
     ? {
         admin: {
           auth: createAdminAuth({ projectId: ADMIN_AUTH_PROJECT, allowed: ADMIN_EMAILS }),
-          data: createAdminData({ projectId: PROJECT, dataset: TELEMETRY_DATASET, bucket: SETTINGS.telemetryBucket, app: SETTINGS.app, store }),
+          data: createAdminData({ projectId: PROJECT, dataset: TELEMETRY_DATASET, bucket: SETTINGS.telemetryBucket, app: SETTINGS.app, store, queriesDir: queriesDirOf(SETTINGS) }),
         },
       }
     : {}),

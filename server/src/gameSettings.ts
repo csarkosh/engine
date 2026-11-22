@@ -1,12 +1,11 @@
 /**
  * Which game this server serves: the few facts about it the server needs,
- * read at start from a file of the game's (`server/game.json`), so the code
- * itself names no game.
+ * read at start from a file of the game's (`game.json`, found from the
+ * directory the server is started in), so the code itself names no game.
  */
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 export type GameSettings = {
   /** The id this game's numbers carry on the shared admin host (the `app` of the index card). */
@@ -37,7 +36,17 @@ export type GameSettings = {
    * production. Neither opens a socket.
    */
   allowedOrigins: readonly string[];
+  /**
+   * Where the game's saved telemetry queries are, as a path relative to the
+   * folder of the settings file. Optional: without it the queries are looked
+   * for in `tools/telemetry/queries` under the directory the server runs in.
+   * Only the admin routes read them, so a game with no admin page needs none.
+   */
+  queries?: string;
 };
+
+/** The settings and the file they were read from, which `queries` is relative to. */
+export type LoadedGameSettings = GameSettings & { file: string };
 
 /** What a bucket or dataset name may hold: it goes into a regular expression and into SQL identifiers. */
 const NAME = /^[A-Za-z0-9_-]+$/;
@@ -76,21 +85,48 @@ export function parseGameSettings(text: string, from: string): GameSettings {
   for (const origin of origins) {
     if (typeof origin !== "string" || !isOrigin(origin)) throw new Error(`${from}: "allowedOrigins" holds a value that is not an origin: ${JSON.stringify(origin)}`);
   }
-  return { app, telemetryDataset, telemetryBucket, allowedOrigins: origins as string[] };
+  const settings: GameSettings = { app, telemetryDataset, telemetryBucket, allowedOrigins: origins as string[] };
+  if (object.queries !== undefined) {
+    const queries = text_("queries");
+    if (isAbsolute(queries) || queries.startsWith("/") || queries.startsWith("\\") || /^[A-Za-z]:/.test(queries)) {
+      throw new Error(`${from}: "queries" must be a path relative to this file's folder: "${queries}"`);
+    }
+    return { ...settings, queries };
+  }
+  return settings;
+}
+
+/** The settings file a server started in `cwd` reads: `GAME_SETTINGS` when set, else `server/game.json` there if it exists, else `game.json`. */
+export function settingsFileCandidates(cwd: string = process.cwd()): string[] {
+  const named = process.env.GAME_SETTINGS;
+  if (named) return [named];
+  return [join(cwd, "server", "game.json"), join(cwd, "game.json")];
 }
 
 /**
- * The settings file: `GAME_SETTINGS`'s path when set, else `game.json` one
- * level above this module, which is `server/game.json` whether it runs from
- * `server/src/` or from the image's `server/dist/`.
+ * The settings file: `path` when given, else the first of
+ * `settingsFileCandidates` that exists. Where none does, the error names every
+ * path tried.
  */
-export function loadGameSettings(path?: string): GameSettings {
-  const file = path ?? (process.env.GAME_SETTINGS || join(dirname(fileURLToPath(import.meta.url)), "..", "game.json"));
+export function loadGameSettings(path?: string, cwd: string = process.cwd()): LoadedGameSettings {
+  const candidates = path !== undefined ? [path] : settingsFileCandidates(cwd);
+  const file = candidates.find((candidate) => existsSync(candidate));
+  if (file === undefined) throw new Error(`game settings file not found: tried ${candidates.join(", ")}; set GAME_SETTINGS to name one`);
   let text: string;
   try {
     text = readFileSync(file, "utf8");
   } catch (error) {
     throw new Error(`game settings file not readable: ${file} (${error instanceof Error ? error.message : String(error)})`);
   }
-  return parseGameSettings(text, file);
+  return { ...parseGameSettings(text, file), file };
+}
+
+/**
+ * Where the saved telemetry queries are: the settings' `queries` resolved
+ * against the settings file's folder, else `tools/telemetry/queries` under the
+ * directory the server runs in, where a game's own tooling keeps them.
+ */
+export function queriesDirOf(settings: LoadedGameSettings, cwd: string = process.cwd()): string {
+  if (settings.queries !== undefined) return resolve(dirname(settings.file), settings.queries);
+  return join(cwd, "tools", "telemetry", "queries");
 }

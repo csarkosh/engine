@@ -23,7 +23,7 @@
  * `tz` that is not a zone, 404 to a query that does not exist (or an id that
  * is not the shape of one), and 429 past the per-address budget. The origins the
  * page may call from are the server's one list (`allowedOrigins` of
- * `server/game.json`, or `ALLOWED_ORIGINS`), the same one the socket
+ * the game's settings file, or `ALLOWED_ORIGINS`), the same one the socket
  * and the batch route check, so the admin host is listed once. The data behind
  * the routes is an interface (`AdminData`), so the routes are tested with a
  * fake and the BigQuery and Firestore readers are thin.
