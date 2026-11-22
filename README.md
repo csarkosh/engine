@@ -59,6 +59,16 @@ This serves the empty game at <http://localhost:5174/empty/>. Inside this reposi
 names the engine by its own package name, which Node, TypeScript and Vite resolve through
 `exports` in `package.json` to this repository's folders. A game elsewhere installs the package.
 
+## Starting a game
+
+```
+node tools/new-game.mjs ../my-game --name "My Game"
+```
+
+Run from a checkout of this repository. It writes the empty game into the folder (which must not exist or must be empty) under the game's own name, with a `package.json` that installs the engine from the release of this checkout's version. The result is the empty game: it is then given its own world, rules and parts. `--id` sets the short name the game keeps its browser storage under and is served at (`/<id>/`); it defaults to the name in lower case with hyphens.
+
+In the new folder, the first install is `npm install --legacy-peer-deps`: with no lockfile, npm 10.9.9 fails in its own peer resolution without the flag. That install writes the game's `package-lock.json`, and a plain `npm install` works after it. Then `npm run dev`.
+
 ## Scripts
 
 | Script | What it does |
@@ -70,6 +80,7 @@ names the engine by its own package name, which Node, TypeScript and Vite resolv
 | `npm run test:empty` | The empty game's tests. |
 | `npm run dev:empty` | The empty game on a dev server. |
 | `npm run build:empty` | The empty game built into `empty/dist/`. |
+| `npm run new-game` | Starts a new game from the empty game (see "Starting a game"). |
 | `npm run kernel:build` | Builds the Rust crate and writes `src/sim/kernel/fieldWasm.ts`. Needs rustup. |
 | `npm run kernel:check` | Fails if the committed module is not what the sources build to. |
 | `npm run vendor:ktx2` | Vendors the KTX2 decoder and transcoders into `public/libs/ktx2/`. |

@@ -15,6 +15,9 @@ stable API. See `README.md` for what it is and how a game takes it.
 - `test/`: the engine's tests. `testing/`: helpers a game's tests import.
 - `tools/`: plain Node scripts a game runs from its own root, and their tests in `tools/**/test/`.
   `tools/gate.mjs` and `tools/gate/plan.mjs` are a game's push gate, not this repository's.
+  `tools/new-game.mjs` is run from this checkout, not a game's: it copies `empty/` into a new game under
+  its own name. It renames the empty game's names by exact strings and fails if one is gone, so change
+  one of those in `empty/` together with the script (`tools/new-game/test/`). It is not in the package.
 - `vite/`: the preset. `empty/`: the empty game, which names the engine by the package name
   (`@csarkosh/engine/...`), resolved here through `exports`; ESLint holds that it never uses a relative
   path into `../src`.
@@ -25,7 +28,8 @@ Inside the engine, name a module by its relative path, never as `@csarkosh/engin
 ## Scripts
 
 `npm run typecheck`, `npm run lint`, `npm test` (the engine's suite), `npm run test:tools`,
-`npm run test:empty`, `npm run dev:empty`, `npm run build:empty`, `npm run kernel:check`.
+`npm run test:empty`, `npm run dev:empty`, `npm run build:empty`, `npm run new-game -- <folder> --name <name>`,
+`npm run kernel:check`.
 
 ## Rules
 

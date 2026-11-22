@@ -22,6 +22,7 @@
     "tools",
     "!tools/**/test",
     "!tools/vitest.config.mjs",
+    "!tools/new-game.mjs",
     "!**/node_modules",
     "CREDITS.md",
     "LICENSE",
@@ -38,6 +39,7 @@
     "kernel:build": "node tools/rust/build.mjs",
     "kernel:check": "node tools/rust/build.mjs --check",
     "vendor:ktx2": "node tools/vendor-ktx2.mjs",
+    "new-game": "node tools/new-game.mjs",
     "pack": "npm pack"
   },
   "dependencies": {
