@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gatePlan, isLight } from '../plan.mjs';
+import { gatePlan, isLight, lightSuites } from '../plan.mjs';
 
 describe('isLight', () => {
   it('takes the tooling, docs, branding and agent files as outside the game', () => {
@@ -54,5 +54,13 @@ describe('gatePlan', () => {
       kind: 'cloud',
       heavy: ['client/src/sim/haunt.ts', 'package.json'],
     });
+  });
+});
+
+describe('the tools suites the light gate runs', () => {
+  it('are the ones the repository has: a game with the engine installed has no engine/tools', () => {
+    expect(lightSuites((path) => path === 'tools')).toEqual(['tools']);
+    expect(lightSuites(() => true)).toEqual(['tools', 'engine/tools']);
+    expect(lightSuites(() => false)).toEqual([]);
   });
 });

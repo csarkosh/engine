@@ -41,3 +41,13 @@ export function gatePlan(paths) {
   const heavy = unique.filter((p) => !isLight(p)).sort();
   return { kind: heavy.length === 0 ? 'light' : 'cloud', heavy };
 }
+
+/**
+ * The tools suites the light gate runs, by the folders the repository has (`exists` answers for a path
+ * from its root): the game's own, and the engine's where the engine is a folder of the repository. A
+ * game that installs the engine as a package has no `engine/tools`, and its suite is the engine's
+ * repository's to run.
+ */
+export function lightSuites(exists) {
+  return ['tools', 'engine/tools'].filter((root) => exists(root));
+}

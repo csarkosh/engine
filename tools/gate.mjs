@@ -21,7 +21,8 @@
 // checkout>` and the arguments, that runs the same commands, and the client's build as the deploy
 // builds it, on other machines and prints one report; it may take options of its own.
 import { spawnSync } from 'node:child_process';
-import { gatePlan } from './gate/plan.mjs';
+import { existsSync } from 'node:fs';
+import { gatePlan, lightSuites } from './gate/plan.mjs';
 
 // The game's root: the gate is started from it (an npm script of the game's) and runs npm, git and gh there.
 const GAME = process.cwd();
@@ -98,9 +99,11 @@ if (plan.kind === 'light') {
   // Neither has a time limit or a bar on elapsed time: load slows them and cannot fail them.
   const lint = run('npm', ['run', 'lint']);
   if (lint !== 0) process.exit(lint);
-  const tools = run('npx', ['vitest', 'run', '--root', 'tools']);
-  if (tools !== 0) process.exit(tools);
-  process.exit(run('npx', ['vitest', 'run', '--root', 'engine/tools']));
+  for (const root of lightSuites(existsSync)) {
+    const suite = run('npx', ['vitest', 'run', '--root', root]);
+    if (suite !== 0) process.exit(suite);
+  }
+  process.exit(0);
 }
 
 // cloud: the workflow on what is pushed of this branch.
