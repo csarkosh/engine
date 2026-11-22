@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { randomUUID } from "node:crypto";
 import { createSignalingServer, parseRole, SIGNALING_PATH } from "./server.js";
 import { parseIpRanges, type IpRange } from "./admission.js";

@@ -13,6 +13,9 @@
     "./vite/*": "./vite/*.mjs",
     "./*": "./src/*.ts"
   },
+  "workspaces": [
+    "server"
+  ],
   "files": [
     "src",
     "assets",
@@ -29,11 +32,12 @@
     "README.md"
   ],
   "scripts": {
-    "typecheck": "tsc -p . --noEmit && tsc -p empty --noEmit",
+    "typecheck": "tsc -p . --noEmit && tsc -p empty --noEmit && tsc -p server --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
     "test:tools": "vitest run --root tools",
     "test:empty": "vitest run --root empty",
+    "test:server": "vitest run --root server",
     "dev:empty": "vite empty",
     "build:empty": "vite build empty",
     "kernel:build": "node tools/rust/build.mjs",

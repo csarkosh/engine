@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
+import type { webcrypto } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { exportJWK, generateKeyPair, SignJWT, type JWK } from "jose";
 import { createLocalJWKSet } from "jose";
@@ -18,9 +19,10 @@ import { createSignalingServer, type SignalingServer } from "../src/server.js";
 const AUTH_PROJECT = "csarko-sh";
 /** The admin host's origin, which the routes answer; the game's own is not a caller any more but stays listed. */
 const ORIGIN = "https://admin.csarko.sh";
-const QUERIES = fileURLToPath(new URL("../../tools/telemetry/queries/", import.meta.url));
+/** Day Hike's saved queries, copied here as fixtures: the engine holds no game's files, and these tests read the rewriting on real ones. */
+const QUERIES = fileURLToPath(new URL("./fixtures/queries/", import.meta.url));
 
-let privateKey: CryptoKey;
+let privateKey: webcrypto.CryptoKey;
 let jwk: JWK;
 beforeAll(async () => {
   const pair = await generateKeyPair("RS256");
