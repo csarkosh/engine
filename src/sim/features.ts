@@ -759,6 +759,12 @@ export type FeatureMask = {
   meadow: number;
   /** 1 on a pond's shore band and the peak's crest: bare floor / rock, no clutter. */
   bare: number;
+  /**
+   * Multiplier on what lies loose on the ground and is no ground cover: scattered rock, driftwood and
+   * drift logs. Left out, it is 1: the trail's made features leave them where the shore and the hillside
+   * put them. Ground a game has made (a town's fill) sets it to 0.
+   */
+  loose?: number;
 };
 const MASK_SHORE = newLakeShore();
 

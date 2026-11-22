@@ -801,9 +801,12 @@ export function clutterDensity(seed: number, cls: number, x: number, z: number, 
   const slopeSq = s.dx * s.dx + s.dz * s.dz;
   // The trail-system feature mask, read once: bare ground (a pond's
   // shore, the peak's crest) and a meadow's denser carpet and flowers. Rocks,
-  // boulders and driftwood are untouched — they read the landmark mask
-  // instead (CLUTTER_BOULDER below), or nothing at all.
+  // boulders and driftwood are untouched by those — boulders read the landmark
+  // mask instead (CLUTTER_BOULDER below), and rock, driftwood and drift logs
+  // the mask's own word for what lies loose (`loose`), which only ground a
+  // game has made says anything but 1 for.
   const fm = variant.featureMask?.(seed, x, z, s.h) ?? NO_FEATURE_MASK;
+  const loose = fm.loose ?? 1;
   switch (cls) {
     case CLUTTER_GRASS:
       // The field applies fm.clutter itself now (it is the class's only
@@ -815,7 +818,7 @@ export function clutterDensity(seed: number, cls: number, x: number, z: number, 
       const alt = smoothstep(CLUTTER_ROCK_ALT_LO, CLUTTER_ROCK_ALT_LO + CLUTTER_ROCK_ALT_LO_FADE, sh);
       const grade = CLUTTER_ROCK_BASE + (1 - CLUTTER_ROCK_BASE) * rockSlopeBand(slopeSq);
       const road = smoothstep(CLUTTER_ROCK_ROAD_NEAR, CLUTTER_ROCK_ROAD_FAR, r);
-      return alt * grade * road;
+      return alt * grade * road * loose;
     }
     case CLUTTER_BOULDER: {
       const raw = boulderDensityRaw(seed, x, z, s);
@@ -891,7 +894,7 @@ export function clutterDensity(seed: number, cls: number, x: number, z: number, 
       const inland = 1 - smoothstep(CLUTTER_DRIFTLOG_INLAND, CLUTTER_DRIFTLOG_INLAND + CLUTTER_DRIFTLOG_INLAND_FADE, c);
       // Clear of the road's bed, as the rocks are.
       const road = smoothstep(CLUTTER_ROCK_ROAD_NEAR, CLUTTER_ROCK_ROAD_FAR, r);
-      return alt * Math.max(inland, cove) * road;
+      return alt * Math.max(inland, cove) * road * loose;
     }
     case CLUTTER_DRIFTWOOD: {
       // The cove's backshore holds drift logs up to the road's corridor, past
@@ -907,7 +910,7 @@ export function clutterDensity(seed: number, cls: number, x: number, z: number, 
         smoothstep(CLUTTER_DRIFT_ALT_LO, CLUTTER_DRIFT_ALT_LO + CLUTTER_DRIFT_ALT_LO_FADE, s.h) *
         (1 - smoothstep(CLUTTER_DRIFT_ALT_HI, CLUTTER_DRIFT_ALT_HI + CLUTTER_DRIFT_ALT_HI_FADE, s.h));
       const inland = 1 - smoothstep(CLUTTER_DRIFT_INLAND, CLUTTER_DRIFT_INLAND + CLUTTER_DRIFT_INLAND_FADE, c);
-      return alt * Math.max(inland, cove);
+      return alt * Math.max(inland, cove) * loose;
     }
     case CLUTTER_FUNGUS: {
       const canopy = smoothstep(CLUTTER_FUNGUS_CANOPY_LO, CLUTTER_FUNGUS_CANOPY_HI, forestDensity(seed, x, z, s));
