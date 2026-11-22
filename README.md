@@ -48,7 +48,10 @@ import { enginePreset } from "@csarkosh/engine/vite/preset";
 
 A game hands the shell one page definition and one identity (`startShell` in `src/shell.ts`). Read
 `empty/` for the least a game is: `empty/src/main.ts` starts the shell, `empty/src/page.ts` is its
-page definition, and `empty/vite.config.ts` is its build.
+page definition, and `empty/vite.config.ts` is its build. The page side is handed `PageHost`, which
+says among other things whether the build can reach a signaling server (`signaling`: development, or a
+build given `VITE_SIGNALING_URL`). A game can be published before it has a server: a production build
+given no address shows no party box and joins no party, and its own landing page says what it will.
 
 A game's server is a package of the engine's, released as a second tarball beside the engine's, so
 that running a server needs none of the engine's 116 MB of game files:

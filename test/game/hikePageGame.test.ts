@@ -40,4 +40,28 @@ describe("the page's shell", () => {
       expect(shell, named).not.toMatch(new RegExp(`\\b${named}\\b`));
     }
   });
+
+  it("a build with no signaling address has no party: asked once, the roster is not mounted, no party address is joined", () => {
+    // Asked once, of the build's own environment, before the game's side is handed the answer.
+    expect(shell.split("hasSignaling(").length - 1).toBe(1);
+    expect(shell).toContain("  const signalingOn = hasSignaling(import.meta.env);");
+    expect(shell).toContain("    get signaling() { return signalingOn; },");
+    // The roster is made only with it; without, the one that draws nothing stands in, so no element is in the page.
+    expect(shell).toContain("  const mountRoster: typeof createRoster = signalingOn ? createRoster : () => NO_ROSTER;");
+    expect(shell).toContain("  const roster = mountRoster({");
+    // The party address shows the landing page as a plain visit does; the join it asks for does nothing without a server.
+    expect(shell).toMatch(/      replaceWithLanding\(\);\n(?:      \/\/[^\n]*\n)+      void signalsReady\.then\(\(\) => \{\n        if \(verdict === null \|\| verdict\.play\) void enterLobby\(route\.lobbyId\);/);
+    // The lobby's two openings and the landing's join all stop before they reach the server.
+    expect(shell).toContain("    if (!signalingOn || lobby !== null || joining) return;");
+    expect(shell).toContain("    if (!signalingOn || joining) return;");
+    expect(shell).toContain("          if (lobbyId === null || !signalingOn) return false;");
+    expect(shell.split("newSignaling()").length - 1).toBe(3);
+  });
+
+  it("the game's side is told whether the build can reach a signaling server, as one more of the shell's own to read", () => {
+    const host = sourceText("game/pageGame.ts");
+    expect(host).toContain("  /** Whether this build can reach a signaling server: development, or a build given an address. */\n  readonly signaling: boolean;\n};");
+    const fields = host.slice(host.indexOf("export type PageHost = {"), host.indexOf("\n};\n", host.indexOf("export type PageHost = {")));
+    expect(fields.match(/^ {2}readonly \w+/gm)).toHaveLength(18);
+  });
 });

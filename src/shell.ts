@@ -25,12 +25,12 @@ import { sceneLine, startWorldPrep, worldPrepLine, type WorldPrepOutcome } from 
 import type { PreparedScene } from "./game/preparedScene.js";
 import { isDesktop, isTouchDevice, hostPlatform, desktopVersion } from "./game/platform.js";
 import { inviteLink, parseJoinLink } from "./game/joinLink.js";
-import { createRoster } from "./game/roster.js";
+import { NO_ROSTER, createRoster } from "./game/roster.js";
 import { rosterModel, attemptPending } from "./game/rosterModel.js";
 import { startAttemptClock, type AttemptClock } from "./game/attemptClock.js";
 import { parseLatest, type DesktopRelease } from "./net/desktopRelease.js";
 import { createSignalingClient, type SignalingClient } from "./net/signaling.js";
-import { signalingUrl } from "./net/signalingUrl.js";
+import { hasSignaling, signalingUrl } from "./net/signalingUrl.js";
 import { loadName, saveName, type NameOf } from "./game/playerName.js";
 import { setGameIdentity } from "./identity.js";
 import { createLobby, joinLobby, lobbyErrorMessage, type Lobby } from "./net/lobby.js";
@@ -85,6 +85,9 @@ export function startShell<
   ClientS extends ClientSession<W, P, S, unknown>,
 >(page: PageGame<W, S, P, R, A, H, HostS, ClientS>): void {
   setGameIdentity(page.identity);
+  // Asked once: a production build given no signaling address has no party, so no roster is mounted and
+  // nothing that needs the server is started (a party address, the landing's join).
+  const signalingOn = hasSignaling(import.meta.env);
   const found = document.querySelector<HTMLDivElement>("#app");
 
   /** The game's own of the page (`PageSide`): made here, once everything of the shell's it reads while it is made stands. */
@@ -106,6 +109,7 @@ export function startShell<
     get autoSummary() { return autoSummary; },
     get lobby() { return lobby; },
     get launching() { return launching; },
+    get signaling() { return signalingOn; },
   });
   if (!found) throw new Error("#app not found");
   const app: HTMLDivElement = found;
@@ -396,7 +400,10 @@ export function startShell<
   let attemptRestart: (() => void) | null = null;
   let attemptEpoch = 0;
 
-  const roster = createRoster({
+  // Not mounted at all without signaling (`NO_ROSTER` draws nothing), rather than mounted hidden, which
+  // would still take the keyboard's focus and a screen reader's.
+  const mountRoster: typeof createRoster = signalingOn ? createRoster : () => NO_ROSTER;
+  const roster = mountRoster({
     onInvite: () => void openLobby(),
     onRetry: retryAttempt,
     onInviteCopied: () => telemetry.event("invite_copied"),
@@ -572,7 +579,7 @@ export function startShell<
   const announcer = createRouteAnnouncer(announceRoute);
 
   async function openLobby(): Promise<void> {
-    if (lobby !== null || joining) return;
+    if (!signalingOn || lobby !== null || joining) return;
     joining = true;
     // A failed attempt must not haunt the next one: without this the line from a
     // create that could not reach the server rides along into a later solo game.
@@ -620,7 +627,7 @@ export function startShell<
     // Answered before the in-flight guard: arriving at the lobby we are already
     // in is a no-op in its own right, not something the guard should swallow.
     if (lobby !== null && lobby.state.id === lobbyId) return;
-    if (joining) return;
+    if (!signalingOn || joining) return;
     joining = true;
     if (lobby !== null) {
       lobby.leave();
@@ -888,6 +895,7 @@ export function startShell<
       replaceWithLanding();
       // Joined once the load check has the GPU's signals and has not turned the visitor away: a host's roster
       // never shows a player who cannot play. A verdict not known by then (the adapter had not answered) joins.
+      // With no signaling `enterLobby` does nothing, and the landing page is all the address shows.
       void signalsReady.then(() => {
         if (verdict === null || verdict.play) void enterLobby(route.lobbyId);
       });
@@ -963,7 +971,7 @@ export function startShell<
         // False where the text is no invite link or lobby id: the page says so.
         join: (text) => {
           const lobbyId = parseJoinLink(text, webBase);
-          if (lobbyId === null) return false;
+          if (lobbyId === null || !signalingOn) return false;
           void enterLobby(lobbyId);
           return true;
         },

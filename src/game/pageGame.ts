@@ -85,6 +85,8 @@ export type PageHost = {
   readonly autoSummary: () => AutoSummary | null;
   readonly lobby: Lobby | null;
   readonly launching: boolean;
+  /** Whether this build can reach a signaling server: development, or a build given an address. */
+  readonly signaling: boolean;
 };
 
 /** A game's own of the page, called by the shell at the page's own points. */

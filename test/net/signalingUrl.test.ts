@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { signalingUrl } from "../../src/net/signalingUrl.js";
+import { hasSignaling, signalingUrl } from "../../src/net/signalingUrl.js";
 
 describe("signalingUrl", () => {
   it("prefers the configured override", () => {
@@ -28,5 +28,25 @@ describe("signalingUrl", () => {
     expect(
       signalingUrl({ VITE_SIGNALING_URL: "" }, { protocol: "http:", host: "localhost:5173" }),
     ).toBe("ws://localhost:5173/ws");
+  });
+});
+
+describe("hasSignaling", () => {
+  it("is true in development, with or without an address", () => {
+    expect(hasSignaling({ DEV: true })).toBe(true);
+    expect(hasSignaling({ DEV: true, VITE_SIGNALING_URL: undefined })).toBe(true);
+    expect(hasSignaling({ DEV: true, VITE_SIGNALING_URL: "" })).toBe(true);
+  });
+
+  it("is true in a build given an address", () => {
+    expect(hasSignaling({ DEV: false, VITE_SIGNALING_URL: "wss://example.invalid/ws" })).toBe(true);
+    expect(hasSignaling({ VITE_SIGNALING_URL: "wss://example.invalid/ws" })).toBe(true);
+  });
+
+  it("is false in a production build with no address, and an empty one counts as none", () => {
+    expect(hasSignaling({ DEV: false })).toBe(false);
+    expect(hasSignaling({})).toBe(false);
+    expect(hasSignaling({ DEV: false, VITE_SIGNALING_URL: undefined })).toBe(false);
+    expect(hasSignaling({ DEV: false, VITE_SIGNALING_URL: "" })).toBe(false);
   });
 });

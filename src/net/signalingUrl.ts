@@ -20,3 +20,13 @@ export function signalingUrl(
   const scheme = loc.protocol === "https:" ? "wss" : "ws";
   return `${scheme}://${loc.host}/ws`;
 }
+
+/**
+ * Whether this build can reach a signaling server: development (the Vite proxy
+ * answers on the page's own origin) or a build given an address. A production
+ * build with none has no party: the game was published before it has a server.
+ * Empty counts as unset, as `signalingUrl` treats it.
+ */
+export function hasSignaling(env: { DEV?: boolean; VITE_SIGNALING_URL?: string | undefined }): boolean {
+  return env.DEV === true || Boolean(env.VITE_SIGNALING_URL);
+}

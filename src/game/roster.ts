@@ -145,6 +145,18 @@ export type Roster = {
   dispose(): void;
 };
 
+/**
+ * The roster of a page with no party (a build with no signaling address): the
+ * same calls, and no element in the page for a pointer, a keyboard or a screen
+ * reader to reach.
+ */
+export const NO_ROSTER: Roster = {
+  // The landing's panels reserve the roster's height at their foot (see `paint`): none here.
+  setView: () => document.documentElement.style.setProperty("--roster-height", "0px"),
+  setPendingProgress: () => undefined,
+  dispose: () => undefined,
+};
+
 export function createRoster(handlers: {
   onInvite(): void;
   onRetry(): void;
