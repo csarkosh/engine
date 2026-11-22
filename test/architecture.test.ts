@@ -18,6 +18,8 @@ const SRC = fileURLToPath(new URL("../src", import.meta.url));
 const ENGINE = SRC;
 /** The engine's own shipped files and their catalog, beside its source: a part of the engine that its source may name. */
 const ENGINE_ASSETS = fileURLToPath(new URL("../assets", import.meta.url));
+/** The engine's credits file, at the package's root: the one file outside `src/` and `assets/` that its source names (`game/engineCredits.ts` hands its text to a game). */
+const ENGINE_CREDITS_FILE = fileURLToPath(new URL("../CREDITS.md", import.meta.url));
 const ENGINE_PACKAGE = "@csarkosh/engine/";
 /** The engine's own tests and their shared helpers. */
 const TESTS = fileURLToPath(new URL(".", import.meta.url));
@@ -156,7 +158,7 @@ describe("layer boundaries", () => {
         if (spec.startsWith(ENGINE_PACKAGE)) bad.push(`${logical(file)} names the engine as a package: ${spec}`);
         if (!spec.startsWith(".")) continue;
         const target = join(file, "..", spec.replace(/[?#].*$/, ""));
-        if (!target.startsWith(`${ENGINE}/`) && !target.startsWith(`${ENGINE_ASSETS}/`)) bad.push(`${logical(file)} refers outside the engine: ${spec}`);
+        if (!target.startsWith(`${ENGINE}/`) && !target.startsWith(`${ENGINE_ASSETS}/`) && target !== ENGINE_CREDITS_FILE) bad.push(`${logical(file)} refers outside the engine: ${spec}`);
       }
     }
     expect(bad).toEqual([]);
