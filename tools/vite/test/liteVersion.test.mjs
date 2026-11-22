@@ -1,11 +1,9 @@
 import { readFileSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { LITE_PACKAGE, liteVersion } from '../../../vite/liteVersion.mjs';
 
-// The engine's own folder (this is engine/tools/vite/test/), from here; the game's client from the game's root, where the suite is started.
+// The engine's own folder (this is tools/vite/test/), from here.
 const ENGINE = new URL('../../../', import.meta.url);
-const CLIENT = pathToFileURL(`${process.cwd()}/client/`);
 const pin = (value) => JSON.stringify({ dependencies: { [LITE_PACKAGE]: value } });
 
 describe("the version of Babylon Lite the page is built with", () => {
@@ -13,7 +11,7 @@ describe("the version of Babylon Lite the page is built with", () => {
     const version = liteVersion(readFileSync(new URL('package.json', ENGINE), 'utf8'));
     expect(version).toMatch(/^v\d+\.\d+\.\d+-dayhike\.\d+$/);
     // The installed package says only the release the tag stands on: the same for every tag made on it.
-    const installed = JSON.parse(readFileSync(new URL('../node_modules/@babylonjs/lite/package.json', CLIENT), 'utf8')).version;
+    const installed = JSON.parse(readFileSync(new URL('node_modules/@babylonjs/lite/package.json', ENGINE), 'utf8')).version;
     expect(version.startsWith(`v${installed}-`)).toBe(true);
   });
 
@@ -32,11 +30,10 @@ describe("the version of Babylon Lite the page is built with", () => {
   it("is defined for the page by the engine's preset, and typed where the page reads it", () => {
     const preset = readFileSync(new URL('vite/preset.mjs', ENGINE), 'utf8');
     expect(preset).toContain("__LITE_VERSION__: JSON.stringify(liteVersion(readFileSync(new URL('package.json', ENGINE), 'utf8'))),");
-    // Declared by the engine, whose shell reads it, and included in the client's own typecheck.
+    // Declared by the engine, whose shell reads it, and included in the empty game's own typecheck
+    // (a game includes it from the installed package's place, as the empty game does from the engine's folder).
     expect(readFileSync(new URL('src/env.d.ts', ENGINE), 'utf8')).toContain('declare const __LITE_VERSION__: string;');
-    // By the package's own place among the installed modules, which is the engine's folder here and an installed copy elsewhere.
-    expect(readFileSync(new URL('tsconfig.json', CLIENT), 'utf8')).toMatch(/"include": \[[^\]]*"\.\.\/node_modules\/@csarkosh\/engine\/src\/env\.d\.ts"[^\]]*\]/);
-    expect(readFileSync(new URL('../node_modules/@csarkosh/engine/src/env.d.ts', CLIENT), 'utf8')).toContain('declare const __LITE_VERSION__: string;');
+    expect(readFileSync(new URL('empty/tsconfig.json', ENGINE), 'utf8')).toMatch(/"include": \[[^\]]*"\.\.\/src\/env\.d\.ts"[^\]]*\]/);
     // The page names it once, in what every telemetry row carries.
     const shell = readFileSync(new URL('src/shell.ts', ENGINE), 'utf8');
     expect(shell.match(/__LITE_VERSION__/g)).toHaveLength(1);

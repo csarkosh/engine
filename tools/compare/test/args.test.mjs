@@ -1,11 +1,14 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { TIER_SIZES, resolveViews } from "../../frame-budget/lib/views.mjs";
 import { SIZES, STILL_COMMANDS, parseArgs, stillViewUrl } from "../lib/args.mjs";
 
-const stills = JSON.parse(readFileSync(join(process.cwd(), "tools/previews/stills.json"), "utf8"));
-const config = JSON.parse(readFileSync(join(process.cwd(), "tools/frame-budget/views.json"), "utf8"));
+// The frame budget's fixtures: the comparison takes the same views and stills.
+const FIXTURES = new URL("../../frame-budget/test/fixtures/", import.meta.url);
+// The fixtures stand for a game's stills.json and views.json, which a game keeps at its own root and the
+// scripts read from the directory they are run in; the functions under test take them as parameters.
+const stills = JSON.parse(readFileSync(new URL("stills.json", FIXTURES), "utf8"));
+const config = JSON.parse(readFileSync(new URL("views.json", FIXTURES), "utf8"));
 
 const NEEDED = ["--a", "http://localhost:5173/dayhike", "--b", "https://b.example/dayhike", "--out", "/tmp/out"];
 

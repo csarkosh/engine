@@ -1,10 +1,12 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { TIER_SIZES, resolveViews, viewScript, viewUrl } from "../lib/views.mjs";
 
-const stills = JSON.parse(readFileSync(join(process.cwd(), "tools/previews/stills.json"), "utf8"));
-const config = JSON.parse(readFileSync(join(process.cwd(), "tools/frame-budget/views.json"), "utf8"));
+const FIXTURES = new URL("./fixtures/", import.meta.url);
+// The fixtures stand for a game's stills.json and views.json, which a game keeps at its own root and the
+// scripts read from the directory they are run in; the functions under test take them as parameters.
+const stills = JSON.parse(readFileSync(new URL("stills.json", FIXTURES), "utf8"));
+const config = JSON.parse(readFileSync(new URL("views.json", FIXTURES), "utf8"));
 
 describe("views", () => {
   it("resolves every budget view to a still, and the check views only by name", () => {
