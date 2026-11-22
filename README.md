@@ -84,6 +84,8 @@ Run from a checkout of this repository. It writes the empty game into the folder
 
 In the new folder, the first install is `npm install --legacy-peer-deps`: with no lockfile, npm 10.9.9 fails in its own peer resolution without the flag. That install writes the game's `package-lock.json`, and a plain `npm install` works after it. Then `npm run dev`.
 
+The new game also comes with a server for development and the files for its image: `game.json` (the server's settings, allowing the dev server's origin), `server.package.json` and a `Dockerfile` that install only the server's release tarball, and a `.dockerignore`; its `package.json` depends on the server's release and has `dev:server` and `dev:client` scripts. For two players on one machine, run `npm run dev:server` in one terminal and `npm run dev` in another.
+
 ## Scripts
 
 | Script | What it does |

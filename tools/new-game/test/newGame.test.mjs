@@ -25,6 +25,8 @@ function filesUnder(dir) {
   return found.sort();
 }
 
+const OWN = ['.dockerignore', '.gitignore', 'Dockerfile', 'README.md', 'game.json', 'package.json', 'server.package.json', 'tsconfig.json'];
+
 describe('a new game made from the empty game', () => {
   const target = join(temp(), 'game-two');
   const NAME = 'Game Two';
@@ -33,11 +35,11 @@ describe('a new game made from the empty game', () => {
     written = newGame({ target, name: NAME, id: undefined, engineRoot: ENGINE });
   });
 
-  it("holds every file of the empty game but its installs, its build and its tsconfig, and the four that are the game's own", () => {
+  it("holds every file of the empty game but its installs, its build and its tsconfig, and the eight that are the game's own", () => {
     const empty = filesUnder(join(ENGINE, 'empty')).filter((path) => !/^(node_modules|dist)\//.test(path) && path !== 'tsconfig.json');
     expect(empty.length).toBeGreaterThan(10);
-    expect(WRITTEN_FILES).toEqual(['.gitignore', 'README.md', 'package.json', 'tsconfig.json']);
-    expect(filesUnder(target)).toEqual([...empty, '.gitignore', 'README.md', 'package.json', 'tsconfig.json'].sort());
+    expect(WRITTEN_FILES).toEqual(OWN);
+    expect(filesUnder(target)).toEqual([...empty, ...OWN].sort());
     expect(written).toEqual(filesUnder(target));
   });
 
@@ -48,10 +50,43 @@ describe('a new game made from the empty game', () => {
     expect(pkg.name).toBe('game-two');
     expect(pkg.private).toBe(true);
     expect(pkg.type).toBe('module');
-    expect(pkg.dependencies).toEqual({ '@csarkosh/engine': release });
+    const serverRelease = `https://github.com/csarkosh/engine/releases/download/v${mine.version}/csarkosh-engine-server-${mine.version}.tgz`;
+    expect(pkg.dependencies).toEqual({ '@csarkosh/engine': release, '@csarkosh/engine-server': serverRelease });
     for (const tool of ['typescript', 'vite', 'vitest']) expect(pkg.devDependencies[tool]).toBe(mine.devDependencies[tool]);
     expect(pkg.devDependencies['@types/node']).toMatch(/^\d+\.\d+\.\d+$/);
-    expect(pkg.scripts).toEqual({ dev: 'vite', build: 'vite build', typecheck: 'tsc -p . --noEmit', test: 'vitest run' });
+    expect(pkg.scripts).toEqual({
+      dev: 'vite',
+      'dev:server': 'REGISTRY=memory node node_modules/@csarkosh/engine-server/dist/index.js',
+      'dev:client': 'vite',
+      build: 'vite build',
+      typecheck: 'tsc -p . --noEmit',
+      test: 'vitest run',
+    });
+  });
+
+  it('has a server for development: settings under the game\'s id, accepted by the server\'s rules, and the files of its image', () => {
+    const mine = json(ENGINE, 'package.json');
+    const settings = json(target, 'game.json');
+    expect(settings).toEqual({ app: 'game-game-two', telemetryDataset: 'game_two_telemetry', telemetryBucket: 'game-two-telemetry', allowedOrigins: ['http://localhost:5174'] });
+    // The server's own rules (server/src/gameSettings.ts), held here as the tools suite cannot import TypeScript.
+    expect(settings.app).not.toBe('');
+    expect(settings.telemetryDataset).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(settings.telemetryBucket).toMatch(/^[A-Za-z0-9_-]+$/);
+    for (const origin of settings.allowedOrigins) expect(new URL(origin).origin).toBe(origin);
+    expect(read(ENGINE, 'empty/vite.config.ts')).toContain('port: 5174,');
+    const serverRelease = `https://github.com/csarkosh/engine/releases/download/v${mine.version}/csarkosh-engine-server-${mine.version}.tgz`;
+    expect(json(target, 'server.package.json')).toEqual({ name: 'game-two-server', private: true, type: 'module', dependencies: { '@csarkosh/engine-server': serverRelease } });
+    const dockerfile = read(target, 'Dockerfile');
+    expect(dockerfile).toContain('\nCOPY server.package.json package.json\n');
+    expect(dockerfile).toContain('\nRUN npm install --omit=dev --no-audit --no-fund\n');
+    expect(dockerfile).toContain('\nCOPY game.json /app/game.json\n');
+    expect(dockerfile).toContain('\nUSER node\n');
+    expect(dockerfile).toContain('\nENV PORT=8080\n');
+    expect(dockerfile).toContain('\nCMD ["node", "node_modules/@csarkosh/engine-server/dist/index.js"]\n');
+    expect(dockerfile).not.toMatch(/^COPY .*csarkosh-engine-\d/m);
+    expect(read(target, '.dockerignore')).toBe('node_modules\ndist\n');
+    expect(read(target, 'README.md')).toContain('## Playing together');
+    expect(read(target, 'README.md')).toContain('npm run dev:server');
   });
 
   it('has a tsconfig of its own that reads the installed engine\'s environment types', () => {

@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -46,6 +47,18 @@ describe("the example settings", () => {
   });
   it("are the same file the example image carries", () => {
     expect(JSON.parse(read("../example/game.json"))).toEqual(JSON.parse(read("../game.example.json")));
+  });
+});
+
+describe("the settings a new game is given", () => {
+  // ESLint keeps this package from importing the engine's folders, so the script is run as a process, not imported.
+  it("are accepted: the game.json tools/new-game.mjs writes, for an id with a hyphen", () => {
+    const script = fileURLToPath(new URL("../../tools/new-game.mjs", import.meta.url));
+    const target = join(mkdtempSync(join(tmpdir(), "server-new-game-")), "game-two");
+    const run = spawnSync(process.execPath, [script, target, "--name", "Game Two"], { encoding: "utf8" });
+    expect(run.status, run.stderr).toBe(0);
+    const settings = parseGameSettings(readFileSync(join(target, "game.json"), "utf8"), "game.json");
+    expect(settings).toEqual({ app: "game-game-two", telemetryDataset: "game_two_telemetry", telemetryBucket: "game-two-telemetry", allowedOrigins: ["http://localhost:5174"] });
   });
 });
 

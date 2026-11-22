@@ -5,7 +5,9 @@
 //
 // Run from a checkout of this repository. It writes the empty game (`empty/`) into the target folder under
 // the new game's own name, with a `package.json` that installs the engine from the release of this checkout's
-// version, a standalone `tsconfig.json`, a `.gitignore` and a `README.md`. The target must not exist or must be
+// version, a standalone `tsconfig.json`, a `.gitignore` and a `README.md`, and a server for development: the
+// server package as a second dependency, `game.json` (its settings), and the files of its image (`Dockerfile`,
+// `server.package.json`, `.dockerignore`). The target must not exist or must be
 // empty; if it is not, nothing is written. The empty game's own files are not changed.
 //
 // The id is what the game keeps its browser storage under and what its page is served at (`/<id>/`). It
@@ -23,14 +25,14 @@ const NOT_COPIED = new Set(['node_modules', 'dist', 'tsconfig.json']);
 const ENV_TYPES = 'node_modules/@csarkosh/engine/src/env.d.ts';
 
 /** The files `newGame` writes that are not copies of the empty game's. */
-export const WRITTEN_FILES = ['.gitignore', 'README.md', 'package.json', 'tsconfig.json'];
+export const WRITTEN_FILES = ['.dockerignore', '.gitignore', 'Dockerfile', 'README.md', 'game.json', 'package.json', 'server.package.json', 'tsconfig.json'];
 
 /**
  * The commands a new game starts with, as printed and as written into its README. A plain `npm install` of a
  * game with no lockfile fails in npm's own peer resolution (npm 10.9.9: "Cannot read properties of null
  * (reading 'edgesOut')"); `--legacy-peer-deps` installs it, and writes the game's lockfile.
  */
-export const NEXT_STEPS = ['npm install --legacy-peer-deps', 'npm run dev'];
+export const NEXT_STEPS = ['npm install --legacy-peer-deps', 'npm run dev:server   # in one terminal', 'npm run dev          # in another'];
 
 /**
  * The version of `@types/node` a new game's `devDependencies` hold besides the engine's three: the game's own
@@ -41,7 +43,47 @@ export const NEXT_STEPS = ['npm install --legacy-peer-deps', 'npm run dev'];
 const NODE_TYPES = '26.1.1';
 
 /** The npm scripts every new game has. */
-const SCRIPTS = { dev: 'vite', build: 'vite build', typecheck: 'tsc -p . --noEmit', test: 'vitest run' };
+const SCRIPTS = {
+  dev: 'vite',
+  'dev:server': 'REGISTRY=memory node node_modules/@csarkosh/engine-server/dist/index.js',
+  'dev:client': 'vite',
+  build: 'vite build',
+  typecheck: 'tsc -p . --noEmit',
+  test: 'vitest run',
+};
+
+/** The origin the empty game's dev server (`server.port` in its `vite.config.ts`) is reached at; `game.json` lets it reach the server. */
+function devOrigin(viteConfig) {
+  const match = /server:\s*\{\s*port:\s*(\d+)/.exec(viteConfig);
+  if (!match) throw new Error('new-game: the empty game\'s vite.config.ts has no `server: { port: ... }`, which game.json\'s allowed origin is made from');
+  return `http://localhost:${match[1]}`;
+}
+
+/** The image of the game's server: the server package alone, installed from its release, never the engine's tarball. */
+const DOCKERFILE = `# syntax=docker/dockerfile:1
+
+# The game's server image: the engine's server package and the game's settings, and nothing else.
+# It installs from server.package.json (copied in as package.json), which names only the server's
+# release tarball, so the engine's own tarball is not in the image. No lockfile is shipped for it;
+# a game that wants a pinned image commits one for it. Build with:  docker build -t my-game-server .
+
+FROM node:22-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+# The commit the image was built from, for the telemetry rows the process writes. An argument
+# rather than a value set on the service: the service's environment belongs to whatever
+# provisions it, and a value a deploy script set there would be a diff on every plan.
+ARG BUILD_SHA=unknown
+ENV BUILD_SHA=$BUILD_SHA
+COPY server.package.json package.json
+RUN npm install --omit=dev --no-audit --no-fund
+# Which game this server serves: the server reads \`game.json\` under its working directory.
+COPY game.json /app/game.json
+USER node
+# Cloud Run injects PORT; 8080 is the default the server already falls back to.
+ENV PORT=8080
+CMD ["node", "node_modules/@csarkosh/engine-server/dist/index.js"]
+`;
 
 const ID_PATTERN = /^[a-z][a-z0-9-]*$/;
 
@@ -110,7 +152,7 @@ function replaceOnce(file, text, from, to) {
   return parts.join(to);
 }
 
-function readme({ name, version }) {
+function readme({ name, version, origin }) {
   return [
     `# ${name}`,
     '',
@@ -125,9 +167,17 @@ function readme({ name, version }) {
     '| Script | What it does |',
     '| --- | --- |',
     '| `npm run dev` | Serves the game on a dev server. |',
+    '| `npm run dev:server` | The game\'s server, one process with its rooms in memory. |',
+    '| `npm run dev:client` | The same as `npm run dev`. |',
     '| `npm run build` | Builds the game into `dist/`. |',
     '| `npm run typecheck` | `tsc` over the game. |',
     '| `npm test` | The game\'s tests. |',
+    '',
+    '## Playing together',
+    '',
+    'Run `npm run dev:server` in one terminal and `npm run dev` in another. The page reaches the server through the dev server\'s proxy (`/ws` and `/t`, to `localhost:8080`), so two browser tabs, or two machines reaching the dev server, can join each other.',
+    '',
+    `\`game.json\` says which origins may reach the server (${origin} to begin with); extend its \`allowedOrigins\` when the game has a site. \`Dockerfile\`, \`server.package.json\` and \`.dockerignore\` are for the server's image.`,
     '',
   ].join('\n');
 }
@@ -185,6 +235,7 @@ export function newGame({ target, name, id, engineRoot }) {
     if (out.has(path)) throw new Error(`new-game: the empty game has a ${path} of its own, which this script writes`);
   }
 
+  const serverRelease = `https://github.com/csarkosh/engine/releases/download/v${version}/csarkosh-engine-server-${version}.tgz`;
   const release = `https://github.com/csarkosh/engine/releases/download/v${version}/csarkosh-engine-${version}.tgz`;
   const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
   out.set('package.json', json({
@@ -192,12 +243,22 @@ export function newGame({ target, name, id, engineRoot }) {
     private: true,
     type: 'module',
     scripts: SCRIPTS,
-    dependencies: { '@csarkosh/engine': release },
+    dependencies: { '@csarkosh/engine': release, '@csarkosh/engine-server': serverRelease },
     devDependencies: { '@types/node': NODE_TYPES, ...dev },
   }));
   out.set('tsconfig.json', json({ compilerOptions, include: ['src', 'test', 'vite.config.ts', ENV_TYPES] }));
   out.set('.gitignore', 'node_modules\ndist\n');
-  out.set('README.md', readme({ name, version }));
+  const origin = devOrigin(readFileSync(join(emptyGame, 'vite.config.ts'), 'utf8'));
+  out.set('README.md', readme({ name, version, origin }));
+  out.set('game.json', json({
+    app: `game-${id}`,
+    telemetryDataset: `${id.replace(/-/g, '_')}_telemetry`,
+    telemetryBucket: `${id}-telemetry`,
+    allowedOrigins: [origin],
+  }));
+  out.set('server.package.json', json({ name: `${id}-server`, private: true, type: 'module', dependencies: { '@csarkosh/engine-server': serverRelease } }));
+  out.set('Dockerfile', DOCKERFILE);
+  out.set('.dockerignore', 'node_modules\ndist\n');
 
   const written = [...out.keys()].sort();
   for (const path of written) {
