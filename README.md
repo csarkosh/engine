@@ -22,7 +22,7 @@ It ships as TypeScript source, not as compiled code. The game's own Vite build c
 | `rust/` | A small Rust crate whose built WebAssembly is committed as `src/sim/kernel/fieldWasm.ts`. |
 | `test/` | The engine's own tests (vitest). |
 | `testing/` | Test helpers a game's tests import as `@csarkosh/engine/testing/<name>`. |
-| `tools/` | Plain Node scripts a game runs from its own root: the push gate, the frame-budget harness, the README stills, the build comparison, the kernel's build and the KTX2 vendoring. Their tests stand in `tools/**/test/`. |
+| `tools/` | Plain Node scripts a game runs from its own root: the push gate, the frame-budget harness, the README stills, the build comparison, the kernel's build, the KTX2 vendoring and `tools/site/deploy.mjs`, which deploys one game's path of a Firebase Hosting site several games share (`tools/site/README.md`). Their tests stand in `tools/**/test/`. |
 | `vite/` | The Vite preset a game's build starts from. |
 | `server/` | The game server, its own package `@csarkosh/engine-server`: the signaling server that introduces WebRTC peers in a room, and the telemetry route, in plain Node. Released as its own tarball, compiled, apart from the engine's. A workspace of this repository. |
 | `empty/` | The empty game: a game of nothing on the engine alone, with its own `index.html`, Vite config and tests. The smallest example of a game. |
