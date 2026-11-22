@@ -7,7 +7,8 @@ deterministic simulation that every peer runs the same way.
 It is the engine of one game, published so that the game's code is complete and so that a second
 game can start from it. It promises no stable API: a module may move, change or go between any two
 versions. Versions are `0.<game>.<release>`: the middle number counts the games built on it, the
-last one counts its releases.
+last one counts its releases. The branch `main` is the newest game's line (`0.2`); a fix an earlier
+game needs lands on that game's own branch (`line/0.1` for Day Hike) and is released from there.
 
 It ships as TypeScript source, not as compiled code. The game's own Vite build compiles it.
 
@@ -31,7 +32,7 @@ A release attaches a packed tarball. A game depends on that and not on the Git r
 the shipped files are in Git LFS and a git dependency would get pointers in place of them:
 
 ```json
-"@csarkosh/engine": "https://github.com/csarkosh/engine/releases/download/v0.1.2/csarkosh-engine-0.1.2.tgz"
+"@csarkosh/engine": "https://github.com/csarkosh/engine/releases/download/v0.2.0/csarkosh-engine-0.2.0.tgz"
 ```
 
 The game imports the engine's modules by path under the package name, for example
