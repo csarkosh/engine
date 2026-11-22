@@ -12,7 +12,7 @@
  */
 export const PAGE_ENTRIES = [
   "game/ambientAudio", "game/assetUrls", "game/clipClock", "game/cloudParams", "game/colour", "game/commands", "game/credits", "game/downloadCard",
-  "game/downloadTurns", "game/engineAssets", "game/fetchRetry", "game/glbParts", "game/gradeParams", "game/hollowLook", "game/icons",
+  "game/downloadTurns", "game/engineAssets", "game/engineCredits", "game/fetchRetry", "game/glbParts", "game/gradeParams", "game/hollowLook", "game/icons",
   "game/instancePose", "game/lakeSkyline", "game/lampParams", "game/lite/displayCurve", "game/lite/drawOrder", "game/lite/forestModels",
   "game/lite/forestPlugins", "game/lite/frameBlock", "game/lite/listMeshes", "game/lite/renderer", "game/lite/shadeMask",
   "game/lite/shaderUniforms", "game/lite/skinnedModels", "game/loadProgress", "game/loadReport", "game/modeList", "game/modelBake",

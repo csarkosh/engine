@@ -31,7 +31,7 @@ A release attaches a packed tarball. A game depends on that and not on the Git r
 the shipped files are in Git LFS and a git dependency would get pointers in place of them:
 
 ```json
-"@csarkosh/engine": "https://github.com/csarkosh/engine/releases/download/v0.1.0/csarkosh-engine-0.1.0.tgz"
+"@csarkosh/engine": "https://github.com/csarkosh/engine/releases/download/v0.1.1/csarkosh-engine-0.1.1.tgz"
 ```
 
 The game imports the engine's modules by path under the package name, for example
