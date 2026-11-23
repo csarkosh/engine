@@ -599,12 +599,14 @@ function coastFrame(seed: number, z: number): {
   if (blend === undefined) {
     return { coastlineX, dDz, blendEnd: b0, blendEndDz: b0Dz, roadBlendEnd: b0, roadBlendEndDz: b0Dz };
   }
-  const W = blend.windowD(z);
+  // The place's own end, which may be the seed's (a bay drawn out further in one world than another).
+  const end = typeof blend.end === "number" ? blend.end : blend.end(seed);
+  const W = blend.windowD(z, seed);
   return {
     coastlineX,
     dDz,
-    blendEnd: b0 + (blend.end - b0) * W.v,
-    blendEndDz: b0Dz * (1 - W.v) + (blend.end - b0) * W.dz,
+    blendEnd: b0 + (end - b0) * W.v,
+    blendEndDz: b0Dz * (1 - W.v) + (end - b0) * W.dz,
     roadBlendEnd: b0,
     roadBlendEndDz: b0Dz,
   };
@@ -675,7 +677,7 @@ export function coastGround(seed: number, x: number, z: number): { u: number; uD
   const u = d - road.dr;
   const uDz = f.dDz - road.drDz;
   const base = olympicBaseFrom(seed, x, z, d, f.dDz, f.blendEnd, f.blendEndDz);
-  const keep = overlay === null || overlay.cliffKeepD === undefined ? UNIT_KEEP : overlay.cliffKeepD(u, uDz, z);
+  const keep = overlay === null || overlay.cliffKeepD === undefined ? UNIT_KEEP : overlay.cliffKeepD(u, uDz, z, seed);
   const duned = duneD(seed, x, z, u, uDz, cliffD(seed, x, z, u, uDz, base, keep));
   return { u, uDz, ground: coveD(seed, x, z, d, f.dDz, u, uDz, duned) };
 }
@@ -722,7 +724,7 @@ function olympicSample(seed: number, x: number, z: number): TerrainSample {
   // then cuts through cliffed ground, and the
   // mask's road suppression keeps the corridor and grade lattice untouched
   // (cliffD is the identity for |u| ≤ CLIFF_ROAD_NEAR = ROAD_CORRIDOR_HALF).
-  const keep = overlay === null || overlay.cliffKeepD === undefined ? UNIT_KEEP : overlay.cliffKeepD(u, uDz, z);
+  const keep = overlay === null || overlay.cliffKeepD === undefined ? UNIT_KEEP : overlay.cliffKeepD(u, uDz, z, seed);
   const cliffed = cliffD(seed, x, z, u, uDz, base, keep);
   // Dunes AFTER cliffs so cliffD reads the exact base it read before this
   // feature existed (its own early-out is base.h < 12, and the dune window is
@@ -855,11 +857,13 @@ export type CoastOverlay = {
   /**
    * A window along the coast (its weight at z, with the weight's slope) inside which the
    * shore's climb to the massif is drawn out to end `end` metres inland, whatever the bay or
-   * the headland there would have had.
+   * the headland there would have had. The end and the window may each be the seed's, so that a
+   * place's bay is broad in one world and narrow in another; a place that takes no notice of the
+   * seed gives a number and a window of z alone.
    */
-  blend?: { end: number; windowD(z: number): { v: number; dz: number } };
-  /** How much of the cliff bands is kept at a place in the road's frame: 1 all of them, 0 none. */
-  cliffKeepD?(u: number, uDz: number, z: number): { v: number; dx: number; dz: number };
+  blend?: { end: number | ((seed: number) => number); windowD(z: number, seed: number): { v: number; dz: number } };
+  /** How much of the cliff bands is kept at a place in the road's frame: 1 all of them, 0 none. The seed is handed for a place whose reach is the seed's. */
+  cliffKeepD?(u: number, uDz: number, z: number, seed: number): { v: number; dx: number; dz: number };
   /** The place's ground at a point, over the coast's (`base`, through the cove) and under the road's corridor, in the road's frame. */
   shapeD(seed: number, x: number, z: number, u: number, uDz: number, base: TerrainSample): TerrainSample;
   /** The place's lakes, which follow the sea among the world's water bodies. */
