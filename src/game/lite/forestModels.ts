@@ -98,6 +98,8 @@ async function readModelFile(
 ): Promise<{ model: LoadedModel; file: ArrayBuffer }> {
   const file = await fetchRetried(url, signal, (response) => response.arrayBuffer());
   fetched(file.byteLength);
+  // A model's textures are KTX2 (`KHR_texture_basisu`): Lite reads them with the decoder, which must know where its files are.
+  pointKtx2Decoder();
   const container = await loadGltf(engine, file);
   const all = getContainerMeshes(container);
   const meshes = new Set<SceneNode>(all);
