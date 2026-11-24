@@ -872,7 +872,7 @@ export type CoastOverlay = {
   featureMask?(seed: number, x: number, z: number, h: number): FeatureMask;
 } & Pick<
   TerrainVariant,
-  "trailDistance" | "trailGraph" | "sceneryLandmarks" | "landmarkMask" | "prepare" | "install" | "isPrepared" | "shoreStrip" | "clearing" | "wildlifeGround"
+  "trailDistance" | "trailGraph" | "sceneryLandmarks" | "landmarkMask" | "prepare" | "install" | "isPrepared" | "shoreStrip" | "clearing" | "wildlifeGround" | "clutterStands"
 >;
 
 /** The place laid over the coast in this thread, once the coast is registered with one. */
@@ -904,6 +904,7 @@ export function registerOlympic(place: CoastOverlay | null): void {
     shoreStrip: place?.shoreStrip,
     clearing: place?.clearing,
     wildlifeGround: place?.wildlifeGround,
+    clutterStands: place?.clutterStands,
     sample: olympicSample,
   });
   overlay = place;

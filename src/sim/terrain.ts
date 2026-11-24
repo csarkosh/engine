@@ -114,6 +114,15 @@ export type TerrainVariant = {
    * tunables or the level id.
    */
   wildlifeGround?(seed: number, species: number, x: number, z: number): boolean;
+  /**
+   * Whether a piece of ground cover of a class (the clutter field's own numbering) may stand at
+   * a place: asked of each instance at its own jittered position, after the density at its
+   * cell's centre has let it be. A cell's centre cannot resolve a wall or a path narrower than
+   * the cell, so a place that must keep a class off one says so here, by the instance. Absent,
+   * every instance stands. It is the simulation's (a boulder is solid): a place that sets it
+   * declares what shapes it in its tunables.
+   */
+  clutterStands?(seed: number, cls: number, x: number, z: number): boolean;
   sample(worldSeed: number, x: number, z: number): TerrainSample;
 };
 

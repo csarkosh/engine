@@ -1123,6 +1123,9 @@ export function clutterInCell(seed: number, cls: number, cellX: number, cellZ: n
   // Nothing that stands tall grows in the trailhead's clearing: rejected by
   // its own place, as the trail's rule rejects it.
   if (cfg.standsTall && inTrailheadClearing(seed, x, z)) return null;
+  // And a place may keep a class off ground its cell's centre cannot resolve (a wall's foot, a path).
+  const stands = activeTerrainVariant().clutterStands;
+  if (stands !== undefined && !stands(seed, cls, x, z)) return null;
   const ground = elevationSampleAt(seed, x, z);
   const groundH = ground.h;
   const scale = cfg.scaleMin + hash3(cellX, cellZ, 3, salted) * (cfg.scaleMax - cfg.scaleMin);
