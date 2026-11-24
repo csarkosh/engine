@@ -360,8 +360,18 @@ export function forestGround(seed: number, x: number, z: number): boolean {
  * the birds.
  */
 export function speciesGround(seed: number, species: number, x: number, z: number): boolean {
-  if (species < FIRST_BIRD_SPECIES || species === SPECIES_BUTTERFLY) return forestGround(seed, x, z);
+  if (species < FIRST_BIRD_SPECIES || species === SPECIES_BUTTERFLY) return forestGroundFor(seed, species, x, z);
   return true;
+}
+/**
+ * `forestGround` for one species: the forest's ground that the active terrain's
+ * `wildlifeGround` also allows that species. The terrain's rules come first, so the hook is
+ * asked only of places they allow, and costs nothing where a terrain has none.
+ */
+export function forestGroundFor(seed: number, species: number, x: number, z: number): boolean {
+  if (!forestGround(seed, x, z)) return false;
+  const hook = activeTerrainVariant().wildlifeGround;
+  return hook === undefined || hook(seed, species, x, z);
 }
 /** How far apart the way to a goal is tried, and how closely the edge is then found (m). */
 const ALLOWED_STRIDE = 1;
@@ -444,6 +454,8 @@ function groundUnit(seed: number, species: number, cx: number, cz: number): Wild
   const variant = activeTerrainVariant();
   const road = variant.roadDistance?.(seed, x, z) ?? Infinity;
   if (!standable(s, road, shoreHeight(seed, x, z, s.h))) return null;
+  const hook = variant.wildlifeGround;
+  if (hook !== undefined && !hook(seed, species, x, z)) return null;
   switch (species) {
     case SPECIES_ELK: {
       if (road < ELK_ROAD_CLEAR) return null;
@@ -468,7 +480,7 @@ function groundUnit(seed: number, species: number, cx: number, cz: number): Wild
       for (const b of bushes) {
         const d = Math.hypot(b.x - x, b.z - z);
         // The bush is where the rabbit bolts to and comes back from.
-        if (d <= bestD && forestGround(seed, b.x, b.z)) { bestD = d; best = b; }
+        if (d <= bestD && forestGroundFor(seed, species, b.x, b.z)) { bestD = d; best = b; }
       }
       if (best === null) return null;
       return unit({ seed, presenceDraw, species, cellX: cx, cellZ: cz, x, z, h: s.h, members: membersFor(seed, species, cx, cz), refugeX: best.x, refugeZ: best.z, homeX: best.x, homeZ: best.z, homeH: best.groundH, altitude: 0, radius: 0 });
@@ -499,7 +511,7 @@ function groundUnit(seed: number, species: number, cx: number, cz: number): Wild
         if (Math.floor(t.x / cell) !== cx || Math.floor(t.z / cell) !== cz) continue;
         // The squirrel lives at its tree, not at the cell's anchor, so it is the tree's
         // own ground that has to be the forest's.
-        if (!forestGround(seed, t.x, t.z)) continue;
+        if (!forestGroundFor(seed, species, t.x, t.z)) continue;
         const d = Math.hypot(t.x - x, t.z - z);
         if (d < bestD) { bestD = d; best = t; }
       }
@@ -603,6 +615,8 @@ function birdUnit(seed: number, species: number, cx: number, cz: number): Wildli
       // "not a dense stand": `CLUTTER_GRASS_CANOPY_LO` is the canopy fraction below which
       // grass and rabbits already treat the ground as clear.
       const s = elevationSampleAt(seed, x, z);
+      const hook = activeTerrainVariant().wildlifeGround;
+      if (hook !== undefined && !hook(seed, species, x, z)) return null;
       if (forestDensity(seed, x, z, s) >= CLUTTER_GRASS_CANOPY_LO) return null;
       if (clutterDensity(seed, CLUTTER_FLOWER, x, z, s) <= 0) return null;
       // Always one insect — the raven pair's own fixed `members: 2` precedent — so no ninth

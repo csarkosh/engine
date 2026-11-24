@@ -18,7 +18,7 @@ import type { WeatherParams } from "./weather.js";
 import {
   FIRST_BIRD_SPECIES, GIANT_TRUNK_RADIUS_PER_SCALE, SPECIES_BUTTERFLY, SPECIES_COUNT, SPECIES_DEER, SPECIES_EAGLE,
   SPECIES_ELK, SPECIES_GULL, SPECIES_RABBIT, SPECIES_RAVEN_PAIR, SPECIES_RAVEN_ROOST, SPECIES_SQUIRREL,
-  RAVEN_PERCH_HEIGHT, WILDLIFE_SPREAD, forestGround, lastAllowed, type WildlifeUnit,
+  RAVEN_PERCH_HEIGHT, WILDLIFE_SPREAD, forestGroundFor, lastAllowed, type WildlifeUnit,
 } from "./wildlifeField.js";
 
 /**
@@ -329,9 +329,9 @@ let reads = 0;
 export function groundReads(): number {
   return reads;
 }
-function onForest(seed: number, x: number, z: number): boolean {
+function onForest(seed: number, species: number, x: number, z: number): boolean {
   reads++;
-  return forestGround(seed, x, z);
+  return forestGroundFor(seed, species, x, z);
 }
 /**
  * For each member of a herd, the place its offset last asked for and the place it was
@@ -350,11 +350,11 @@ function keptPlace(u: UnitState, m: number, seed: number, tx: number, tz: number
   if (kept[i] === tx && kept[i + 1] === tz) return kept;
   kept[i] = tx;
   kept[i + 1] = tz;
-  if (onForest(seed, tx, tz)) {
+  if (onForest(seed, u.unit.species, tx, tz)) {
     kept[i + 2] = tx;
     kept[i + 3] = tz;
   } else {
-    const p = lastAllowed((x, z) => onForest(seed, x, z), u.x, u.z, tx, tz);
+    const p = lastAllowed((x, z) => onForest(seed, u.unit.species, x, z), u.x, u.z, tx, tz);
     kept[i + 2] = p.x;
     kept[i + 3] = p.z;
   }
@@ -371,7 +371,7 @@ function keptPlace(u: UnitState, m: number, seed: number, tx: number, tz: number
  */
 function keepGoal(u: UnitState, seed: number): void {
   if (u.unit.species >= FIRST_BIRD_SPECIES) return;
-  const allowed = (x: number, z: number): boolean => onForest(seed, x, z);
+  const allowed = (x: number, z: number): boolean => onForest(seed, u.unit.species, x, z);
   if (!allowed(u.x, u.z)) {
     if (!allowed(u.goalX, u.goalZ)) { u.goalX = u.x; u.goalZ = u.z; }
     return;
@@ -450,8 +450,8 @@ export function createUnitState(unit: WildlifeUnit, tick: number, seed: number):
     offsets.push({ a, r, delay });
     let px = unit.x + r * Math.cos(a), pz = unit.z + r * Math.sin(a);
     // As `poseGround` holds a member's place, so it starts there.
-    if (unit.species < FIRST_BIRD_SPECIES && r > 0 && !onForest(seed, px, pz)) {
-      const p = lastAllowed((x, z) => onForest(seed, x, z), unit.x, unit.z, px, pz);
+    if (unit.species < FIRST_BIRD_SPECIES && r > 0 && !onForest(seed, unit.species, px, pz)) {
+      const p = lastAllowed((x, z) => onForest(seed, unit.species, x, z), unit.x, unit.z, px, pz);
       px = p.x;
       pz = p.z;
     }

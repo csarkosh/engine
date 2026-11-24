@@ -106,6 +106,14 @@ export type TerrainVariant = {
    * reach is the clutter's own (`TRAILHEAD_CLEARING`).
    */
   clearing?: { z: number; x(seed: number): number };
+  /**
+   * Whether an animal of a species (the wildlife field's own numbering) may be anchored at, or
+   * walk over, a place. It is asked only of places the terrain's own rules already allow for
+   * that animal: the forest's ground, clear of the road. Absent, every such place is allowed.
+   * It is the renderer's alone: the simulation never reads it, and it is no part of the
+   * tunables or the level id.
+   */
+  wildlifeGround?(seed: number, species: number, x: number, z: number): boolean;
   sample(worldSeed: number, x: number, z: number): TerrainSample;
 };
 
