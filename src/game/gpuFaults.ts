@@ -283,6 +283,8 @@ export type GpuFaultDeps = {
 export type GpuFaults = FaultListener & {
   /** Listens to `renderer` where it offers a source, as the renderer this hike now draws with; a renderer that offers none is left alone. */
   attach(renderer: object): void;
+  /** What the attached renderer's device holds now (`deviceHeld.ts`); null where none is attached or it is not counted. */
+  held(): HeldCounts | null;
   /** The renderer last attached: which one of the hike's (1 the first), and what it says of itself; null where it offers no source. */
   current(): { r: number; facts: RendererFacts } | null;
   /** What the bound made of the hike's last lost device; null before any. */
@@ -428,6 +430,7 @@ export function createGpuFaults(deps: GpuFaultDeps): GpuFaults {
     get distinct() {
       return known.size + (uncounted > 0 ? 1 : 0);
     },
+    held: () => (disposed || current === null ? null : current.held()),
     attach(renderer) {
       if (disposed) return;
       const source = faultSourceOf(renderer);

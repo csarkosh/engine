@@ -16,6 +16,7 @@ import {
   stripOverrides,
   type Route,
 } from "./game/router.js";
+import { heapLimitFields, readHeap } from "./game/memoryRead.js";
 import { afterNextPaint } from "./game/paint.js";
 import { setLoadProgress } from "./game/loadReport.js";
 import { markedProgress } from "./game/loadProgress.js";
@@ -239,7 +240,8 @@ export function startShell<
   // The Settings panel's Auto line waits on them, and the load check's verdict.
   void signalsReady.then((read) => {
     signals = read;
-    telemetry.set({ gpu: (read.renderer ?? "").slice(0, 120), adapter: read.adapterStatus, cores: read.cores ?? 0, mem: read.memoryGb ?? 0, mobile: read.mobile });
+    // With what the machine says it has (`mem`), the most the browser lets the page's heap grow to (`memoryRead.ts`).
+    telemetry.set({ gpu: (read.renderer ?? "").slice(0, 120), adapter: read.adapterStatus, cores: read.cores ?? 0, mem: read.memoryGb ?? 0, mobile: read.mobile, ...heapLimitFields(readHeap(performance)) });
     const known = loadVerdict(webgpuOffered, read);
     if (known !== null) settleVerdict(known);
     // The adapter had not answered when the signals went on without it: not

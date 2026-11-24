@@ -42,6 +42,7 @@ import { resolveTier, type TierChoice, type TierSource } from "./game/tierChoice
 import { buildFirstRenderer, buildOrUndo, swapRenderer, switchOutcome, whenStandingSkyHeld, type EngineOnCanvas, type SwapBindings } from "./game/rendererSwap.js";
 import { FALLBACK_NOTICE_MS, answerFailures, coverWith, createSerial } from "./game/engineFailure.js";
 import { createGpuFaults } from "./game/gpuFaults.js";
+import { memoryFields, readHeap } from "./game/memoryRead.js";
 import { lossEndedLine, type LossNote } from "./game/lossBound.js";
 import { GOVERNOR_IDLE_MAX_MS, actOnDrop, governSession, governorDecision, steadyFrame } from "./game/governor.js";
 import { OVER_PLAY_Z, showProbeScreen, timeIdleCadence } from "./game/probeScreen.js";
@@ -1120,7 +1121,8 @@ function buildGame<
     side.matchStarted(world);
     worstFrameMs = 0;
     stalls = 0;
-    telemetry.event("match_start", { role, party: lobby?.state.members.length ?? 1, lobby: lobby?.state.id ?? "" });
+    // What the page holds as the match begins (the world is built: near the most a load holds) and in each heartbeat after (`memoryRead.ts`).
+    telemetry.event("match_start", { role, party: lobby?.state.members.length ?? 1, lobby: lobby?.state.id ?? "", ...memoryFields(readHeap(performance), faults.held()) });
     telemetry.sample(() => {
       const s = stats();
       const sample = {
@@ -1130,6 +1132,7 @@ function buildGame<
         rtt: Math.round(s.rtt),
         pe: Math.round(s.pe * 100) / 100,
         p: progressRounded(),
+        ...memoryFields(readHeap(performance), faults.held()),
       };
       worstFrameMs = 0;
       stalls = 0;
