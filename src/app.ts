@@ -1121,7 +1121,8 @@ function buildGame<
     side.matchStarted(world);
     worstFrameMs = 0;
     stalls = 0;
-    // What the page holds as the match begins (the world is built: near the most a load holds) and in each heartbeat after (`memoryRead.ts`).
+    // What the page holds as the match begins and in each heartbeat after (`memoryRead.ts`). The match begins before the world is built and before
+    // a renderer's device is counted, so this row's heap is small and it has no device's bytes: the first heartbeat is the load's reading.
     telemetry.event("match_start", { role, party: lobby?.state.members.length ?? 1, lobby: lobby?.state.id ?? "", ...memoryFields(readHeap(performance), faults.held()) });
     telemetry.sample(() => {
       const s = stats();

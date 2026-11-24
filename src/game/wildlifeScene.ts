@@ -19,6 +19,7 @@
  * Renderer-only by design: nothing here may migrate into sim/ (the
  * wildlifeField.ts rule). Wildlife is cosmetic and must not move the level id.
  */
+import { createGroundLattice } from "./groundLattice.js";
 import { hash3 } from "../sim/field.js";
 import { elevationAt, elevationSampleAt } from "../sim/terrain.js";
 import { SIM_TICK_HZ, TICK_DT } from "../sim/constants.js";
@@ -460,7 +461,9 @@ export function createWildlifeScene(seed: number, ports: WildlifePorts, options:
   // `DIRECTOR_ID_BASE`'s own doc in wildlifeDirector.ts), so the only
   // trustworthy record of "did I place this" is one this shell keeps itself.
   const directorState = createDirectorState(seed, (species, x, z) => speciesGround(seed, species, x, z));
-  const ground: Ground = (x, z) => elevationAt(seed, x, z);
+  // The director's ground is for its tests of sight, asked for every unit it weighs on every frame: the terrain read off a lattice
+  // (`groundLattice.ts`), which computes a place once. What stands on the ground is seated by the exact one, below.
+  const ground: Ground = createGroundLattice((x, z) => elevationAt(seed, x, z));
   const candidatePool: Candidate[] = [];
   const candidates: Candidate[] = [];
   const directorEvents: CueEvent[] = [];
