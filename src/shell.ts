@@ -25,6 +25,8 @@ import { worldInputs } from "./game/worldInputs.js";
 import { sceneLine, startWorldPrep, worldPrepLine, type WorldPrep, type WorldPrepOutcome } from "./game/worldPrep.js";
 import { createWorldAhead, type WorldMadeFrom } from "./game/worldAhead.js";
 import { loadNet, timedProgress, type TimedProgress } from "./game/loadTimes.js";
+import { ENGINE_WORKER_SCRIPTS } from "./game/engineWorkerScripts.js";
+import { warmWorkerScripts } from "./game/workerScripts.js";
 import type { PreparedScene } from "./game/preparedScene.js";
 import { isDesktop, isTouchDevice, hostPlatform, desktopVersion } from "./game/platform.js";
 import { inviteLink, parseJoinLink } from "./game/joinLink.js";
@@ -352,6 +354,9 @@ export function startShell<
   /** The world's worker, started for a world (`worldPrep.ts`): the one place it is started. */
   const startPrep = (from: WorldMadeFrom): WorldPrep => startWorldPrep(from, page.worldWorker);
   const ahead = createWorldAhead({ mint: createLobbyId, from: worldInputs, start: startPrep });
+  // The workers' scripts, fetched ahead of the workers at a high priority (`workerScripts.ts`): on the landing page
+  // once it has loaded, and at a session's start for one reached by its address.
+  const warmScripts = (): void => warmWorkerScripts([...(page.workerScripts ?? []), ...ENGINE_WORKER_SCRIPTS]);
   function warmWorld(): void {
     if (signals === null || verdict === null || !verdict.play || !side.landingUp()) return;
     // A follower's session is the host's to name: what was made ahead here is no one's.
@@ -363,6 +368,7 @@ export function startShell<
       window.addEventListener("load", warmWorld, { once: true });
       return;
     }
+    warmScripts();
     const search = location.search;
     ahead.warm(
       search,
@@ -1074,6 +1080,8 @@ export function startShell<
     const timed = timedProgress(markedProgress(opening?.progress ?? null, (stage) => telemetry.mark(`load:${stage}`), () => building), () => performance.now());
     loadTimes = timed;
     setLoadProgress(timed.progress);
+    // A session reached by its address had no landing page to fetch its workers' scripts from.
+    warmScripts();
     // The session's trail and level check, made off this thread: ahead of Play
     // while the landing page stood, where this is the session that was made for
     // (`worldAhead.ts`), else from now, while the tier is decided, the film

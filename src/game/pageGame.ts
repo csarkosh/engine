@@ -157,6 +157,8 @@ export type PageGame<
   statusLine(container: HTMLElement): { setStatus(line: string | null): void; dispose(): void };
   /** Starts the worker that makes a session's world off the page's thread (`worldPrep.ts`). */
   worldWorker(): Worker;
+  /** The addresses of the scripts of the game's own workers (the world's), for the page to fetch ahead of them (`workerScripts.ts`); none where it names none. */
+  workerScripts?: readonly string[];
   /** A staged scene of the game's on its own route, drawn on `canvas` at `tier`. */
   scene(
     at: { canvas: HTMLCanvasElement; container: HTMLElement; tier: QualityTier },
