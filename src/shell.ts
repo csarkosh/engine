@@ -24,6 +24,7 @@ import { createRouteAnnouncer } from "./game/routeAnnounce.js";
 import { worldInputs } from "./game/worldInputs.js";
 import { sceneLine, startWorldPrep, worldPrepLine, type WorldPrep, type WorldPrepOutcome } from "./game/worldPrep.js";
 import { createWorldAhead, type WorldMadeFrom } from "./game/worldAhead.js";
+import { loadNet, timedProgress, type TimedProgress } from "./game/loadTimes.js";
 import type { PreparedScene } from "./game/preparedScene.js";
 import { isDesktop, isTouchDevice, hostPlatform, desktopVersion } from "./game/platform.js";
 import { inviteLink, parseJoinLink } from "./game/joinLink.js";
@@ -70,6 +71,9 @@ import type { PageHud, PageRenderer, PageWorld } from "./game/sessionGame.js";
 import type { ClientSession } from "./net/client.js";
 import type { HostSession } from "./net/host.js";
 
+/** How many files the browser is asked to keep its record of (`performance.setResourceTimingBufferSize`). */
+const RESOURCE_RECORD_ENTRIES = 1000;
+
 /**
  * The page's shell: the routes, the lobby and its roster, telemetry, the load
  * check and the tier's choice, and the start of a session on a canvas of its
@@ -87,6 +91,9 @@ export function startShell<
   ClientS extends ClientSession<W, P, S, unknown>,
 >(page: PageGame<W, S, P, R, A, H, HostS, ClientS>): void {
   setGameIdentity(page.identity);
+  // The browser keeps its record of the files a page asked for to 250 by default, fewer than a second session's would
+  // be: a session's `ready` row reads how much of its load came over the network from it (`loadTimes.ts`).
+  performance.setResourceTimingBufferSize?.(RESOURCE_RECORD_ENTRIES);
   // Asked once: a production build given no signaling address has no party, so no roster is mounted and
   // nothing that needs the server is started (a party address, the landing's join).
   const signalingOn = hasSignaling(import.meta.env);
@@ -418,6 +425,10 @@ export function startShell<
   let lobbyError: string | undefined;
   // Play was pressed; the world builds on the next frame (see `onPlay`).
   let launching = false;
+  // When Play was pressed, until the session it started is launched: its `ready` row says how long Play to ready was.
+  let playedAt: number | null = null;
+  // The session's loads, timed for its `ready` row (`loadTimes.ts`).
+  let loadTimes: TimedProgress | null = null;
   let detachLobby: (() => void) | null = null;
   // One create-or-join in flight at a time. The button now disables itself the
   // moment an attempt starts, but this guard is what actually holds the line:
@@ -761,6 +772,7 @@ export function startShell<
     // that changed nothing reads as a tap that missed.
     if (launching) return;
     launching = true;
+    playedAt = performance.now();
     telemetry.event("play", { party: lobby === null ? 1 : lobby.state.members.length });
     // The game's load gets the bandwidth: the loop's download stops here.
     side.played();
@@ -1059,7 +1071,9 @@ export function startShell<
     // `start:decide`), and after it the game's: the renderer asks for its
     // models once its device is made, and an error under a session is the game's.
     let building = false;
-    setLoadProgress(markedProgress(opening?.progress ?? null, (stage) => telemetry.mark(`load:${stage}`), () => building));
+    const timed = timedProgress(markedProgress(opening?.progress ?? null, (stage) => telemetry.mark(`load:${stage}`), () => building), () => performance.now());
+    loadTimes = timed;
+    setLoadProgress(timed.progress);
     // The session's trail and level check, made off this thread: ahead of Play
     // while the landing page stood, where this is the session that was made for
     // (`worldAhead.ts`), else from now, while the tier is decided, the film
@@ -1202,6 +1216,7 @@ export function startShell<
       },
       fail: (error) => {
         telemetry.event("start_fail", { ...laps, msg: error instanceof Error ? error.message : String(error) });
+        playedAt = null;
         console.error("The game could not start.", error);
         endPrep();
         opening?.failed();
@@ -1278,8 +1293,20 @@ export function startShell<
     console.info(launchLine(decided, handle.graphics()));
     running = handle;
     const launchedAt = performance.now();
+    // Play to ready is the wait a player has: null for a session no Play on this page started (a link, a follower).
+    const played = playedAt;
+    playedAt = null;
+    const times = loadTimes;
     handle.ready.then(
-      () => telemetry.event("ready", { ms: Math.round(performance.now() - launchedAt) }),
+      () => {
+        const now = performance.now();
+        telemetry.event("ready", {
+          ms: Math.round(now - launchedAt),
+          ...(played === null ? {} : { playMs: Math.round(now - played) }),
+          ...times?.read(launchedAt),
+          ...loadNet(performance.getEntriesByType("resource") as PerformanceResourceTiming[], played ?? launchedAt),
+        });
+      },
       () => undefined,
     );
     // Under an opening the session is covered until its cut (`Opening.launched`).

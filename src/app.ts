@@ -1834,7 +1834,21 @@ function buildGame<
       return () => {
         filmOver = false;
         lift();
-        if (pace !== undefined) console.info(paceLine(pace.course()));
+        if (pace !== undefined) {
+          const course = pace.course();
+          console.info(paceLine(course));
+          // How the load was paced under the film, and what the film lost meanwhile: the row that says whether a
+          // machine kept its film whole (`loadPace.ts`).
+          telemetry?.event("pace", {
+            peak: course.peak,
+            level: course.level,
+            cuts: course.missed,
+            slips: course.slips,
+            frames: course.frames,
+            stops: course.stops,
+            windows: course.windows,
+          });
+        }
         // The film is gone: what is left of the first builds runs to its end here, behind the cut's
         // veil, and from now on a build that cannot wait runs whole, as in any play.
         try {
