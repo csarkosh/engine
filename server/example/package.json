@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@csarkosh/engine-server": "file:./csarkosh-engine-server-0.2.14.tgz"
+    "@csarkosh/engine-server": "file:./csarkosh-engine-server-0.2.15.tgz"
   }
 }
