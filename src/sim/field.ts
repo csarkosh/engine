@@ -153,7 +153,24 @@ const GRAD_Z = [0, 0, 1, -1, SQ, -SQ, SQ, -SQ] as const;
 /** 2D Perlin with unit gradients peaks at √2/2; this rescales to [-1, 1]. */
 const NOISE_NORM = Math.SQRT2;
 
+/**
+ * Where `gradientNoise2Into` and `fbm2dInto` leave their answer: one record, written over by every call of either.
+ * A caller copies what it needs into its own locals before it calls anything else that may ask for noise.
+ *
+ * It is a record with fixed fields because that is what makes no memory: a fresh record a call was about 3 GB of a
+ * world's load, and a number kept in a module's own `let` is boxed afresh at each write (measured on V8: a tenth
+ * of the fresh record's collections, and twice the time). A field of a record that lives on is written in place.
+ */
+export const NOISE: NoiseSample = { v: 0, dx: 0, dz: 0, dxx: 0, dxz: 0, dzz: 0 };
+
+/** `gradientNoise2`, as a fresh record: for a caller that keeps what it is answered. */
 export function gradientNoise2(x: number, z: number, seed: number): NoiseSample {
+  gradientNoise2Into(x, z, seed);
+  return { v: NOISE.v, dx: NOISE.dx, dz: NOISE.dz, dxx: NOISE.dxx, dxz: NOISE.dxz, dzz: NOISE.dzz };
+}
+
+/** 2D gradient noise in [-1, 1] with its first and second derivatives, left in `NOISE`: no memory is made. */
+export function gradientNoise2Into(x: number, z: number, seed: number): void {
   const xi = Math.floor(x);
   const zi = Math.floor(z);
   const fx = x - xi;
@@ -205,14 +222,12 @@ export function gradientNoise2(x: number, z: number, seed: number): NoiseSample 
   const dzz = 2 * dw * (Cz + u * Dz) + ddw * (C + u * D);
   const dxz = du * (Bz + dw * D + w * Dz) + dw * (Cx + u * Dx);
 
-  return {
-    v: value * NOISE_NORM,
-    dx: dx * NOISE_NORM,
-    dz: dz * NOISE_NORM,
-    dxx: dxx * NOISE_NORM,
-    dxz: dxz * NOISE_NORM,
-    dzz: dzz * NOISE_NORM,
-  };
+  NOISE.v = value * NOISE_NORM;
+  NOISE.dx = dx * NOISE_NORM;
+  NOISE.dz = dz * NOISE_NORM;
+  NOISE.dxx = dxx * NOISE_NORM;
+  NOISE.dxz = dxz * NOISE_NORM;
+  NOISE.dzz = dzz * NOISE_NORM;
 }
 
 /**
@@ -222,6 +237,12 @@ export function gradientNoise2(x: number, z: number, seed: number): NoiseSample 
  * Same per-octave seed convention as `fbm2`.
  */
 export function fbm2d(x: number, z: number, seed: number, octaves: number): NoiseSample {
+  fbm2dInto(x, z, seed, octaves);
+  return { v: NOISE.v, dx: NOISE.dx, dz: NOISE.dz, dxx: NOISE.dxx, dxz: NOISE.dxz, dzz: NOISE.dzz };
+}
+
+/** `fbm2d`, left in `NOISE`: no memory is made. */
+export function fbm2dInto(x: number, z: number, seed: number, octaves: number): void {
   let v = 0;
   let dx = 0;
   let dz = 0;
@@ -232,16 +253,21 @@ export function fbm2d(x: number, z: number, seed: number, octaves: number): Nois
   let freq = 1;
   let norm = 0;
   for (let i = 0; i < octaves; i++) {
-    const n = gradientNoise2(x * freq, z * freq, seed + i * 0x9e37);
-    v += amp * n.v;
-    dx += amp * freq * n.dx;
-    dz += amp * freq * n.dz;
-    dxx += amp * freq * freq * n.dxx;
-    dxz += amp * freq * freq * n.dxz;
-    dzz += amp * freq * freq * n.dzz;
+    gradientNoise2Into(x * freq, z * freq, seed + i * 0x9e37);
+    v += amp * NOISE.v;
+    dx += amp * freq * NOISE.dx;
+    dz += amp * freq * NOISE.dz;
+    dxx += amp * freq * freq * NOISE.dxx;
+    dxz += amp * freq * freq * NOISE.dxz;
+    dzz += amp * freq * freq * NOISE.dzz;
     norm += amp;
     amp *= 0.5;
     freq *= 2;
   }
-  return { v: v / norm, dx: dx / norm, dz: dz / norm, dxx: dxx / norm, dxz: dxz / norm, dzz: dzz / norm };
+  NOISE.v = v / norm;
+  NOISE.dx = dx / norm;
+  NOISE.dz = dz / norm;
+  NOISE.dxx = dxx / norm;
+  NOISE.dxz = dxz / norm;
+  NOISE.dzz = dzz / norm;
 }
