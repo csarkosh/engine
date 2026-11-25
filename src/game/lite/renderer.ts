@@ -84,7 +84,8 @@
  * (`enableAsyncPbrPipelines`, `enableAsyncShaderMaterialPipelines`), a mesh
  * joining the pass on the frame after its pipeline is ready, under the
  * film, whose frames no one sees; and a frame asks for a few at most
- * (`LOAD_PIPELINE_ASKS_PER_FRAME`). The passes whose pictures are kept (a
+ * (`LOAD_PIPELINE_ASKS_PER_FRAME`, or fewer a frame of more frames where the
+ * film's own frames pace the load, `loadPace.ts`). The passes whose pictures are kept (a
  * far tree's bake, the rain's cover map, the shore's panorama, the haunt's
  * mask) ask for theirs the same way and draw whole or not at all
  * (`drawWhole`): each is drawn, or asked for again, once its pipelines are
@@ -2089,14 +2090,18 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
       frameFit.refit();
       if (standing !== null) frameFit.fit();
     },
-    drawFrame() {
+    drawFrame(asks) {
       if (standing === null || engineWatch.failed("lost")) return;
+      // What this frame may ask for while the hike loads: the caller's number under a film it paces by, else the renderer's own.
+      setPipelineAsksPerFrame(asks ?? LOAD_PIPELINE_ASKS_PER_FRAME);
       // While the scene is built again for a new hiker's lamp, nothing of it is drawn (`wornLamps.ts`).
       if (side.rebuilding()) return;
       // The frame sized again where the canvas's box, the display's ratio or the render scale has moved.
       frameFit.fit();
       // The hike's own surface alone: a billboard's bake has another, drawn when the bake is (`impostorBake.ts`).
       renderFrame(standing.engine, 1000 / 60, [standing.engine]);
+      // The caller's number was this frame's alone: whatever else draws (a bake's own frames) asks by the renderer's.
+      if (asks !== undefined) setPipelineAsksPerFrame(LOAD_PIPELINE_ASKS_PER_FRAME);
       if (forestSettled) framesSettled++;
       drawn++;
       // The cover map is drawn with the frame that asked for it, and no other.

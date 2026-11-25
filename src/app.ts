@@ -47,6 +47,8 @@ import { lossEndedLine, type LossNote } from "./game/lossBound.js";
 import { GOVERNOR_IDLE_MAX_MS, actOnDrop, governSession, governorDecision, steadyFrame } from "./game/governor.js";
 import { OVER_PLAY_Z, showProbeScreen, timeIdleCadence } from "./game/probeScreen.js";
 import { createCoveredDraw } from "./game/coveredDraw.js";
+import type { FilmFramesProbe } from "./game/filmFrames.js";
+import { createLoadPace, paceLine } from "./game/loadPace.js";
 import { FIRST_BUILD_SLICE_MS } from "./game/syncJobs.js";
 import { createFirstBuilds } from "./game/firstBuilds.js";
 import { extrasLater } from "./game/extrasLater.js";
@@ -86,8 +88,10 @@ export type GameHandle = {
   ready: Promise<void>;
   /** Covers play as the probe's screen does (the controls held, the pause
    * menu kept), until the function returned is called: what an intro playing
-   * over the start holds the session with. */
-  cover(): () => void;
+   * over the start holds the session with. `film` reads that film's frames
+   * (`filmFrames.ts`): the covered session is then drawn as often as the
+   * film affords (`loadPace.ts`), and without it slowly. */
+  cover(film?: FilmFramesProbe): () => void;
   /** Engages the controls (the pointer's lock), as the pause menu's Resume
    * does: the intro's cut to the world. Resolves once they are engaged, or
    * false a second later when they could not be (`whenEngaged`), which is
@@ -1087,10 +1091,10 @@ function buildGame<
   const wrap = (t: Transport): Transport =>
     degradation === null ? t : degradeTransport(t, degradation);
 
-  /** The frame's draw: every frame, or one every `COVERED_DRAW_MS` while the intro's film covers the session. */
+  /** The frame's draw: every frame, or, while the intro's film covers the session, as often as the film affords (`loadPace.ts`). */
   const filmDraw = createCoveredDraw();
   function drawSession(): void {
-    if (filmDraw.due(performance.now())) renderer.drawFrame();
+    if (filmDraw.due(performance.now())) renderer.drawFrame(filmDraw.asks());
   }
 
   let last = performance.now();
@@ -1820,14 +1824,17 @@ function buildGame<
 
   return {
     ready,
-    cover() {
+    cover(film) {
       const release = gate.cover();
-      // The intro's film is over the session: drawn slowly until the cut (`coveredDraw.ts`).
-      const lift = filmDraw.cover();
+      // The intro's film is over the session: drawn until the cut at the pace the film's own frames
+      // afford (`coveredDraw.ts`, `loadPace.ts`), or slowly where the film cannot be read.
+      const pace = film === undefined ? undefined : createLoadPace(film);
+      const lift = filmDraw.cover(pace);
       filmOver = true;
       return () => {
         filmOver = false;
         lift();
+        if (pace !== undefined) console.info(paceLine(pace.course()));
         // The film is gone: what is left of the first builds runs to its end here, behind the cut's
         // veil, and from now on a build that cannot wait runs whole, as in any play.
         try {

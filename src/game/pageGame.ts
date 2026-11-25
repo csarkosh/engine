@@ -9,6 +9,7 @@
  */
 import type { AmbientAudio } from "./ambientAudio.js";
 import type { CreditEntry } from "./credits.js";
+import type { FilmFramesProbe } from "./filmFrames.js";
 import type { RenderPlayer, RenderState } from "./lite/renderGame.js";
 import type { LoadVerdict } from "./loadCheck.js";
 import type { LoadProgress } from "./loadProgress.js";
@@ -58,8 +59,12 @@ export type Opening = {
   failed(): void;
   /** The connect panel is up: the opening gives way to it. */
   connectPanel(): void;
-  /** The session is launched under the opening, and covered until the opening lets it go. */
-  launched(handle: { ready: Promise<void>; cover(): () => void; engage(): Promise<boolean> }): void;
+  /**
+   * The session is launched under the opening, and covered until the opening lets it go. The opening hands
+   * `cover` its film's frames where it has a film (`filmFrames.ts`), so the load under it runs as fast as the
+   * film affords.
+   */
+  launched(handle: { ready: Promise<void>; cover(film?: FilmFramesProbe): () => void; engage(): Promise<boolean> }): void;
 };
 
 /**

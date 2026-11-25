@@ -165,8 +165,12 @@ export type WorldRenderer<S> = {
    */
   project(pos: Vec3): { x: number; y: number; depth: number } | null;
   resize(): void;
-  /** Draws one frame of the world as the last `sync` left it. */
-  drawFrame(): void;
+  /**
+   * Draws one frame of the world as the last `sync` left it. `asks` is the most pipelines the frame may ask
+   * for off the page's thread while the world loads, where the caller paces them (`loadPace.ts`); without it
+   * the renderer's own number.
+   */
+  drawFrame(asks?: number): void;
   /** Calls `frame` once for each frame the page shows from now on, until
    * `stopLoop`: the loop that steps the world and draws it. */
   runLoop(frame: () => void): void;
