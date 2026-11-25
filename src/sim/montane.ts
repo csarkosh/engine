@@ -28,7 +28,7 @@
  * sim/ determinism rules apply: no trig, no Math.pow, no `**`, no hypot.
  * Math.sqrt is IEEE-exact and allowed.
  */
-import { fbm2d, gradientNoise2 } from "./field.js";
+import { fbm2dInto, gradientNoise2Into, NOISE } from "./field.js";
 import { registerTerrainVariant, type TerrainSample } from "./terrain.js";
 
 // ---- Tunables (starting points, not values to defend) ---------
@@ -101,13 +101,17 @@ function reliefNormFor(octaves: number): number {
   return norm;
 }
 
-/** Smoothstep with its derivative; clamped flat (zero slope) outside. */
-function smoothstepD(edge0: number, edge1: number, x: number): { v: number; d: number } {
+/** Where `smoothstepInto` leaves its answer; read it by number, at once, before any other call. */
+const STEP = { v: 0, d: 0 };
+
+/** Smoothstep with its derivative; clamped flat (zero slope) outside. Left in `STEP`. */
+function smoothstepInto(edge0: number, edge1: number, x: number): void {
   const span = edge1 - edge0;
-  if (x <= edge0) return { v: 0, d: 0 };
-  if (x >= edge1) return { v: 1, d: 0 };
+  if (x <= edge0) { STEP.v = 0; STEP.d = 0; return; }
+  if (x >= edge1) { STEP.v = 1; STEP.d = 0; return; }
   const t = (x - edge0) / span;
-  return { v: t * t * (3 - 2 * t), d: (6 * t * (1 - t)) / span };
+  STEP.v = t * t * (3 - 2 * t);
+  STEP.d = (6 * t * (1 - t)) / span;
 }
 
 type Flags = {
@@ -118,14 +122,21 @@ type Flags = {
   upliftOverride: number;
 };
 
-function sampleWith(
+/**
+ * Where `montaneSampleInto`, `denseSampleInto` and the registered variants' pipeline leave their answer: the
+ * height and its two partials. Written by every call of any of them (and of nothing else), so a caller copies
+ * the three numbers into its own locals before it calls anything that may sample the ground again.
+ */
+export const MONTANE_OUT: TerrainSample = { h: 0, dx: 0, dz: 0 };
+
+function sampleWithInto(
   cfg: MontaneTunables,
   reliefNorm: number,
   f: Flags,
   seed: number,
   x: number,
   z: number,
-): TerrainSample {
+): void {
   // ---- Stage 1: uplift, u ∈ [0, 1], with its p-space gradient -------------
   let u: number;
   let ux = 0;
@@ -133,14 +144,17 @@ function sampleWith(
   if (f.upliftOverride >= 0) {
     u = f.upliftOverride;
   } else {
-    const un = fbm2d(x / cfg.UPLIFT_WAVELENGTH, z / cfg.UPLIFT_WAVELENGTH, seed ^ UPLIFT_SALT, cfg.UPLIFT_OCTAVES);
+    fbm2dInto(x / cfg.UPLIFT_WAVELENGTH, z / cfg.UPLIFT_WAVELENGTH, seed ^ UPLIFT_SALT, cfg.UPLIFT_OCTAVES);
+    const unV = NOISE.v;
+    const unDx = NOISE.dx;
+    const unDz = NOISE.dz;
     // Raise the floor under uplift so nothing sits at zero relief.
     // At UPLIFT_FLOOR = 0 both lines are exact identities (0 + 1·u; 1·0.5),
     // which is what keeps the montane/plain snapshots bit-identical.
-    u = cfg.UPLIFT_FLOOR + (1 - cfg.UPLIFT_FLOOR) * (0.5 + 0.5 * un.v);
+    u = cfg.UPLIFT_FLOOR + (1 - cfg.UPLIFT_FLOOR) * (0.5 + 0.5 * unV);
     const g = (1 - cfg.UPLIFT_FLOOR) * 0.5;
-    ux = (g * un.dx) / cfg.UPLIFT_WAVELENGTH;
-    uz = (g * un.dz) / cfg.UPLIFT_WAVELENGTH;
+    ux = (g * unDx) / cfg.UPLIFT_WAVELENGTH;
+    uz = (g * unDz) / cfg.UPLIFT_WAVELENGTH;
   }
 
   // ---- Stage 2: domain warp q = p + A·g(p), with Jacobian ∂q/∂p -----------
@@ -151,23 +165,36 @@ function sampleWith(
   let jzx = 0; // ∂qz/∂x
   let jzz = 1; // ∂qz/∂z
   if (f.warp !== 0) {
-    const cx = fbm2d(x / cfg.WARP_COARSE_WAVELENGTH, z / cfg.WARP_COARSE_WAVELENGTH, seed ^ WARP_CX_SALT, cfg.WARP_OCTAVES);
-    const cz = fbm2d(x / cfg.WARP_COARSE_WAVELENGTH, z / cfg.WARP_COARSE_WAVELENGTH, seed ^ WARP_CZ_SALT, cfg.WARP_OCTAVES);
-    const fxn = fbm2d(x / cfg.WARP_FINE_WAVELENGTH, z / cfg.WARP_FINE_WAVELENGTH, seed ^ WARP_FX_SALT, cfg.WARP_OCTAVES);
-    const fzn = fbm2d(x / cfg.WARP_FINE_WAVELENGTH, z / cfg.WARP_FINE_WAVELENGTH, seed ^ WARP_FZ_SALT, cfg.WARP_OCTAVES);
-    qx = x + cfg.WARP_COARSE_STRENGTH * cx.v + cfg.WARP_FINE_STRENGTH * fxn.v;
-    qz = z + cfg.WARP_COARSE_STRENGTH * cz.v + cfg.WARP_FINE_STRENGTH * fzn.v;
+    fbm2dInto(x / cfg.WARP_COARSE_WAVELENGTH, z / cfg.WARP_COARSE_WAVELENGTH, seed ^ WARP_CX_SALT, cfg.WARP_OCTAVES);
+    const cxV = NOISE.v;
+    const cxDx = NOISE.dx;
+    const cxDz = NOISE.dz;
+    fbm2dInto(x / cfg.WARP_COARSE_WAVELENGTH, z / cfg.WARP_COARSE_WAVELENGTH, seed ^ WARP_CZ_SALT, cfg.WARP_OCTAVES);
+    const czV = NOISE.v;
+    const czDx = NOISE.dx;
+    const czDz = NOISE.dz;
+    fbm2dInto(x / cfg.WARP_FINE_WAVELENGTH, z / cfg.WARP_FINE_WAVELENGTH, seed ^ WARP_FX_SALT, cfg.WARP_OCTAVES);
+    const fxnV = NOISE.v;
+    const fxnDx = NOISE.dx;
+    const fxnDz = NOISE.dz;
+    fbm2dInto(x / cfg.WARP_FINE_WAVELENGTH, z / cfg.WARP_FINE_WAVELENGTH, seed ^ WARP_FZ_SALT, cfg.WARP_OCTAVES);
+    const fznV = NOISE.v;
+    const fznDx = NOISE.dx;
+    const fznDz = NOISE.dz;
+    qx = x + cfg.WARP_COARSE_STRENGTH * cxV + cfg.WARP_FINE_STRENGTH * fxnV;
+    qz = z + cfg.WARP_COARSE_STRENGTH * czV + cfg.WARP_FINE_STRENGTH * fznV;
     const cc = cfg.WARP_COARSE_STRENGTH / cfg.WARP_COARSE_WAVELENGTH;
     const cf = cfg.WARP_FINE_STRENGTH / cfg.WARP_FINE_WAVELENGTH;
-    jxx = 1 + cc * cx.dx + cf * fxn.dx;
-    jxz = cc * cx.dz + cf * fxn.dz;
-    jzx = cc * cz.dx + cf * fzn.dx;
-    jzz = 1 + cc * cz.dz + cf * fzn.dz;
+    jxx = 1 + cc * cxDx + cf * fxnDx;
+    jxz = cc * cxDz + cf * fxnDz;
+    jzx = cc * czDx + cf * fznDx;
+    jzz = 1 + cc * czDz + cf * fznDz;
   }
 
   // ---- Stage 3 blend: 0 = smooth fBm valley, 1 = fully ridged peak --------
-  const tS = smoothstepD(cfg.RIDGE_BLEND_LO, cfg.RIDGE_BLEND_HI, u);
-  const t = tS.v;
+  smoothstepInto(cfg.RIDGE_BLEND_LO, cfg.RIDGE_BLEND_HI, u);
+  const t = STEP.v;
+  const tD = STEP.d;
 
   // ---- Stage 3: the relief loop, entirely in q-space ----------------------
   // Sum S with its q-gradient and ∂S/∂t. This stage adds the per-octave weights
@@ -258,9 +285,9 @@ function sampleWith(
         // Compared in squared form so no square root is needed.
         const lo = cfg.REPOSE_SLOPE * cfg.REPOSE_SLOPE;
         const hi = (cfg.REPOSE_SLOPE + cfg.TALUS_BAND) * (cfg.REPOSE_SLOPE + cfg.TALUS_BAND);
-        const s = smoothstepD(lo, hi, m);
-        wt = 1 - cfg.TALUS_STRENGTH * s.v;
-        dwt = -cfg.TALUS_STRENGTH * s.d;
+        smoothstepInto(lo, hi, m);
+        wt = 1 - cfg.TALUS_STRENGTH * STEP.v;
+        dwt = -cfg.TALUS_STRENGTH * STEP.d;
       }
       // Product rule over the two stages, then the chain rule out to each
       // variable m depends on.
@@ -271,19 +298,23 @@ function sampleWith(
       wu = dwdm * mu;
     }
 
-    const n = gradientNoise2(qx * freq, qz * freq, (seed ^ RELIEF_SALT) + i * 0x9e37);
-    const ndx = n.dx * freq;
-    const ndz = n.dz * freq;
+    gradientNoise2Into(qx * freq, qz * freq, (seed ^ RELIEF_SALT) + i * 0x9e37);
+    const nV = NOISE.v;
+    const nDxx = NOISE.dxx;
+    const nDxz = NOISE.dxz;
+    const nDzz = NOISE.dzz;
+    const ndx = NOISE.dx * freq;
+    const ndz = NOISE.dz * freq;
 
     // Smooth channel: map to [0, 1]. Ridge channel: (1 − softabs(n))², the
     // canonical ridged shape, with |n| softened by RIDGE_EPSILON so the crest
     // line stays differentiable (the derivative test crosses crests).
-    const sm = 0.5 + 0.5 * n.v;
+    const sm = 0.5 + 0.5 * nV;
     const smx = 0.5 * ndx;
     const smz = 0.5 * ndz;
-    const a = Math.sqrt(n.v * n.v + cfg.RIDGE_EPSILON * cfg.RIDGE_EPSILON);
-    const ax = (n.v / a) * ndx;
-    const az = (n.v / a) * ndz;
+    const a = Math.sqrt(nV * nV + cfg.RIDGE_EPSILON * cfg.RIDGE_EPSILON);
+    const ax = (nV / a) * ndx;
+    const az = (nV / a) * ndz;
     const r = (1 - a) * (1 - a);
     const rx = -2 * (1 - a) * ax;
     const rz = -2 * (1 - a) * az;
@@ -306,9 +337,9 @@ function sampleWith(
     // would stay green, but a different and much flatter landscape.
     fgx += amp * ndx;
     fgz += amp * ndz;
-    fxx += amp * freq * freq * n.dxx;
-    fxz += amp * freq * freq * n.dxz;
-    fzz += amp * freq * freq * n.dzz;
+    fxx += amp * freq * freq * nDxx;
+    fxz += amp * freq * freq * nDxz;
+    fzz += amp * freq * freq * nDzz;
 
     amp *= 0.5;
     freq *= 2;
@@ -324,16 +355,27 @@ function sampleWith(
   // ridge blend t(u), and through the attenuation weights, which read a guide
   // scaled by u^POWER:
   //   ∂R/∂px = Rqx·∂qx/∂px + Rqz·∂qz/∂px + (Rt·t'(u) + Ru)·∂u/∂px.
-  const rpx = jxx * rqx + jzx * rqz + (rt * tS.d + ru) * ux;
-  const rpz = jxz * rqx + jzz * rqz + (rt * tS.d + ru) * uz;
+  const rpx = jxx * rqx + jzx * rqz + (rt * tD + ru) * ux;
+  const rpz = jxz * rqx + jzz * rqz + (rt * tD + ru) * uz;
 
   // h = PEAK · u^POWER · R; `up` and `upd` were computed before the loop,
   // because the guide scaling needs them.
-  return {
-    h: cfg.PEAK_HEIGHT * up * rv,
-    dx: cfg.PEAK_HEIGHT * (upd * ux * rv + up * rpx),
-    dz: cfg.PEAK_HEIGHT * (upd * uz * rv + up * rpz),
-  };
+  MONTANE_OUT.h = cfg.PEAK_HEIGHT * up * rv;
+  MONTANE_OUT.dx = cfg.PEAK_HEIGHT * (upd * ux * rv + up * rpx);
+  MONTANE_OUT.dz = cfg.PEAK_HEIGHT * (upd * uz * rv + up * rpz);
+}
+
+/** The pipeline as a fresh record, for the registered variants. */
+function sampleWith(
+  cfg: MontaneTunables,
+  reliefNorm: number,
+  f: Flags,
+  seed: number,
+  x: number,
+  z: number,
+): TerrainSample {
+  sampleWithInto(cfg, reliefNorm, f, seed, x, z);
+  return { h: MONTANE_OUT.h, dx: MONTANE_OUT.dx, dz: MONTANE_OUT.dz };
 }
 
 function variantTunables(cfg: MontaneTunables, flags: Flags): Readonly<Record<string, number>> {
@@ -362,6 +404,11 @@ const MONTANE_NORM = reliefNormFor(MONTANE_TUNABLES.RELIEF_OCTAVES);
  * and must get bit-identical answers to the registered variant. */
 export function montaneSample(seed: number, x: number, z: number): TerrainSample {
   return sampleWith(MONTANE_TUNABLES, MONTANE_NORM, MONTANE_FLAGS, seed, x, z);
+}
+
+/** `montaneSample`, left in `MONTANE_OUT`: no record is made. */
+export function montaneSampleInto(seed: number, x: number, z: number): void {
+  sampleWithInto(MONTANE_TUNABLES, MONTANE_NORM, MONTANE_FLAGS, seed, x, z);
 }
 
 /** Montane's full tunables record — the olympic variant embeds these so its
@@ -406,6 +453,11 @@ const DENSE_NORM = reliefNormFor(DENSE_TUNABLES.RELIEF_OCTAVES);
  * its inland half with this. */
 export function denseSample(seed: number, x: number, z: number): TerrainSample {
   return sampleWith(DENSE_TUNABLES, DENSE_NORM, MONTANE_FLAGS, seed, x, z);
+}
+
+/** `denseSample`, left in `MONTANE_OUT`: no record is made. */
+export function denseSampleInto(seed: number, x: number, z: number): void {
+  sampleWithInto(DENSE_TUNABLES, DENSE_NORM, MONTANE_FLAGS, seed, x, z);
 }
 
 /** Dense's full tunables record, for the olympic variant's registry entry. */

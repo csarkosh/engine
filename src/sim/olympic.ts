@@ -18,12 +18,12 @@
  * harness needs no special pleading at band edges. sim/ determinism rules:
  * no trig, no Math.pow, no `**`, no hypot.
  */
-import { fbm2d, hash3 } from "./field.js";
-import { DENSE_VARIANT_TUNABLES, denseSample } from "./montane.js";
+import { fbm2dInto, hash3, NOISE } from "./field.js";
+import { DENSE_VARIANT_TUNABLES, denseSampleInto, MONTANE_OUT } from "./montane.js";
 import {
   ROAD_WINDOW_FRACTION, ROAD_WOBBLE, ROAD_WOBBLE_WAVELENGTH, ROAD_WOBBLE_OCTAVES,
   ROAD_SALT, ROAD_LATTICE, ROAD_BED_HALF, ROAD_CORRIDOR_HALF,
-  roadOffsetD, gradeSplineD, corridorD,
+  roadOffsetInto, ROAD_OFFSET, gradeSplineInto, GRADE, corridorInto, CORRIDOR,
 } from "./road.js";
 import {
   CLIFF_PERIOD, CLIFF_BENCH, CLIFF_RISER_HALF,
@@ -34,7 +34,7 @@ import {
   CLIFF_OUT_STRENGTH, CLIFF_OUT_WAVELENGTH, CLIFF_OUT_OCTAVES,
   CLIFF_OUT_LO, CLIFF_OUT_HI, CLIFF_OUT_ALT_LO, CLIFF_OUT_ALT_HI, CLIFF_OUT_SALT,
   CLIFF_ROAD_NEAR, CLIFF_ROAD_FAR,
-  cliffD,
+  cliffInto, CLIFFED,
 } from "./cliffs.js";
 import { UNIT_KEEP } from "./cliffs.js";
 import {
@@ -182,26 +182,31 @@ const WARP_LINE_X = 0.318;
 /** Where the surf grade would reach the shelf-break depth. */
 const SHELF_BREAK_D = -(SHELF_BREAK_DEPTH / SURF_GRADE);
 
-/** Quintic smootherstep with derivative — C² at both edges. */
-function smootherstepD(edge0: number, edge1: number, x: number): { v: number; d: number } {
+/** Where `smootherstepInto` leaves its answer; read it by number, at once, before any other call. */
+const STEP = { v: 0, d: 0 };
+
+/** Quintic smootherstep with derivative — C² at both edges. Left in `STEP`. */
+function smootherstepInto(edge0: number, edge1: number, x: number): void {
   const span = edge1 - edge0;
-  if (x <= edge0) return { v: 0, d: 0 };
-  if (x >= edge1) return { v: 1, d: 0 };
+  if (x <= edge0) { STEP.v = 0; STEP.d = 0; return; }
+  if (x >= edge1) { STEP.v = 1; STEP.d = 0; return; }
   const t = (x - edge0) / span;
-  return {
-    v: t * t * t * (t * (t * 6 - 15) + 10),
-    d: (30 * t * t * (t - 1) * (t - 1)) / span,
-  };
+  STEP.v = t * t * t * (t * (t * 6 - 15) + 10);
+  STEP.d = (30 * t * t * (t - 1) * (t - 1)) / span;
 }
+
+/** Where `smoothPosInto` leaves its answer; read it by number, at once. */
+const POS = { v: 0, d: 0 };
 
 /** C² softened max(0, d): 0 below −m, exactly d above +m, quintic-derived ramp
  * between (its derivative is the cubic smoothstep of d). Morphs the surf grade
- * into the beach grade without a crease at the waterline. */
-function smoothPosD(d: number, m: number): { v: number; d: number } {
-  if (d <= -m) return { v: 0, d: 0 };
-  if (d >= m) return { v: d, d: 1 };
+ * into the beach grade without a crease at the waterline. Left in `POS`. */
+function smoothPosInto(d: number, m: number): void {
+  if (d <= -m) { POS.v = 0; POS.d = 0; return; }
+  if (d >= m) { POS.v = d; POS.d = 1; return; }
   const t = (d + m) / (2 * m);
-  return { v: m * t * t * t * (2 - t), d: t * t * (3 - 2 * t) };
+  POS.v = m * t * t * t * (2 - t);
+  POS.d = t * t * (3 - 2 * t);
 }
 
 /** Re-centres the grade morph so the waterline sits on d = 0 exactly. */
@@ -216,14 +221,25 @@ const SHORE_TRIM = ((BEACH_GRADE - SURF_GRADE) * GRADE_MORPH * 3) / 16;
  * the derivative are non-negative.
  */
 export function shoreProfileD(d: number): { v: number; dd: number } {
-  const ramp = smoothPosD(d, GRADE_MORPH);
-  const near = SURF_GRADE * d + (BEACH_GRADE - SURF_GRADE) * ramp.v - SHORE_TRIM;
-  const nearDd = SURF_GRADE + (BEACH_GRADE - SURF_GRADE) * ramp.d;
-  const w = smootherstepD(SHELF_BREAK_D - SHELF_BREAK_WIDTH, SHELF_BREAK_D, d);
-  return {
-    v: w.v * near + (1 - w.v) * -FLOOR_DEPTH,
-    dd: w.v * nearDd + w.d * (near + FLOOR_DEPTH),
-  };
+  shoreProfileInto(d);
+  return { v: PROFILE.v, dd: PROFILE.dd };
+}
+
+/** Where `shoreProfileInto` and `coveProfileInto` leave their answer; read by number, at once. */
+const PROFILE = { v: 0, dd: 0 };
+
+/** `shoreProfileD`, left in `PROFILE`: no record is made. */
+function shoreProfileInto(d: number): void {
+  smoothPosInto(d, GRADE_MORPH);
+  const rampV = POS.v;
+  const rampD = POS.d;
+  const near = SURF_GRADE * d + (BEACH_GRADE - SURF_GRADE) * rampV - SHORE_TRIM;
+  const nearDd = SURF_GRADE + (BEACH_GRADE - SURF_GRADE) * rampD;
+  smootherstepInto(SHELF_BREAK_D - SHELF_BREAK_WIDTH, SHELF_BREAK_D, d);
+  const wV = STEP.v;
+  const wD = STEP.d;
+  PROFILE.v = wV * near + (1 - wV) * -FLOOR_DEPTH;
+  PROFILE.dd = wV * nearDd + wD * (near + FLOOR_DEPTH);
 }
 
 /** Where the face meets the bed, and where the bed reaches the shelf break. */
@@ -238,18 +254,28 @@ const COVE_BREAK_D = COVE_TOE_D - (SHELF_BREAK_DEPTH - COVE_TOE_DEPTH) / COVE_BE
  * monotone, and nowhere steeper than the face.
  */
 export function coveProfileD(d: number): { v: number; dd: number } {
-  const toe = smoothPosD(d - COVE_TOE_D, COVE_TOE_MORPH);
-  const near = -COVE_TOE_DEPTH + COVE_BED_GRADE * (d - COVE_TOE_D) + (COVE_FACE_GRADE - COVE_BED_GRADE) * toe.v;
-  const nearDd = COVE_BED_GRADE + (COVE_FACE_GRADE - COVE_BED_GRADE) * toe.d;
+  coveProfileInto(d);
+  return { v: PROFILE.v, dd: PROFILE.dd };
+}
+
+/** `coveProfileD`, left in `PROFILE`: no record is made. */
+function coveProfileInto(d: number): void {
+  smoothPosInto(d - COVE_TOE_D, COVE_TOE_MORPH);
+  const toeV = POS.v;
+  const toeD = POS.d;
+  const near = -COVE_TOE_DEPTH + COVE_BED_GRADE * (d - COVE_TOE_D) + (COVE_FACE_GRADE - COVE_BED_GRADE) * toeV;
+  const nearDd = COVE_BED_GRADE + (COVE_FACE_GRADE - COVE_BED_GRADE) * toeD;
   // A softened min(near, COVE_CREST): the berm's crest.
-  const cap = smoothPosD(near - COVE_CREST, COVE_CREST_MORPH);
-  const capped = near - cap.v;
-  const cappedDd = nearDd * (1 - cap.d);
-  const w = smootherstepD(COVE_BREAK_D - SHELF_BREAK_WIDTH, COVE_BREAK_D, d);
-  return {
-    v: w.v * capped + (1 - w.v) * -FLOOR_DEPTH,
-    dd: w.v * cappedDd + w.d * (capped + FLOOR_DEPTH),
-  };
+  smoothPosInto(near - COVE_CREST, COVE_CREST_MORPH);
+  const capV = POS.v;
+  const capD = POS.d;
+  const capped = near - capV;
+  const cappedDd = nearDd * (1 - capD);
+  smootherstepInto(COVE_BREAK_D - SHELF_BREAK_WIDTH, COVE_BREAK_D, d);
+  const wV = STEP.v;
+  const wD = STEP.d;
+  PROFILE.v = wV * capped + (1 - wV) * -FLOOR_DEPTH;
+  PROFILE.dd = wV * cappedDd + wD * (capped + FLOOR_DEPTH);
 }
 
 export type Headland = { z: number; height: number; reach: number };
@@ -279,8 +305,9 @@ export function coveFor(seed: number): Cove {
     for (let k = 0; k < count; k++) {
       const sz = z + (hash3(i + 1, 3 + k, 0, salted) - 0.5) * HEAD_HALF_WIDTH;
       const d = -(reach + HEAD_TIP + COVE_STACK_STEP * k);
+      coastFrame(seed, sz);
       stacks.push({
-        x: coastFrame(seed, sz).coastlineX + d,
+        x: FRAME.coastlineX + d,
         z: sz,
         radius: COVE_STACK_RADIUS_MIN + (COVE_STACK_RADIUS_MAX - COVE_STACK_RADIUS_MIN) * hash3(i + 1, 5 + k, 0, salted),
         height: COVE_STACK_HEIGHT_MIN + (COVE_STACK_HEIGHT_MAX - COVE_STACK_HEIGHT_MIN) * hash3(i + 1, 7 + k, 0, salted),
@@ -292,75 +319,122 @@ export function coveFor(seed: number): Cove {
   return cove;
 }
 
+/** Where `coveWeightInto` leaves its answer; read by number, at once. */
+const WEIGHT = { v: 0, dx: 0, dz: 0 };
+
 /** The cove's weight and its gradient: the along-shore window times the
- * seaward window. Zero at and inside the road's corridor. */
-function coveWeightD(cove: Cove, z: number, u: number, uDz: number): { v: number; dx: number; dz: number } {
-  const seaward = smootherstepD(-ROAD_CORRIDOR_HALF - COVE_BACK_FADE, -ROAD_CORRIDOR_HALF, u);
-  const wu = 1 - seaward.v;
-  if (wu <= 0) return { v: 0, dx: 0, dz: 0 };
+ * seaward window. Zero at and inside the road's corridor. Left in `WEIGHT`. */
+function coveWeightInto(cove: Cove, z: number, u: number, uDz: number): void {
+  smootherstepInto(-ROAD_CORRIDOR_HALF - COVE_BACK_FADE, -ROAD_CORRIDOR_HALF, u);
+  const seawardV = STEP.v;
+  const seawardD = STEP.d;
+  const wu = 1 - seawardV;
+  if (wu <= 0) { WEIGHT.v = 0; WEIGHT.dx = 0; WEIGHT.dz = 0; return; }
   const off = z - cove.z0;
   // |off| is flat-windowed near 0 (the window is 1 within halfWidth − END_BLEND),
   // so its kink at 0 never reaches the weight.
   const sign = off < 0 ? -1 : 1;
-  const along = smootherstepD(cove.halfWidth - COVE_END_BLEND, cove.halfWidth + COVE_END_BLEND, off * sign);
-  const wz = 1 - along.v;
-  if (wz <= 0) return { v: 0, dx: 0, dz: 0 };
+  smootherstepInto(cove.halfWidth - COVE_END_BLEND, cove.halfWidth + COVE_END_BLEND, off * sign);
+  const alongV = STEP.v;
+  const alongD = STEP.d;
+  const wz = 1 - alongV;
+  if (wz <= 0) { WEIGHT.v = 0; WEIGHT.dx = 0; WEIGHT.dz = 0; return; }
   // ∂u/∂x = 1, ∂u/∂z = uDz.
-  return { v: wz * wu, dx: -wz * seaward.d, dz: -wz * seaward.d * uDz - along.d * sign * wu };
+  WEIGHT.v = wz * wu;
+  WEIGHT.dx = -wz * seawardD;
+  WEIGHT.dz = -wz * seawardD * uDz - alongD * sign * wu;
 }
 
-/** One headland added into `out`: a ridge (1 − t²)³ across its axis, rising
+/** Where `headlandInto`, `addColumn` and `stackFieldInto` accumulate their sums, and where the last of them
+ * leaves it: the caller zeroes it, then reads it by number, at once. */
+const ACC = { v: 0, dx: 0, dz: 0 };
+
+/** One headland added into `ACC`: a ridge (1 − t²)³ across its axis, rising
  * from nothing at the corridor's edge over HEAD_RISE, holding out to its reach
  * past the waterline, tapering to nothing over HEAD_TIP. */
-function headlandD(
+function headlandInto(
   head: Headland, z: number, d: number, dDz: number, u: number, uDz: number,
-  out: { v: number; dx: number; dz: number },
 ): void {
   const t = (z - head.z) / HEAD_HALF_WIDTH;
   if (t <= -1 || t >= 1) return;
-  const rise = smootherstepD(-ROAD_CORRIDOR_HALF - HEAD_RISE, -ROAD_CORRIDOR_HALF, u);
-  const r = 1 - rise.v;
+  smootherstepInto(-ROAD_CORRIDOR_HALF - HEAD_RISE, -ROAD_CORRIDOR_HALF, u);
+  const riseV = STEP.v;
+  const riseD = STEP.d;
+  const r = 1 - riseV;
   if (r <= 0) return;
-  const tip = smootherstepD(-head.reach - HEAD_TIP, -head.reach, d);
-  if (tip.v <= 0) return;
+  smootherstepInto(-head.reach - HEAD_TIP, -head.reach, d);
+  const tipV = STEP.v;
+  const tipD = STEP.d;
+  if (tipV <= 0) return;
   const m = 1 - t * t;
   const bump = m * m * m;
   const bumpDz = (-6 * t * m * m) / HEAD_HALF_WIDTH;
-  const rDx = -rise.d, rDz = -rise.d * uDz;
-  out.v += head.height * bump * r * tip.v;
-  out.dx += head.height * bump * (rDx * tip.v + r * tip.d);
-  out.dz += head.height * (bumpDz * r * tip.v + bump * (rDz * tip.v + r * tip.d * dDz));
+  const rDx = -riseD, rDz = -riseD * uDz;
+  ACC.v += head.height * bump * r * tipV;
+  ACC.dx += head.height * bump * (rDx * tipV + r * tipD);
+  ACC.dz += head.height * (bumpDz * r * tipV + bump * (rDz * tipV + r * tipD * dDz));
 }
+
+/** Where `coveInto` leaves its answer when it returns true; read by number, at once. */
+const COVED: TerrainSample = { h: 0, dx: 0, dz: 0 };
 
 /**
  * The cove's stage, after the dunes: where its weight is 1 the ground IS the
  * cove's profile plus the sea stacks (no dunes, no cliffs, none of the inland
  * blend), blended into the coast's own ground across the weight's edges; then
- * the headlands and their stacks on top. Returns `base` itself wherever none
- * of it reaches.
+ * the headlands and their stacks on top. Takes the ground's height and partials
+ * (`bh`, `bdx`, `bdz`). Returns false, writing nothing, wherever none of it
+ * reaches (the ground stands as it is); true after writing `COVED`.
  */
-function coveD(seed: number, x: number, z: number, d: number, dDz: number, u: number, uDz: number, base: TerrainSample): TerrainSample {
+function coveInto(
+  seed: number, x: number, z: number, d: number, dDz: number, u: number, uDz: number,
+  bh: number, bdx: number, bdz: number,
+): boolean {
   const cove = coveFor(seed);
-  let out = base;
-  const w = coveWeightD(cove, z, u, uDz);
-  if (w.v > 0) {
-    const p = coveProfileD(d);
-    const st = stackBandD(seed, x, z, d, dDz);
-    const th = p.v + st.v;
-    const tdx = p.dd + st.dx;
-    const tdz = p.dd * dDz + st.dz;
-    const gap = th - base.h;
-    out = {
-      h: base.h + w.v * gap,
-      dx: base.dx + w.v * (tdx - base.dx) + w.dx * gap,
-      dz: base.dz + w.v * (tdz - base.dz) + w.dz * gap,
-    };
+  let changed = false;
+  let oh = bh;
+  let odx = bdx;
+  let odz = bdz;
+  coveWeightInto(cove, z, u, uDz);
+  const wV = WEIGHT.v;
+  const wDx = WEIGHT.dx;
+  const wDz = WEIGHT.dz;
+  if (wV > 0) {
+    coveProfileInto(d);
+    const pV = PROFILE.v;
+    const pDd = PROFILE.dd;
+    stackBandInto(seed, x, z, d, dDz);
+    const stV = BAND.v;
+    const stDx = BAND.dx;
+    const stDz = BAND.dz;
+    const th = pV + stV;
+    const tdx = pDd + stDx;
+    const tdz = pDd * dDz + stDz;
+    const gap = th - bh;
+    oh = bh + wV * gap;
+    odx = bdx + wV * (tdx - bdx) + wDx * gap;
+    odz = bdz + wV * (tdz - bdz) + wDz * gap;
+    changed = true;
   }
-  const add = { v: 0, dx: 0, dz: 0 };
-  for (const head of cove.heads) headlandD(head, z, d, dDz, u, uDz, add);
-  for (const s of cove.stacks) addColumn(s.x, s.z, s.radius, s.height, x, z, add);
-  if (add.v === 0 && add.dx === 0 && add.dz === 0) return out;
-  return { h: out.h + add.v, dx: out.dx + add.dx, dz: out.dz + add.dz };
+  ACC.v = 0;
+  ACC.dx = 0;
+  ACC.dz = 0;
+  for (let i = 0; i < cove.heads.length; i++) headlandInto(cove.heads[i] as Headland, z, d, dDz, u, uDz);
+  for (let i = 0; i < cove.stacks.length; i++) {
+    const s = cove.stacks[i] as CoveStack;
+    addColumn(s.x, s.z, s.radius, s.height, x, z);
+  }
+  if (ACC.v === 0 && ACC.dx === 0 && ACC.dz === 0) {
+    if (!changed) return false;
+    COVED.h = oh;
+    COVED.dx = odx;
+    COVED.dz = odz;
+    return true;
+  }
+  COVED.h = oh + ACC.v;
+  COVED.dx = odx + ACC.dx;
+  COVED.dz = odz + ACC.dz;
+  return true;
 }
 
 /** The cove's weight at (x, z), 0 to 1: the ground paint and the clutter read it. */
@@ -369,16 +443,22 @@ function coveMaskHook(seed: number, x: number, z: number): number {
   // seaward window says: skip the coast's frame there.
   const cove = coveFor(seed);
   if (Math.abs(z - cove.z0) >= cove.halfWidth + COVE_END_BLEND) return 0;
-  const f = coastFrame(seed, z);
-  const road = roadOffsetD(seed, z, BLEND_START, f.roadBlendEnd, f.roadBlendEndDz);
-  return coveWeightD(cove, z, x - f.coastlineX - road.dr, f.dDz - road.drDz).v;
+  coastFrame(seed, z);
+  const coastlineX = FRAME.coastlineX;
+  const frameDDz = FRAME.dDz;
+  const roadBlendEnd = FRAME.roadBlendEnd;
+  const roadBlendEndDz = FRAME.roadBlendEndDz;
+  roadOffsetInto(seed, z, BLEND_START, roadBlendEnd, roadBlendEndDz);
+  const dr = ROAD_OFFSET.dr;
+  const drDz = ROAD_OFFSET.drDz;
+  coveWeightInto(cove, z, x - coastlineX - dr, frameDDz - drDz);
+  return WEIGHT.v;
 }
 
 /** One C² column, height·(1 − r²/R²)³ inside R, and its gradient, added into
- * `out`. The sea stacks' shape: the stack field's and the cove's. */
+ * `ACC`. The sea stacks' shape: the stack field's and the cove's. */
 function addColumn(
   px: number, pz: number, radius: number, height: number, x: number, z: number,
-  out: { v: number; dx: number; dz: number },
 ): void {
   const rx = x - px;
   const rz = z - pz;
@@ -386,19 +466,21 @@ function addColumn(
   if (u >= 1) return;
   const s = 1 - u;
   // column = height·(1 − u)³;  ∂column/∂x = −3·height·(1 − u)²·(2·rx/R²)
-  out.v += height * s * s * s;
+  ACC.v += height * s * s * s;
   const dPerR = (-6 * height * s * s) / (radius * radius);
-  out.dx += dPerR * rx;
-  out.dz += dPerR * rz;
+  ACC.dx += dPerR * rx;
+  ACC.dz += dPerR * rz;
 }
 
-/** The stack field and its exact gradient, BEFORE the band window. Sums C²
- * columns from the 3×3 cell neighbourhood; STACK_RADIUS_MAX ≤ STACK_CELL / 2
- * guarantees no column escapes it. */
-function stackFieldD(seed: number, x: number, z: number): { v: number; dx: number; dz: number } {
+/** The stack field and its exact gradient, BEFORE the band window, left in
+ * `ACC`. Sums C² columns from the 3×3 cell neighbourhood; STACK_RADIUS_MAX ≤
+ * STACK_CELL / 2 guarantees no column escapes it. */
+function stackFieldInto(seed: number, x: number, z: number): void {
   const cellX = Math.floor(x / STACK_CELL);
   const cellZ = Math.floor(z / STACK_CELL);
-  const out = { v: 0, dx: 0, dz: 0 };
+  ACC.v = 0;
+  ACC.dx = 0;
+  ACC.dz = 0;
   for (let cz = cellZ - 1; cz <= cellZ + 1; cz++) {
     for (let cx = cellX - 1; cx <= cellX + 1; cx++) {
       if (hash3(cx, cz, 0, seed ^ STACK_SALT) >= STACK_DENSITY) continue;
@@ -408,29 +490,36 @@ function stackFieldD(seed: number, x: number, z: number): { v: number; dx: numbe
         STACK_RADIUS_MIN + (STACK_RADIUS_MAX - STACK_RADIUS_MIN) * hash3(cx, cz, 3, seed ^ STACK_SALT);
       const height =
         STACK_HEIGHT_MIN + (STACK_HEIGHT_MAX - STACK_HEIGHT_MIN) * hash3(cx, cz, 4, seed ^ STACK_SALT);
-      addColumn(px, pz, radius, height, x, z, out);
+      addColumn(px, pz, radius, height, x, z);
     }
   }
-  return out;
 }
+
+/** Where `stackBandInto` leaves its answer; read by number, at once. */
+const BAND = { v: 0, dx: 0, dz: 0 };
 
 /** The stack field windowed by a C² band in d, so stacks fade in past the
  * surf and out again before the shelf break. The window depends on position
  * only through d, so its gradient rides ∂d/∂x = 1 and ∂d/∂z = dDz. Band
  * support ends at d = STACK_BAND_NEAR < BLEND_START, so stacks never reach the
- * montane blend region. */
-function stackBandD(seed: number, x: number, z: number, d: number, dDz: number): { v: number; dx: number; dz: number } {
-  const bIn = smootherstepD(STACK_BAND_FAR, STACK_BAND_FAR + STACK_BAND_FADE, d);
-  const bOut = smootherstepD(STACK_BAND_NEAR - STACK_BAND_FADE, STACK_BAND_NEAR, d);
-  const band = bIn.v * (1 - bOut.v);
-  const bandDd = bIn.d * (1 - bOut.v) - bIn.v * bOut.d;
-  if (!(band > 0)) return { v: 0, dx: 0, dz: 0 };
-  const st = stackFieldD(seed, x, z);
-  return {
-    v: band * st.v,
-    dx: band * st.dx + bandDd * st.v, // ∂band/∂x = bandDd·(∂d/∂x = 1)
-    dz: band * st.dz + bandDd * dDz * st.v,
-  };
+ * montane blend region. Left in `BAND`. */
+function stackBandInto(seed: number, x: number, z: number, d: number, dDz: number): void {
+  smootherstepInto(STACK_BAND_FAR, STACK_BAND_FAR + STACK_BAND_FADE, d);
+  const bInV = STEP.v;
+  const bInD = STEP.d;
+  smootherstepInto(STACK_BAND_NEAR - STACK_BAND_FADE, STACK_BAND_NEAR, d);
+  const bOutV = STEP.v;
+  const bOutD = STEP.d;
+  const band = bInV * (1 - bOutV);
+  const bandDd = bInD * (1 - bOutV) - bInV * bOutD;
+  if (!(band > 0)) { BAND.v = 0; BAND.dx = 0; BAND.dz = 0; return; }
+  stackFieldInto(seed, x, z);
+  const stV = ACC.v;
+  const stDx = ACC.dx;
+  const stDz = ACC.dz;
+  BAND.v = band * stV;
+  BAND.dx = band * stDx + bandDd * stV; // ∂band/∂x = bandDd·(∂d/∂x = 1)
+  BAND.dz = band * stDz + bandDd * dDz * stV;
 }
 
 /**
@@ -458,29 +547,59 @@ export function duneD(
   uDz: number,
   base: TerrainSample,
 ): TerrainSample {
+  if (!duneInto(seed, x, z, u, uDz, base.h, base.dx, base.dz)) return base;
+  return { h: DUNED.h, dx: DUNED.dx, dz: DUNED.dz };
+}
+
+/** Where `duneInto` leaves its answer when it returns true; read by number, at once. */
+const DUNED: TerrainSample = { h: 0, dx: 0, dz: 0 };
+
+/**
+ * `duneD` on the base's three numbers (`bh`, `bdx`, `bdz`). Returns false, writing nothing, where the
+ * base stands as it is; true after writing `DUNED`.
+ */
+function duneInto(
+  seed: number,
+  x: number,
+  z: number,
+  u: number,
+  uDz: number,
+  bh: number,
+  bdx: number,
+  bdz: number,
+): boolean {
   const absU = u < 0 ? -u : u;
   const signU = u < 0 ? -1 : 1;
-  const road = smootherstepD(DUNE_ROAD_NEAR, DUNE_ROAD_FAR, absU);
-  if (road.v === 0) return base;
+  smootherstepInto(DUNE_ROAD_NEAR, DUNE_ROAD_FAR, absU);
+  const roadV = STEP.v;
+  const roadD = STEP.d;
+  if (roadV === 0) return false;
   // d(road.v)/d(x,z), through |u|: ∂|u|/∂x = sign(u), ∂|u|/∂z = sign(u)·uDz.
-  const roadDx = road.d * signU;
-  const roadDz = road.d * signU * uDz;
+  const roadDx = roadD * signU;
+  const roadDz = roadD * signU * uDz;
 
   // Altitude window: rise over [IN_LO, IN_HI], fall over [OUT_LO, OUT_HI].
-  const rise = smootherstepD(DUNE_ALT_IN_LO, DUNE_ALT_IN_HI, base.h);
-  const fall = smootherstepD(DUNE_ALT_OUT_LO, DUNE_ALT_OUT_HI, base.h);
-  const w = rise.v * (1 - fall.v);
-  if (w === 0) return base;
+  smootherstepInto(DUNE_ALT_IN_LO, DUNE_ALT_IN_HI, bh);
+  const riseV = STEP.v;
+  const riseD = STEP.d;
+  smootherstepInto(DUNE_ALT_OUT_LO, DUNE_ALT_OUT_HI, bh);
+  const fallV = STEP.v;
+  const fallD = STEP.d;
+  const w = riseV * (1 - fallV);
+  if (w === 0) return false;
   // d(window)/d(base.h)
-  const wDh = rise.d * (1 - fall.v) - rise.v * fall.d;
+  const wDh = riseD * (1 - fallV) - riseV * fallD;
 
-  const f = fbm2d(x / DUNE_WAVELENGTH_X, z / DUNE_WAVELENGTH_Z, seed ^ DUNE_SALT, DUNE_OCTAVES);
+  fbm2dInto(x / DUNE_WAVELENGTH_X, z / DUNE_WAVELENGTH_Z, seed ^ DUNE_SALT, DUNE_OCTAVES);
+  const fV = NOISE.v;
+  const fDx = NOISE.dx;
+  const fDz = NOISE.dz;
   // fbm2d is already zero-centred — it sums gradientNoise2 and is normalized
   // to [-1, 1] (field.ts:218), unlike fbm2 (sums valueNoise2, [0, 1]). Halving
   // it gives exactly the [-0.5, 0.5] this field wants, so dunes cut troughs as
   // well as raising crests without an additive re-centring term.
-  const v = 0.5 * f.v;
-  const a = DUNE_AMPLITUDE * road.v;
+  const v = 0.5 * fV;
+  const a = DUNE_AMPLITUDE * roadV;
   const aDx = DUNE_AMPLITUDE * roadDx;
   const aDz = DUNE_AMPLITUDE * roadDz;
 
@@ -490,11 +609,10 @@ export function duneD(
   // the noise field's own. Same product-rule shape as the sea-stack block
   // above, with one more live factor. v = 0.5·f.v, so ∂v/∂x = 0.5·f.dx /
   // DUNE_WAVELENGTH_X and likewise for z.
-  return {
-    h: base.h + a * w * v,
-    dx: base.dx + aDx * w * v + a * wDh * base.dx * v + a * (w * (0.5 * f.dx)) / DUNE_WAVELENGTH_X,
-    dz: base.dz + aDz * w * v + a * wDh * base.dz * v + a * (w * (0.5 * f.dz)) / DUNE_WAVELENGTH_Z,
-  };
+  DUNED.h = bh + a * w * v;
+  DUNED.dx = bdx + aDx * w * v + a * wDh * bdx * v + a * (w * (0.5 * fDx)) / DUNE_WAVELENGTH_X;
+  DUNED.dz = bdz + aDz * w * v + a * wDh * bdz * v + a * (w * (0.5 * fDz)) / DUNE_WAVELENGTH_Z;
+  return true;
 }
 
 /**
@@ -505,49 +623,74 @@ export function duneD(
  * sharing would mean carrying an unused wider return shape here.
  */
 function signedCoastDistance(seed: number, x: number, z: number): number {
-  const warp = fbm2d(WARP_LINE_X, z / COAST_WARP_WAVELENGTH, seed ^ COAST_WARP_SALT, COAST_WARP_OCTAVES);
-  return x - (COAST_X + COAST_WARP_AMPLITUDE * warp.v);
+  fbm2dInto(WARP_LINE_X, z / COAST_WARP_WAVELENGTH, seed ^ COAST_WARP_SALT, COAST_WARP_OCTAVES);
+  return x - (COAST_X + COAST_WARP_AMPLITUDE * NOISE.v);
 }
 
-/** The pre-road field: shore profile + stacks + dense blend. Extracted
+/** Where `olympicBaseFrom` leaves its answer; read by number, at once. */
+const BASE: TerrainSample = { h: 0, dx: 0, dz: 0 };
+
+/** The pre-road field: shore profile + stacks + dense blend, left in `BASE`. Extracted
  * unchanged from the old olympicSample so its arithmetic is untouched —
  * the montane-family snapshots and the outside-corridor bit-identity test
  * both pin this. */
 function olympicBaseFrom(
   seed: number, x: number, z: number,
   d: number, dDz: number, blendEnd: number, blendEndDz: number,
-): TerrainSample {
+): void {
   // Short-circuit: inland of the window, dense bit-identically.
-  if (d >= blendEnd) return denseSample(seed, x, z);
+  if (d >= blendEnd) {
+    denseSampleInto(seed, x, z);
+    BASE.h = MONTANE_OUT.h;
+    BASE.dx = MONTANE_OUT.dx;
+    BASE.dz = MONTANE_OUT.dz;
+    return;
+  }
 
-  const shore = shoreProfileD(d);
+  shoreProfileInto(d);
+  const shoreV = PROFILE.v;
+  const shoreDd = PROFILE.dd;
 
-  const stack = stackBandD(seed, x, z, d, dDz);
-  const baseH = shore.v + stack.v;
-  const baseDx = shore.dd + stack.dx;
-  const baseDz = shore.dd * dDz + stack.dz;
+  stackBandInto(seed, x, z, d, dDz);
+  const baseH = shoreV + BAND.v;
+  const baseDx = shoreDd + BAND.dx;
+  const baseDz = shoreDd * dDz + BAND.dz;
 
   const span = blendEnd - BLEND_START;
   const t = (d - BLEND_START) / span;
-  if (t <= 0) return { h: baseH, dx: baseDx, dz: baseDz };
+  if (t <= 0) {
+    BASE.h = baseH;
+    BASE.dx = baseDx;
+    BASE.dz = baseDz;
+    return;
+  }
 
   // Blend region: quintic smootherstep of t, whose z-derivative carries both
   // the coastline's movement and the window's own z-dependence:
   //   ∂t/∂x = 1/span,  ∂t/∂z = (dDz·span − (d − BLEND_START)·blendEndDz)/span².
-  const m = denseSample(seed, x, z);
+  denseSampleInto(seed, x, z);
+  const mH = MONTANE_OUT.h;
+  const mDx = MONTANE_OUT.dx;
+  const mDz = MONTANE_OUT.dz;
   const s = t * t * t * (t * (t * 6 - 15) + 10);
   const sDt = 30 * t * t * (t - 1) * (t - 1);
   const tDx = 1 / span;
   const tDz = (dDz * span - (d - BLEND_START) * blendEndDz) / (span * span);
-  return {
-    h: baseH + s * (m.h - baseH),
-    dx: baseDx + s * (m.dx - baseDx) + sDt * tDx * (m.h - baseH),
-    dz: baseDz + s * (m.dz - baseDz) + sDt * tDz * (m.h - baseH),
-  };
+  BASE.h = baseH + s * (mH - baseH);
+  BASE.dx = baseDx + s * (mDx - baseDx) + sDt * tDx * (mH - baseH);
+  BASE.dz = baseDz + s * (mDz - baseDz) + sDt * tDz * (mH - baseH);
 }
 
 /**
- * The coastline-warp preamble: coast x, its z-derivative, and the blend
+ * Where `coastFrame` leaves its answer. Asked again from inside the road's grade lattice while an outer
+ * sample is still running, so a caller copies what it needs into locals before it calls anything else.
+ */
+const FRAME = {
+  coastlineX: 0, dDz: 0, blendEnd: 0, blendEndDz: 0, roadBlendEnd: 0, roadBlendEndDz: 0,
+};
+
+/**
+ * The coastline-warp preamble, left in `FRAME`: coast x, its z-derivative, and the blend
  * window's endpoint and z-derivative — TWO of the latter. Shared by the
  * sample, the pre-road base export, and the road lattice so all three see the
  * same warp.
@@ -574,20 +717,19 @@ function olympicBaseFrom(
  * and holds its drift under 0.5, which is the control's own worst plus a
  * margin.
  */
-function coastFrame(seed: number, z: number): {
-  coastlineX: number; dDz: number; blendEnd: number; blendEndDz: number;
-  roadBlendEnd: number; roadBlendEndDz: number;
-} {
+function coastFrame(seed: number, z: number): void {
   // Coastline: 1-D fbm along z. fbm2d's derivatives are w.r.t. its own inputs,
   // so ∂/∂z of warp(z / λ) is warp.dz / λ.
-  const warp = fbm2d(WARP_LINE_X, z / COAST_WARP_WAVELENGTH, seed ^ COAST_WARP_SALT, COAST_WARP_OCTAVES);
-  const coastlineX = COAST_X + COAST_WARP_AMPLITUDE * warp.v;
-  const dDz = (-COAST_WARP_AMPLITUDE * warp.dz) / COAST_WARP_WAVELENGTH; // ∂d/∂z; ∂d/∂x = 1
+  fbm2dInto(WARP_LINE_X, z / COAST_WARP_WAVELENGTH, seed ^ COAST_WARP_SALT, COAST_WARP_OCTAVES);
+  const warpV = NOISE.v;
+  const warpDz = NOISE.dz;
+  const coastlineX = COAST_X + COAST_WARP_AMPLITUDE * warpV;
+  const dDz = (-COAST_WARP_AMPLITUDE * warpDz) / COAST_WARP_WAVELENGTH; // ∂d/∂z; ∂d/∂x = 1
 
   // Blend window, narrowed on headlands: warp seaward ⇒ v < 0 ⇒
   // window toward BLEND_END_HEADLAND; deepest bay ⇒ v ≈ +1 ⇒ BLEND_END_BAY.
-  const head = 0.5 + 0.5 * warp.v;
-  const headDz = (0.5 * warp.dz) / COAST_WARP_WAVELENGTH;
+  const head = 0.5 + 0.5 * warpV;
+  const headDz = (0.5 * warpDz) / COAST_WARP_WAVELENGTH;
 
   // The apron: inside the trail's z-window
   // the blend end is pulled out to APRON_BLEND_END so the shore→montane climb
@@ -597,26 +739,31 @@ function coastFrame(seed: number, z: number): {
   const b0Dz = (BLEND_END_BAY - BLEND_END_HEADLAND) * headDz;
   const blend = overlay === null ? undefined : overlay.blend;
   if (blend === undefined) {
-    return { coastlineX, dDz, blendEnd: b0, blendEndDz: b0Dz, roadBlendEnd: b0, roadBlendEndDz: b0Dz };
+    FRAME.coastlineX = coastlineX;
+    FRAME.dDz = dDz;
+    FRAME.blendEnd = b0;
+    FRAME.blendEndDz = b0Dz;
+    FRAME.roadBlendEnd = b0;
+    FRAME.roadBlendEndDz = b0Dz;
+    return;
   }
   // The place's own end, which may be the seed's (a bay drawn out further in one world than another).
   const end = typeof blend.end === "number" ? blend.end : blend.end(seed);
   const W = blend.windowD(z, seed);
-  return {
-    coastlineX,
-    dDz,
-    blendEnd: b0 + (end - b0) * W.v,
-    blendEndDz: b0Dz * (1 - W.v) + (end - b0) * W.dz,
-    roadBlendEnd: b0,
-    roadBlendEndDz: b0Dz,
-  };
+  FRAME.coastlineX = coastlineX;
+  FRAME.dDz = dDz;
+  FRAME.blendEnd = b0 + (end - b0) * W.v;
+  FRAME.blendEndDz = b0Dz * (1 - W.v) + (end - b0) * W.dz;
+  FRAME.roadBlendEnd = b0;
+  FRAME.roadBlendEndDz = b0Dz;
 }
 
 /** The pre-road field, exported for census purposes and any future tooling
  * that needs terrain without the highway cut into it. */
 export function olympicBaseSample(seed: number, x: number, z: number): TerrainSample {
-  const f = coastFrame(seed, z);
-  return olympicBaseFrom(seed, x, z, x - f.coastlineX, f.dDz, f.blendEnd, f.blendEndDz);
+  coastFrame(seed, z);
+  olympicBaseFrom(seed, x, z, x - FRAME.coastlineX, FRAME.dDz, FRAME.blendEnd, FRAME.blendEndDz);
+  return { h: BASE.h, dx: BASE.dx, dz: BASE.dz };
 }
 
 /** Pre-road heights at road-centerline lattice points, memoized per seed.
@@ -626,43 +773,129 @@ export function olympicBaseSample(seed: number, x: number, z: number): TerrainSa
  * the centerline u = 0, cliffD is the identity, so the lattice cannot see
  * cliffs by construction. */
 const LATTICE_CACHE = new Map<number, Map<number, number>>();
+/** The seed's lattice reader, made once: a sample asks for it at every point inside the corridor. */
+const LATTICE_READERS = new Map<number, (i: number) => number>();
 
 function latticeHFor(seed: number): (i: number) => number {
+  const reader = LATTICE_READERS.get(seed);
+  if (reader !== undefined) return reader;
   let perSeed = LATTICE_CACHE.get(seed);
   if (perSeed === undefined) {
     perSeed = new Map();
     LATTICE_CACHE.set(seed, perSeed);
   }
   const cache = perSeed;
-  return (i: number): number => {
+  const made = (i: number): number => {
     let h = cache.get(i);
     if (h === undefined) {
       const z = i * ROAD_LATTICE;
-      const f = coastFrame(seed, z);
-      const { dr } = roadOffsetD(seed, z, BLEND_START, f.roadBlendEnd, f.roadBlendEndDz);
+      coastFrame(seed, z);
+      const coastlineX = FRAME.coastlineX;
+      const frameDDz = FRAME.dDz;
+      const blendEnd = FRAME.blendEnd;
+      const blendEndDz = FRAME.blendEndDz;
+      roadOffsetInto(seed, z, BLEND_START, FRAME.roadBlendEnd, FRAME.roadBlendEndDz);
+      const dr = ROAD_OFFSET.dr;
       // The centerline point: x = coastlineX + dr, so x − coastlineX is dr
       // only up to the float rounding of that addition — consistent to
       // ~1 ulp (~4e-14 m measured), not bit-exactly. The independent-oracle
       // test below re-derives d as x − coastlineX and checks agreement with
       // a tolerance rather than toBe for exactly this reason.
-      h = olympicBaseFrom(seed, f.coastlineX + dr, z, dr, f.dDz, f.blendEnd, f.blendEndDz).h;
+      olympicBaseFrom(seed, coastlineX + dr, z, dr, frameDDz, blendEnd, blendEndDz);
+      h = BASE.h;
       cache.set(i, h);
     }
     return h;
   };
+  LATTICE_READERS.set(seed, made);
+  return made;
 }
 
 /** The road's grade line height and z-slope at a given z. */
 export function roadGradeAt(seed: number, z: number): { h: number; dz: number } {
-  return gradeSplineD(latticeHFor(seed), z);
+  gradeSplineInto(latticeHFor(seed), z);
+  return { h: GRADE.h, dz: GRADE.dz };
 }
 
 /** The road frame at a world point: signed offset u and its z-derivative. */
 export function roadFrameAt(seed: number, x: number, z: number): { u: number; uDz: number } {
-  const f = coastFrame(seed, z);
-  const d = x - f.coastlineX;
-  const road = roadOffsetD(seed, z, BLEND_START, f.roadBlendEnd, f.roadBlendEndDz);
-  return { u: d - road.dr, uDz: f.dDz - road.drDz };
+  coastFrame(seed, z);
+  const d = x - FRAME.coastlineX;
+  const frameDDz = FRAME.dDz;
+  roadOffsetInto(seed, z, BLEND_START, FRAME.roadBlendEnd, FRAME.roadBlendEndDz);
+  return { u: d - ROAD_OFFSET.dr, uDz: frameDDz - ROAD_OFFSET.drDz };
+}
+
+/**
+ * Where `coastStagesInto` leaves its answer: the road's frame at the point and the coast's ground there, as
+ * numbers. Written by every call of it; read at once.
+ */
+const COAST = { u: 0, uDz: 0, h: 0, dx: 0, dz: 0 };
+
+/**
+ * The coast's ground before any place is laid over it, with the road's frame it was made in, left in
+ * `COAST`: the massif, the coast, the cliffs, the dunes and the cove.
+ */
+function coastStagesInto(seed: number, x: number, z: number): void {
+  coastFrame(seed, z);
+  const coastlineX = FRAME.coastlineX;
+  const frameDDz = FRAME.dDz;
+  const blendEnd = FRAME.blendEnd;
+  const blendEndDz = FRAME.blendEndDz;
+  const roadBlendEnd = FRAME.roadBlendEnd;
+  const roadBlendEndDz = FRAME.roadBlendEndDz;
+  const d = x - coastlineX;
+  roadOffsetInto(seed, z, BLEND_START, roadBlendEnd, roadBlendEndDz);
+  const u = d - ROAD_OFFSET.dr;
+  const uDz = frameDDz - ROAD_OFFSET.drDz;
+  olympicBaseFrom(seed, x, z, d, frameDDz, blendEnd, blendEndDz);
+  const baseH = BASE.h;
+  const baseDx = BASE.dx;
+  const baseDz = BASE.dz;
+  // Cliff bands sit between the pre-road field and the corridor: the road
+  // then cuts through cliffed ground, and the
+  // mask's road suppression keeps the corridor and grade lattice untouched
+  // (cliffD is the identity for |u| ≤ CLIFF_ROAD_NEAR = ROAD_CORRIDOR_HALF).
+  const keep = overlay === null || overlay.cliffKeepD === undefined ? UNIT_KEEP : overlay.cliffKeepD(u, uDz, z, seed);
+  let h = baseH;
+  let dx = baseDx;
+  let dz = baseDz;
+  if (cliffInto(seed, x, z, u, uDz, baseH, baseDx, baseDz, keep)) {
+    h = CLIFFED.h;
+    dx = CLIFFED.dx;
+    dz = CLIFFED.dz;
+  }
+  // Dunes AFTER cliffs so cliffD reads the exact base it read before this
+  // feature existed (its own early-out is base.h < 12, and the dune window is
+  // cold above 8, so the two are disjoint either way — this ordering just
+  // makes that bit-exact rather than merely true). BEFORE the corridor, so
+  // road earthworks still flatten whatever dunes would have been there.
+  //
+  // This placement does NOT keep dune noise off the grade spline — an
+  // earlier version of this comment claimed it did; that was wrong. The
+  // spline is immune independent of where duneD is called: latticeHFor
+  // samples exactly the road centerline (u = 0), and DUNE_ROAD_NEAR ==
+  // ROAD_CORRIDOR_HALF, so duneD's own road-suppression window is already
+  // stone cold at u = 0, whatever the call site. See the "keeps duneD out
+  // of olympicBaseFrom" guard in olympic.test.ts: it checks the call site
+  // textually rather than numerically for exactly this reason — moving
+  // duneD into olympicBaseFrom leaves every lattice point in that test's
+  // sweep numerically unchanged.
+  if (duneInto(seed, x, z, u, uDz, h, dx, dz)) {
+    h = DUNED.h;
+    dx = DUNED.dx;
+    dz = DUNED.dz;
+  }
+  if (coveInto(seed, x, z, d, frameDDz, u, uDz, h, dx, dz)) {
+    h = COVED.h;
+    dx = COVED.dx;
+    dz = COVED.dz;
+  }
+  COAST.u = u;
+  COAST.uDz = uDz;
+  COAST.h = h;
+  COAST.dx = dx;
+  COAST.dz = dz;
 }
 
 /**
@@ -671,21 +904,16 @@ export function roadFrameAt(seed: number, x: number, z: number): { u: number; uD
  * before it has a shape of its own to lay.
  */
 export function coastGround(seed: number, x: number, z: number): { u: number; uDz: number; ground: TerrainSample } {
-  const f = coastFrame(seed, z);
-  const d = x - f.coastlineX;
-  const road = roadOffsetD(seed, z, BLEND_START, f.roadBlendEnd, f.roadBlendEndDz);
-  const u = d - road.dr;
-  const uDz = f.dDz - road.drDz;
-  const base = olympicBaseFrom(seed, x, z, d, f.dDz, f.blendEnd, f.blendEndDz);
-  const keep = overlay === null || overlay.cliffKeepD === undefined ? UNIT_KEEP : overlay.cliffKeepD(u, uDz, z, seed);
-  const duned = duneD(seed, x, z, u, uDz, cliffD(seed, x, z, u, uDz, base, keep));
-  return { u, uDz, ground: coveD(seed, x, z, d, f.dDz, u, uDz, duned) };
+  coastStagesInto(seed, x, z);
+  return { u: COAST.u, uDz: COAST.uDz, ground: { h: COAST.h, dx: COAST.dx, dz: COAST.dz } };
 }
 
 /** `ground` with the road's corridor cut through it, as the last stage of the coast's ground cuts it. */
 export function roadCorridorOverD(seed: number, z: number, u: number, uDz: number, ground: TerrainSample): TerrainSample {
   if (Math.abs(u) >= ROAD_CORRIDOR_HALF) return ground;
-  return corridorD(u, uDz, roadGradeAt(seed, z), ground);
+  gradeSplineInto(latticeHFor(seed), z);
+  if (!corridorInto(u, uDz, GRADE.h, GRADE.dz, ground.h, ground.dx, ground.dz)) return ground;
+  return { h: CORRIDOR.h, dx: CORRIDOR.dx, dz: CORRIDOR.dz };
 }
 
 /** The made-feature mask hook: samples the composed field itself only
@@ -714,48 +942,37 @@ function featureMaskOf(place: CoastOverlay): TerrainVariant["featureMask"] {
 }
 
 function olympicSample(seed: number, x: number, z: number): TerrainSample {
-  const f = coastFrame(seed, z);
-  const d = x - f.coastlineX;
-  const road = roadOffsetD(seed, z, BLEND_START, f.roadBlendEnd, f.roadBlendEndDz);
-  const u = d - road.dr;
-  const uDz = f.dDz - road.drDz;
-  const base = olympicBaseFrom(seed, x, z, d, f.dDz, f.blendEnd, f.blendEndDz);
-  // Cliff bands sit between the pre-road field and the corridor: the road
-  // then cuts through cliffed ground, and the
-  // mask's road suppression keeps the corridor and grade lattice untouched
-  // (cliffD is the identity for |u| ≤ CLIFF_ROAD_NEAR = ROAD_CORRIDOR_HALF).
-  const keep = overlay === null || overlay.cliffKeepD === undefined ? UNIT_KEEP : overlay.cliffKeepD(u, uDz, z, seed);
-  const cliffed = cliffD(seed, x, z, u, uDz, base, keep);
-  // Dunes AFTER cliffs so cliffD reads the exact base it read before this
-  // feature existed (its own early-out is base.h < 12, and the dune window is
-  // cold above 8, so the two are disjoint either way — this ordering just
-  // makes that bit-exact rather than merely true). BEFORE the corridor, so
-  // road earthworks still flatten whatever dunes would have been there.
-  //
-  // This placement does NOT keep dune noise off the grade spline — an
-  // earlier version of this comment claimed it did; that was wrong. The
-  // spline is immune independent of where duneD is called: latticeHFor
-  // samples exactly the road centerline (u = 0), and DUNE_ROAD_NEAR ==
-  // ROAD_CORRIDOR_HALF, so duneD's own road-suppression window is already
-  // stone cold at u = 0, whatever the call site. See the "keeps duneD out
-  // of olympicBaseFrom" guard in olympic.test.ts: it checks the call site
-  // textually rather than numerically for exactly this reason — moving
-  // duneD into olympicBaseFrom leaves every lattice point in that test's
-  // sweep numerically unchanged.
-  const duned = duneD(seed, x, z, u, uDz, cliffed);
-  const coved = coveD(seed, x, z, d, f.dDz, u, uDz, duned);
+  coastStagesInto(seed, x, z);
+  const u = COAST.u;
+  const uDz = COAST.uDz;
+  const cH = COAST.h;
+  const cDx = COAST.dx;
+  const cDz = COAST.dz;
   // The place laid over the coast, if there is one: its ground over the cove's and under the
-  // road's corridor, so the road's earthworks still cut whatever it made in their way.
-  const staged = overlay === null ? coved : overlay.shapeD(seed, x, z, u, uDz, coved);
-  if (Math.abs(u) >= ROAD_CORRIDOR_HALF) return staged;
-  return corridorD(u, uDz, roadGradeAt(seed, z), staged);
+  // road's corridor, so the road's earthworks still cut whatever it made in their way. Its
+  // interface takes and returns a record: one is made to hand it, and its answer is read by number.
+  let sH = cH;
+  let sDx = cDx;
+  let sDz = cDz;
+  let placed: TerrainSample | null = null;
+  if (overlay !== null) {
+    placed = overlay.shapeD(seed, x, z, u, uDz, { h: cH, dx: cDx, dz: cDz });
+    sH = placed.h;
+    sDx = placed.dx;
+    sDz = placed.dz;
+  }
+  if (Math.abs(u) >= ROAD_CORRIDOR_HALF) return placed === null ? { h: sH, dx: sDx, dz: sDz } : placed;
+  gradeSplineInto(latticeHFor(seed), z);
+  if (!corridorInto(u, uDz, GRADE.h, GRADE.dz, sH, sDx, sDz)) return placed === null ? { h: sH, dx: sDx, dz: sDz } : placed;
+  return { h: CORRIDOR.h, dx: CORRIDOR.dx, dz: CORRIDOR.dz };
 }
 
 /** Absolute distance to the road centerline — the |u| the road math uses. */
 function roadDistance(seed: number, x: number, z: number): number {
-  const f = coastFrame(seed, z);
-  const road = roadOffsetD(seed, z, BLEND_START, f.roadBlendEnd, f.roadBlendEndDz);
-  return Math.abs(x - f.coastlineX - road.dr);
+  coastFrame(seed, z);
+  const coastlineX = FRAME.coastlineX;
+  roadOffsetInto(seed, z, BLEND_START, FRAME.roadBlendEnd, FRAME.roadBlendEndDz);
+  return Math.abs(x - coastlineX - ROAD_OFFSET.dr);
 }
 
 /** World x of the road centerline at z — where `roadDistance` is zero. The
@@ -763,9 +980,10 @@ function roadDistance(seed: number, x: number, z: number): number {
  * hook rather than a tunable, so the level id does not move; the renderer
  * bakes it into a 1-D table for per-fragment road paint. */
 export function roadCenterX(seed: number, z: number): number {
-  const f = coastFrame(seed, z);
-  const road = roadOffsetD(seed, z, BLEND_START, f.roadBlendEnd, f.roadBlendEndDz);
-  return f.coastlineX + road.dr;
+  coastFrame(seed, z);
+  const coastlineX = FRAME.coastlineX;
+  roadOffsetInto(seed, z, BLEND_START, FRAME.roadBlendEnd, FRAME.roadBlendEndDz);
+  return coastlineX + ROAD_OFFSET.dr;
 }
 
 /** What the coast declares of itself for the level id, before any place adds its own. */

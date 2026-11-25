@@ -7,7 +7,7 @@
  *
  * sim/ determinism rules apply: everything here is polynomial plus fbm2d.
  */
-import { fbm2d } from "./field.js";
+import { fbm2dInto, NOISE } from "./field.js";
 import type { TerrainSample } from "./terrain.js";
 
 // ---- Tunables (all join the olympic variant record) ------------------------
@@ -41,14 +41,30 @@ export function roadOffsetD(
   blendEnd: number,
   blendEndDz: number,
 ): { dr: number; drDz: number } {
-  const wob = fbm2d(WOBBLE_LINE_X, z / ROAD_WOBBLE_WAVELENGTH, seed ^ ROAD_SALT, ROAD_WOBBLE_OCTAVES);
-  const factor = 1 + ROAD_WOBBLE * wob.v;
-  const factorDz = (ROAD_WOBBLE * wob.dz) / ROAD_WOBBLE_WAVELENGTH;
+  roadOffsetInto(seed, z, blendStart, blendEnd, blendEndDz);
+  return { dr: ROAD_OFFSET.dr, drDz: ROAD_OFFSET.drDz };
+}
+
+/**
+ * Where `roadOffsetInto` leaves its answer. Written by every call of it and read by number, at once, before any
+ * other call that may ask for the road's offset (the coast's grade lattice does so from inside a sample).
+ */
+export const ROAD_OFFSET = { dr: 0, drDz: 0 };
+
+/** `roadOffsetD`, left in `ROAD_OFFSET`: no record is made. */
+export function roadOffsetInto(
+  seed: number,
+  z: number,
+  blendStart: number,
+  blendEnd: number,
+  blendEndDz: number,
+): void {
+  fbm2dInto(WOBBLE_LINE_X, z / ROAD_WOBBLE_WAVELENGTH, seed ^ ROAD_SALT, ROAD_WOBBLE_OCTAVES);
+  const factor = 1 + ROAD_WOBBLE * NOISE.v;
+  const factorDz = (ROAD_WOBBLE * NOISE.dz) / ROAD_WOBBLE_WAVELENGTH;
   const span = blendEnd - blendStart;
-  return {
-    dr: blendStart + ROAD_CORRIDOR_HALF + ROAD_WINDOW_FRACTION * span * factor,
-    drDz: ROAD_WINDOW_FRACTION * (blendEndDz * factor + span * factorDz),
-  };
+  ROAD_OFFSET.dr = blendStart + ROAD_CORRIDOR_HALF + ROAD_WINDOW_FRACTION * span * factor;
+  ROAD_OFFSET.drDz = ROAD_WINDOW_FRACTION * (blendEndDz * factor + span * factorDz);
 }
 
 /**
@@ -64,6 +80,19 @@ export function gradeSplineD(
   z: number,
   spacing: number = ROAD_LATTICE,
 ): { h: number; dz: number } {
+  gradeSplineInto(latticeH, z, spacing);
+  return { h: GRADE.h, dz: GRADE.dz };
+}
+
+/** Where `gradeSplineInto` leaves its answer: written by every call of it, read by number at once. */
+export const GRADE = { h: 0, dz: 0 };
+
+/** `gradeSplineD`, left in `GRADE`: no record is made. */
+export function gradeSplineInto(
+  latticeH: (i: number) => number,
+  z: number,
+  spacing: number = ROAD_LATTICE,
+): void {
   const s = z / spacing;
   const i = Math.floor(s);
   const t = s - i;
@@ -80,22 +109,21 @@ export function gradeSplineD(
   const db1 = (3 * t * t - 4 * t) / 2;
   const db2 = (-3 * t * t + 2 * t + 1) / 2;
   const db3 = (t * t) / 2;
-  return {
-    h: b0 * p0 + b1 * p1 + b2 * p2 + b3 * p3,
-    dz: (db0 * p0 + db1 * p1 + db2 * p2 + db3 * p3) / spacing,
-  };
+  GRADE.h = b0 * p0 + b1 * p1 + b2 * p2 + b3 * p3;
+  GRADE.dz = (db0 * p0 + db1 * p1 + db2 * p2 + db3 * p3) / spacing;
 }
 
-/** Quintic smootherstep with derivative — same shape as olympic.ts's. */
-function smootherstepD(edge0: number, edge1: number, x: number): { v: number; d: number } {
+/** Where `smootherstepInto` leaves its answer; read it by number, at once, before any other call. */
+const STEP = { v: 0, d: 0 };
+
+/** Quintic smootherstep with derivative — same shape as olympic.ts's. Left in `STEP`. */
+function smootherstepInto(edge0: number, edge1: number, x: number): void {
   const span = edge1 - edge0;
-  if (x <= edge0) return { v: 0, d: 0 };
-  if (x >= edge1) return { v: 1, d: 0 };
+  if (x <= edge0) { STEP.v = 0; STEP.d = 0; return; }
+  if (x >= edge1) { STEP.v = 1; STEP.d = 0; return; }
   const t = (x - edge0) / span;
-  return {
-    v: t * t * t * (t * (t * 6 - 15) + 10),
-    d: (30 * t * t * (t - 1) * (t - 1)) / span,
-  };
+  STEP.v = t * t * t * (t * (t * 6 - 15) + 10);
+  STEP.d = (30 * t * t * (t - 1) * (t - 1)) / span;
 }
 
 /**
@@ -112,17 +140,44 @@ export function corridorD(
   grade: { h: number; dz: number },
   base: TerrainSample,
 ): TerrainSample {
+  if (!corridorInto(u, uDz, grade.h, grade.dz, base.h, base.dx, base.dz)) return base;
+  return { h: CORRIDOR.h, dx: CORRIDOR.dx, dz: CORRIDOR.dz };
+}
+
+/** Where `corridorInto` leaves its answer when it returns true: written by every call of it, read by number at once. */
+export const CORRIDOR = { h: 0, dx: 0, dz: 0 };
+
+/**
+ * `corridorD` on numbers: the grade's height and z-slope (`gh`, `gdz`) and the base's height and partials.
+ * Returns false, writing nothing, where the base stands as it is (outside the corridor); true after
+ * writing `CORRIDOR`.
+ */
+export function corridorInto(
+  u: number,
+  uDz: number,
+  gh: number,
+  gdz: number,
+  bh: number,
+  bdx: number,
+  bdz: number,
+): boolean {
   const a = Math.abs(u);
-  if (a >= ROAD_CORRIDOR_HALF) return base;
-  if (a <= ROAD_BED_HALF) return { h: grade.h, dx: 0, dz: grade.dz };
-  const s = smootherstepD(ROAD_BED_HALF, ROAD_CORRIDOR_HALF, a);
-  const w = 1 - s.v;
+  if (a >= ROAD_CORRIDOR_HALF) return false;
+  if (a <= ROAD_BED_HALF) {
+    CORRIDOR.h = gh;
+    CORRIDOR.dx = 0;
+    CORRIDOR.dz = gdz;
+    return true;
+  }
+  smootherstepInto(ROAD_BED_HALF, ROAD_CORRIDOR_HALF, a);
+  const sV = STEP.v;
+  const sD = STEP.d;
+  const w = 1 - sV;
   // dW/du carries the sign of u through |u|.
-  const dWdu = u >= 0 ? -s.d : s.d;
-  const diff = grade.h - base.h;
-  return {
-    h: w * grade.h + (1 - w) * base.h,
-    dx: dWdu * diff + (1 - w) * base.dx,
-    dz: w * grade.dz + dWdu * uDz * diff + (1 - w) * base.dz,
-  };
+  const dWdu = u >= 0 ? -sD : sD;
+  const diff = gh - bh;
+  CORRIDOR.h = w * gh + (1 - w) * bh;
+  CORRIDOR.dx = dWdu * diff + (1 - w) * bdx;
+  CORRIDOR.dz = w * gdz + dWdu * uDz * diff + (1 - w) * bdz;
+  return true;
 }
