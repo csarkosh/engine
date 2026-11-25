@@ -502,6 +502,39 @@ export function autoPick(
 }
 
 /**
+ * The start's rule, before any probe: Auto's reading of this machine, the
+ * tier the address, the choice and Auto come to, and the tier a probe would
+ * start from, or null where none is due.
+ */
+function startRule(
+  signals: GpuSignals,
+  opts: { search: string; choice: TierChoice; engine?: VerdictEngine; steps: ProbeSteps },
+  deps: Pick<StartupDeps, "storage" | "pixels" | "now">,
+) {
+  const record = readAutoRecord(deps.storage);
+  const auto = autoPick(signals, { record, pixels: deps.pixels(), now: deps.now(), engine: opts.engine, stepSettles: opts.steps.settle });
+  const decided = resolveTier({ override: parseTierOverride(opts.search), choice: opts.choice, auto: auto.tier });
+  const from = decided.source === "auto" ? (parseProbeOverride(opts.search) ?? auto.probeFrom) : null;
+  return { record, auto, decided, from };
+}
+
+/**
+ * The tier a start would be given now with no probe run (`startupTier`), or
+ * null where a probe would decide it: what lets a session's first scene be
+ * made before the session is asked for (`worldAhead.ts`). It reads what the
+ * start reads and writes nothing; a start that then comes to another tier
+ * (the choice changed meanwhile) makes its own scene.
+ */
+export function tierAhead(
+  signals: GpuSignals,
+  opts: { search: string; choice: TierChoice; engine?: VerdictEngine; steps: ProbeSteps },
+  deps: Pick<StartupDeps, "storage" | "pixels" | "now">,
+): QualityTier | null {
+  const { decided, from } = startRule(signals, opts, deps);
+  return from === null ? decided.tier : null;
+}
+
+/**
  * The tier to build the hike at, and where it came from: `?tier=` over the
  * player's choice, and the choice over Auto. On Auto, a probed class with no
  * verdict that holds and fewer than three attempts is probed first behind the
@@ -521,12 +554,9 @@ export async function startupTier(
   opts: { search: string; choice: TierChoice; cancelled(): boolean; engine?: VerdictEngine; steps: ProbeSteps },
   deps: StartupDeps,
 ): Promise<StartupTier> {
-  const record = readAutoRecord(deps.storage);
-  const auto = autoPick(signals, { record, pixels: deps.pixels(), now: deps.now(), engine: opts.engine, stepSettles: opts.steps.settle });
+  const { record, auto, decided, from } = startRule(signals, opts, deps);
   const { cls, gpu } = auto;
-  const decided = resolveTier({ override: parseTierOverride(opts.search), choice: opts.choice, auto: auto.tier });
   let tier = decided.tier;
-  const from = decided.source === "auto" ? (parseProbeOverride(opts.search) ?? auto.probeFrom) : null;
   if (decided.source === "auto" && from === null && auto.probeSkipped) {
     deps.log(`quality probe: skipped, ${opts.steps.whyNot}; starting at ${tier} (${cls})`);
   }

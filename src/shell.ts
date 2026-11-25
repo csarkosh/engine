@@ -22,7 +22,8 @@ import { setLoadProgress } from "./game/loadReport.js";
 import { markedProgress } from "./game/loadProgress.js";
 import { createRouteAnnouncer } from "./game/routeAnnounce.js";
 import { worldInputs } from "./game/worldInputs.js";
-import { sceneLine, startWorldPrep, worldPrepLine, type WorldPrepOutcome } from "./game/worldPrep.js";
+import { sceneLine, startWorldPrep, worldPrepLine, type WorldPrep, type WorldPrepOutcome } from "./game/worldPrep.js";
+import { createWorldAhead, type WorldMadeFrom } from "./game/worldAhead.js";
 import type { PreparedScene } from "./game/preparedScene.js";
 import { isDesktop, isTouchDevice, hostPlatform, desktopVersion } from "./game/platform.js";
 import { inviteLink, parseJoinLink } from "./game/joinLink.js";
@@ -45,7 +46,7 @@ import { renderTurnedAway, type TurnedAwayHandle } from "./game/turnedAway.js";
 import { turnedAwayModel, visitorDevice, type TurnedAwayView } from "./game/turnedAwayModel.js";
 import { adapterVerdict, loadVerdict, type LoadVerdict } from "./game/loadCheck.js";
 import { liteProbeDeps } from "./game/lite/probeScene.js";
-import { LOADING_LINE, START_FAILED_LINE, autoPick, launchLine, liteProbeSteps, startFallbacks, startSession, startupTier, type ProbeSteps, type StartupTier } from "./game/frameProbe.js";
+import { LOADING_LINE, START_FAILED_LINE, autoPick, launchLine, liteProbeSteps, startFallbacks, startSession, startupTier, tierAhead, type ProbeSteps, type StartupTier } from "./game/frameProbe.js";
 import { createMuteButton, readMuted, writeMuted } from "./game/muteButton.js";
 import { containerPixels, withGovernorDrop, type QualityTier, type VerdictEngine } from "./game/quality.js";
 import type { AutoSummary } from "./game/settings.js";
@@ -249,6 +250,9 @@ export function startShell<
     // decides when it comes, however late.
     else void signalsRead.adapter.then((later) => settleVerdict(adapterVerdict(later)));
     side.repaint();
+    // The next session's world is made from here on (`warmWorld`): now, or once a verdict not yet known is.
+    warmWorld();
+    if (known === null) void signalsRead.adapter.then(warmWorld);
   });
 
   // ---- the load check ------------------------------------------------------------
@@ -296,6 +300,8 @@ export function startShell<
   function settleVerdict(next: LoadVerdict): void {
     verdict = next;
     if (next.play) return;
+    ahead.dispose();
+    // (Nothing of a session is made for a visitor who cannot play: what was made ahead of Play is ended.)
     if (!turnedAwayTold) {
       turnedAwayTold = true;
       telemetry.event("turned_away", next.short === null ? { reason: next.reason } : { reason: next.reason, short: next.short });
@@ -325,7 +331,41 @@ export function startShell<
     tierChoice.save(choice);
     choiceNotice = null;
     telemetry.event("settings", { choice });
+    // A scene made ahead is of the tier the choice came to: made again where that has changed.
+    warmWorld();
   };
+
+  // ---- the next session's world ---------------------------------------------------
+  // While the landing page stands, the world of the session the next Play starts is made off the
+  // page's thread (`worldAhead.ts`): the token is made now, the world's worker started for it, and
+  // the first scene asked at the tier a start would be given, where that needs no check. Play then
+  // starts its session at that token and finds its world made. Not before the page has loaded (the
+  // landing page's own files come first), not for a follower (the host's Play names their session)
+  // and not for a visitor who cannot play.
+  /** The world's worker, started for a world (`worldPrep.ts`): the one place it is started. */
+  const startPrep = (from: WorldMadeFrom): WorldPrep => startWorldPrep(from, page.worldWorker);
+  const ahead = createWorldAhead({ mint: createLobbyId, from: worldInputs, start: startPrep });
+  function warmWorld(): void {
+    if (signals === null || verdict === null || !verdict.play || !side.landingUp()) return;
+    // A follower's session is the host's to name: what was made ahead here is no one's.
+    if (lobby !== null && lobby.state.role === "client") {
+      ahead.dispose();
+      return;
+    }
+    if (document.readyState !== "complete") {
+      window.addEventListener("load", warmWorld, { once: true });
+      return;
+    }
+    const search = location.search;
+    ahead.warm(
+      search,
+      tierAhead(
+        signals,
+        { search, choice: currentChoice(), engine: verdictEngineNow(), steps: probeSteps(signals) },
+        { storage: pageStorage(), pixels: () => containerPixels(app), now: () => Date.now() },
+      ),
+    );
+  }
 
   /**
    * A tier failed to build, at a session's start or on a switch mid-session: what it
@@ -538,6 +578,8 @@ export function startShell<
       // mid-game is handled by the game's own session-end path, but a lobby that
       // ends on a landing page just needs the roster to say so.
       if (parseRoute(location.pathname).kind !== "game") side.repaint();
+      // On the landing page alone again, the next Play is this page's own: its world is made ahead.
+      warmWorld();
     });
     detachLobby = () => {
       offChange();
@@ -546,6 +588,8 @@ export function startShell<
     paintRoster();
     side.repaint();
     follow(next);
+    // A lobby joined as its follower: the world made ahead here goes (`warmWorld`).
+    warmWorld();
   }
 
   function detach(): void {
@@ -723,7 +767,8 @@ export function startShell<
     side.repaint();
     afterNextPaint(() => {
       launching = false;
-      navigateToGame(createLobbyId());
+      // The token a world was made ahead for, where one was (`worldAhead.ts`): the session finds it made.
+      navigateToGame(ahead.token());
     });
   }
 
@@ -911,6 +956,7 @@ export function startShell<
       pageRow();
       announcer.now();
       paintRoster();
+      warmWorld();
       return;
     }
 
@@ -986,6 +1032,7 @@ export function startShell<
       });
       announcer.now();
       paintRoster();
+      warmWorld();
       return;
     }
 
@@ -1013,11 +1060,23 @@ export function startShell<
     // models once its device is made, and an error under a session is the game's.
     let building = false;
     setLoadProgress(markedProgress(opening?.progress ?? null, (stage) => telemetry.mark(`load:${stage}`), () => building));
-    // The session's trail and level check, made off this thread from now, while
-    // the tier is decided, the film buffers and the engine starts: the build
-    // waits for them (`beforeBuild`) and finds them made. With no worker, or
-    // one that fails, the build makes them as it always did (`worldPrep.ts`).
-    const prep = startWorldPrep(worldInputs(route.token, location.search), page.worldWorker);
+    // The session's trail and level check, made off this thread: ahead of Play
+    // while the landing page stood, where this is the session that was made for
+    // (`worldAhead.ts`), else from now, while the tier is decided, the film
+    // buffers and the engine starts. The build waits for them (`beforeBuild`)
+    // and finds them made. With no worker, or one that fails, the build makes
+    // them as it always did (`worldPrep.ts`).
+    const madeFrom = worldInputs(route.token, location.search);
+    const early = ahead.take(route.token, madeFrom);
+    const prep = early?.prep ?? startPrep(madeFrom);
+    /** A second worker, for the scene alone, where the one made ahead is of another tier than the start came to. */
+    let again: WorldPrep | null = null;
+    let prepEnded = false;
+    const endPrep = (): void => {
+      prepEnded = true;
+      prep.dispose();
+      again?.dispose();
+    };
     let prepOutcome: WorldPrepOutcome | null = null;
     // The session's first scene (`preparedScene.ts`): asked of the same worker
     // once the tier is decided, waited for before the build, and taken by the
@@ -1044,7 +1103,7 @@ export function startShell<
     running = {
       dispose: () => {
         probe.abort();
-        prep.dispose();
+        endPrep();
       },
     };
     // How long each step of the start took, for its `load` row: the tier's
@@ -1081,7 +1140,18 @@ export function startShell<
           lap("decide");
           telemetry.mark("start:engine");
           sceneTier = decided.tier;
-          sampling = prep.scene(decided.tier);
+          if (early === null || early.first === null) sampling = prep.scene(decided.tier);
+          else if (early.first.tier === decided.tier) sampling = early.first.made;
+          else {
+            // Made ahead at another tier (the start came to a different one): once the world stands, a
+            // worker of its own makes this tier's scene. Where the world did not come (the worker failed,
+            // or ran out of time) there is no scene, as ever, and the build samples for itself.
+            sampling = prep.ready.then((outcome) => {
+              if (prepEnded || cancelled() || (outcome.why !== "done" && outcome.why !== "cached")) return null;
+              again = startPrep(madeFrom);
+              return again.scene(decided.tier);
+            });
+          }
           return decided;
         }),
       before:
@@ -1115,7 +1185,7 @@ export function startShell<
         launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled);
         lap("build");
         // The build has what it wanted of the worker: the worker ends, and the scene is let go of.
-        prep.dispose();
+        endPrep();
         telemetry.event("load", {
           ...laps,
           tier: decided.tier,
@@ -1124,6 +1194,8 @@ export function startShell<
           prep: prepOutcome?.why ?? "none",
           prepMs: Math.round(prepOutcome?.ms ?? 0),
           scene: sampledFor === null ? "none" : "made",
+          // Whether the world was made ahead of Play, while the landing page stood.
+          ahead: early !== null,
         });
         building = false;
         telemetry.mark("game");
@@ -1131,7 +1203,7 @@ export function startShell<
       fail: (error) => {
         telemetry.event("start_fail", { ...laps, msg: error instanceof Error ? error.message : String(error) });
         console.error("The game could not start.", error);
-        prep.dispose();
+        endPrep();
         opening?.failed();
         // Whichever canvas the start left: a renderer that fell back to a lower
         // tier builds on a fresh one in the first one's place.

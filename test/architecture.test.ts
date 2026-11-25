@@ -293,7 +293,10 @@ describe("layer boundaries", () => {
     // and the page says for itself whether a step can be measured: not where the browser offers no WebGPU, or no
     // adapter, which the GPU's signals say of both (`AdapterStatus`).
     expect(main).toContain('  function verdictEngineNow(): VerdictEngine {\n    return "webgpu";\n  }');
-    expect([...main.matchAll(/\bverdictEngineNow\(\)/g)].length).toBe(5);
+    // (Its sixth use: the tier a start would be given with no check, read ahead of Play for the next session's
+    // first scene, `tierAhead`.)
+    expect([...main.matchAll(/\bverdictEngineNow\(\)/g)].length).toBe(6);
+    expect(main).toContain("        { search, choice: currentChoice(), engine: verdictEngineNow(), steps: probeSteps(signals) },");
     expect(main).toContain('    return liteProbeSteps(read.adapterStatus !== "none");');
     expect(main).toContain("engine: verdictEngineNow(), steps: probeSteps(read) }, {");
     expect(main).toContain("engine: verdictEngineNow(), stepSettles: probeSteps(signals).settle });");
@@ -593,10 +596,29 @@ describe("layer boundaries", () => {
     const body = main.slice(main.indexOf("function render(container: HTMLDivElement): void {"), main.indexOf("\n  function launch("));
     const wait = body.indexOf("    if (!isLandingRoute(route) && signals === null) {");
     expect(wait).toBeGreaterThan(0);
-    for (const start of ["void sessionCanvas().then(", "page.scene(", "side.openingFor(", "startWorldPrep(", "liteProbeDeps(container, ", "void startSession<EngineOnCanvas>("]) {
+    for (const start of ["void sessionCanvas().then(", "page.scene(", "side.openingFor(", "ahead.take(", "liteProbeDeps(container, ", "void startSession<EngineOnCanvas>("]) {
       expect(body.indexOf(start), start).toBeGreaterThan(wait);
       expect(body.lastIndexOf(start), start).toBe(body.indexOf(start));
     }
+    // The world's worker is started in one place (`startPrep`). A route starts it only past that wait: for
+    // the session's world where none was made ahead, and for a scene of another tier than the one made ahead.
+    expect([...main.matchAll(/\bstartWorldPrep\(/g)].length).toBe(1);
+    expect(main).toContain("  const startPrep = (from: WorldMadeFrom): WorldPrep => startWorldPrep(from, page.worldWorker);");
+    const routeStarts = [...body.matchAll(/\bstartPrep\(/g)].map((m) => m.index);
+    expect(routeStarts).toHaveLength(2);
+    for (const at of routeStarts) expect(at).toBeGreaterThan(wait);
+    // The one other start is the next session's world, made ahead while the landing page stands (`worldAhead.ts`):
+    // never before the signals are in, never under a verdict of "cannot" or one not yet known, and what was made
+    // is ended when a verdict of "cannot" comes.
+    expect([...main.matchAll(/\bstartPrep\b/g)].length).toBe(4);
+    expect(main).toContain("  const ahead = createWorldAhead({ mint: createLobbyId, from: worldInputs, start: startPrep });");
+    expect(main).toContain("  function warmWorld(): void {\n    if (signals === null || verdict === null || !verdict.play || !side.landingUp()) return;");
+    expect([...main.matchAll(/\bahead\.warm\(/g)].length).toBe(1);
+    const warm = main.slice(main.indexOf("  function warmWorld(): void {"), main.indexOf("\n  }\n", main.indexOf("  function warmWorld(): void {")));
+    expect(warm).toContain("ahead.warm(");
+    // A follower's hike is the host's to name: nothing is made ahead for one, and what was made goes.
+    expect(warm).toContain('    if (lobby !== null && lobby.state.role === "client") {\n      ahead.dispose();\n      return;\n    }');
+    expect(main).toContain("    if (next.play) return;\n    ahead.dispose();");
     // No canvas is made under a verdict of "cannot", for a route or for a hike that was running when it came.
     expect(main).toContain("    if (verdict !== null && !verdict.play) throw new Error(");
     // An invitation is joined once the signals are in, and not by a visitor turned away; one who is leaves a

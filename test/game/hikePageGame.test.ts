@@ -32,7 +32,7 @@ describe("the page's shell", () => {
     expect(shell).toContain("  const side = page.side({");
     expect(shell).toContain("      proto: page.protocol,");
     expect(shell.split("page.statusLine(container)").length - 1).toBe(3);
-    expect(shell).toContain("startWorldPrep(worldInputs(route.token, location.search), page.worldWorker)");
+    expect(shell).toContain("const startPrep = (from: WorldMadeFrom): WorldPrep => startWorldPrep(from, page.worldWorker);");
     expect(shell).toContain("const scene = page.scene({ canvas, container, tier }, parseSceneSearch(location.search), route.name);");
     expect(shell).toContain("const probe = liteProbeDeps(container, { level: page.game.level, renderer: page.game.renderer, state: page.probeState });");
     expect(shell).toMatch(/const handle = startGame\(onCanvas\.canvas, worldToken, \{[\s\S]*?\n {4}\}, page\.game\);/);
