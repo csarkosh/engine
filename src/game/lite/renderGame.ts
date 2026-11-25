@@ -20,6 +20,7 @@ import type { CameraAxes, CameraPose, ViewFrustumPlane } from "./cameraPose.js";
 import type { FrameUploads } from "./frameUploads.js";
 import type { LiteShadeMask } from "./shadeMask.js";
 import type { SkinClock } from "./skinnedModels.js";
+import type { WaterBehind } from "./waterBehind.js";
 
 /** What the renderer reads of a player to place the camera, the wind and the animals. */
 export type RenderPlayer = {
@@ -78,6 +79,14 @@ export type RenderMakeLate = RenderMakeMasked & {
   skinClock: SkinClock;
   /** Where a mesh that keeps the rain off is told to the rain's cover map, where there is one. */
   hardCover: { add(mesh: Mesh, place?: MaterialPlugin): void; remove(mesh: Mesh): void } | undefined;
+  /**
+   * The frame as the opaque draws left it, its colour and its depth, where the scene's pass is broken to keep it
+   * (`waterBehind.ts`, `postChain.ts`): the high tier, and the medium tier of a game that asks for it
+   * (`RenderSide.keepsFrame`). A material of the game's own on a mesh marked `afterBreak` may read it: a pane of
+   * glass that shows what is behind it out of focus. Undefined where no frame is kept: the low tier, and the medium
+   * tier of a game that does not ask.
+   */
+  behind: WaterBehind | undefined;
 };
 
 /** How far the horror look is turned, as a game last set it: the renderer reads these each frame. */
@@ -124,6 +133,13 @@ export type RenderWildlife<S> = {
 /** A game's side of one renderer: made with it, let go with it. */
 export type RenderSide<S, P> = {
   readonly look: RenderLook;
+  /**
+   * Whether the game's own materials read the frame the opaque draws left (`RenderMakeLate.behind`). The high tier
+   * keeps that frame for its water whatever this says; with it true the medium tier keeps it too, on the frames that
+   * show one of the game's meshes marked `afterBreak`, and its water is drawn as it was. Read once, when the
+   * renderer is made.
+   */
+  readonly keepsFrame?: boolean;
   readonly wildlife: RenderWildlife<S>;
 
   // ---- making

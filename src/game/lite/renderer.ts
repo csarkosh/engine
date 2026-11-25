@@ -1160,9 +1160,14 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     // taken the body, and a pair of eyes each at every distance.
     side.masked({ engine, scene, shared, mask });
     // The chain: the scene's pass into its first target and its own passes after, before the scene is registered.
-    const chain = chained && cloudMap !== null ? createLitePostChain(engine, scene, { features: postFeatures, camera, cloudMap, now: clock, keep: tier === "high", uploads }) : null;
-    // The frame behind the water, where the scene's pass is broken for it: the sea's, the lip's and every lake's surface read it.
-    const behind = chain === null || chain.kept === null ? undefined : createWaterBehind(engine, chain.kept);
+    // The scene's pass is broken, and the frame kept, on the high tier for its water, and on any tier with a chain for a game whose own
+    // materials read it (`RenderSide.keepsFrame`).
+    const chain = chained && cloudMap !== null ? createLitePostChain(engine, scene, { features: postFeatures, camera, cloudMap, now: clock, keep: tier === "high" || side.keepsFrame === true, uploads }) : null;
+    // The frame kept, for whatever reads it: the game's own parts are handed it (`RenderMakeLate.behind`).
+    const frameBehind = chain === null || chain.kept === null ? undefined : createWaterBehind(engine, chain.kept);
+    // The frame behind the water, on the tier that reads through its water: the sea's, the lip's and every lake's surface read it. A
+    // medium tier that keeps the frame for a game's glass draws its water as it always has.
+    const behind = tier === "high" ? frameBehind : undefined;
     waterThrough = behind !== undefined;
     if (forest !== null && cloudMap !== null) {
       const arrays = await loadGroundArrays(engine, disposal.signal, () => {
@@ -1312,7 +1317,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     // parts stand there under the plugin that turns them.
     if (!disposed) {
       side.late({
-        engine, scene, shared, mask, air, wetAt, ahead: depthAheadPlugin, skinClock,
+        engine, scene, shared, mask, air, wetAt, ahead: depthAheadPlugin, skinClock, behind: frameBehind,
         hardCover: rainMap === null ? undefined : { add: (mesh, place) => rainMap.register(mesh, "hard", place), remove: (mesh) => rainMap.unregister(mesh) },
       });
     }
