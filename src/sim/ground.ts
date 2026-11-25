@@ -1,7 +1,7 @@
 import type { Vec3 } from "./core.js";
 import { elevationSampleAt } from "./terrain.js";
 import { GROUND_NORMAL_Y, ROCK_STAND_NORMAL_Y } from "./constants.js";
-import { GROUND_DEPTH, rockLayerAt, rockPaintAt, rockRiseAt, trailClearAt } from "./rockSurface.js";
+import { GROUND_DEPTH, ROCK_LAYER, rockLayerInto, rockPaintAt, rockRiseAt, trailClearAt } from "./rockSurface.js";
 import type { TrailGraph } from "./trail.js";
 
 /**
@@ -93,9 +93,9 @@ export function createGroundField(seed: number, trail: TrailGraph | null = null,
     },
     normalAt(x, z, out) {
       const s = elevationSampleAt(seed, x, z);
-      const rock = rockLayerAt(seed, x, z, s, trail);
-      const dx = s.dx + rock.dx;
-      const dz = s.dz + rock.dz;
+      const layer = rockLayerInto(seed, x, z, s, trail);
+      const dx = s.dx + (layer ? ROCK_LAYER.dx : 0);
+      const dz = s.dz + (layer ? ROCK_LAYER.dz : 0);
       // Math.sqrt only — Math.hypot is banned in sim/ (architecture.test.ts):
       // it is implementation-approximated and would let two engines disagree.
       const inv = 1 / Math.sqrt(1 + dx * dx + dz * dz);

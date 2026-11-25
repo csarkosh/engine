@@ -25,7 +25,7 @@
  */
 import { elevationSampleAt, type TerrainSample } from "./terrain.js";
 import { trailDistance, type TrailGraph } from "./trail.js";
-import { FACE_RELIEF_TUNABLES, FACE_SLOPE_HI, FACE_SLOPE_LO, groundWalkD, type ReliefSample } from "./faceRelief.js";
+import { FACE_RELIEF_TUNABLES, FACE_SLOPE_HI, FACE_SLOPE_LO, GROUND, groundWalkInto } from "./faceRelief.js";
 import { stepT } from "./lakeShape.js";
 import { SLOPE_HI, SLOPE_LO } from "./vegetation.js";
 
@@ -269,9 +269,13 @@ export function rockRiseAt(seed: number, x: number, z: number, s: TerrainSample,
   const mask = paint * (1 - faceMask(gm)) * loudnessAt(seed, x, z) * clear;
   if (mask === 0) return 0;
   const depth = depthUnderBend(GROUND_DEPTH, groundBend(seed, x, z, s), GROUND_BEND_SHARE);
-  const r: ReliefSample = groundWalkD(seed, x, z);
-  return (mask * depth * Math.sqrt(1 + g2) * (r.v + 1)) / 2;
+  groundWalkInto(seed, x, z);
+  const rv = GROUND.v;
+  return (mask * depth * Math.sqrt(1 + g2) * (rv + 1)) / 2;
 }
+
+/** Where `rockLayerInto` leaves the layer when there is one: read by number, at once, never kept. */
+export const ROCK_LAYER: { rise: number; dx: number; dz: number } = { rise: 0, dx: 0, dz: 0 };
 
 /**
  * The walkable rock's layer at (x, z) over the ground sample `s` there: its
@@ -282,8 +286,15 @@ export function rockRiseAt(seed: number, x: number, z: number, s: TerrainSample,
  * at the point itself is nothing, since the layer may rise a step on.
  */
 export function rockLayerAt(seed: number, x: number, z: number, s: TerrainSample, trail: TrailGraph | null = null): RockLayer {
+  if (!rockLayerInto(seed, x, z, s, trail)) return NO_ROCK;
+  return { rise: ROCK_LAYER.rise, dx: ROCK_LAYER.dx, dz: ROCK_LAYER.dz };
+}
+
+/** `rockLayerAt`, left in `ROCK_LAYER`: no layer record is made. Returns false, writing nothing, where
+ * the answer is `NO_ROCK`, and true where it wrote `ROCK_LAYER`. */
+export function rockLayerInto(seed: number, x: number, z: number, s: TerrainSample, trail: TrailGraph | null = null): boolean {
   const rise = rockRiseAt(seed, x, z, s, trail);
-  if (rise === 0 && (rockPaintAt(seed, x, z) === 0 || trailClearAt(trail, x, z) === 0)) return NO_ROCK;
+  if (rise === 0 && (rockPaintAt(seed, x, z) === 0 || trailClearAt(trail, x, z) === 0)) return false;
   const e = GROUND_SLOPE_STEP;
   const xp = rockRiseAt(seed, x + e, z, elevationSampleAt(seed, x + e, z), trail);
   const xm = rockRiseAt(seed, x - e, z, elevationSampleAt(seed, x - e, z), trail);
@@ -291,6 +302,9 @@ export function rockLayerAt(seed: number, x: number, z: number, s: TerrainSample
   const zm = rockRiseAt(seed, x, z - e, elevationSampleAt(seed, x, z - e), trail);
   const dx = (xp - xm) / (2 * e);
   const dz = (zp - zm) / (2 * e);
-  if (rise === 0 && dx === 0 && dz === 0) return NO_ROCK;
-  return { rise, dx, dz };
+  if (rise === 0 && dx === 0 && dz === 0) return false;
+  ROCK_LAYER.rise = rise;
+  ROCK_LAYER.dx = dx;
+  ROCK_LAYER.dz = dz;
+  return true;
 }

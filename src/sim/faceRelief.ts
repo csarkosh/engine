@@ -16,7 +16,7 @@
  * sim/ determinism rules apply: no trig, no Math.pow, no `**`, no hypot.
  */
 
-import { gradientNoise2, hash3 } from "./field.js";
+import { NOISE, gradientNoise2Into, hash3 } from "./field.js";
 import { stepT, stepTd } from "./lakeShape.js";
 
 // ---- Tunables (every one appears in FACE_RELIEF_TUNABLES) -------------------
@@ -181,9 +181,9 @@ export function cellularSite(
 
 // The cellular field's result, written by `cellular` and read at once by its
 // callers, so a sample of the relief allocates nothing but what it returns.
-let cv = 0;
-let cdx = 0;
-let cdz = 0;
+// A record with fixed fields, not module `let`s: a double in a `let` is boxed
+// afresh at each write.
+const CELL = { v: 0, dx: 0, dz: 0 };
 
 // The sites around the sample: their offsets from it, distances and cells.
 // Room for the 5 × 5 window `cellular` widens to when the 3 × 3 cannot hold
@@ -225,7 +225,7 @@ function gather(
   return n;
 }
 
-/** The cellular field into cv/cdx/cdz. */
+/** The cellular field into CELL. */
 function cellular(
   x: number, z: number, cell: number, jitter: number, border: number, salt: number,
   tilt = FACE_TILT, dome = 0, cone = 0,
@@ -312,21 +312,21 @@ function cellular(
   if (weighted === 1) {
     // Well inside a cell: the cell's own plane.
     v = swu;
-    cdx = px;
-    cdz = pz;
+    CELL.dx = px;
+    CELL.dz = pz;
   } else {
     v = swu / sw;
-    cdx = (ax + px - v * bx) / sw;
-    cdz = (az + pz - v * bz) / sw;
+    CELL.dx = (ax + px - v * bx) / sw;
+    CELL.dz = (az + pz - v * bz) / sw;
   }
   // A plane reaches past the unit range only far up its tilt; there the
   // field holds at the bound, flat.
   if (v > 1 || v < -1) {
     v = v > 1 ? 1 : -1;
-    cdx = 0;
-    cdz = 0;
+    CELL.dx = 0;
+    CELL.dz = 0;
   }
-  cv = v;
+  CELL.v = v;
 }
 
 /**
@@ -354,29 +354,31 @@ export function cellularD(
   tilt = FACE_TILT, dome = 0, cone = 0,
 ): ReliefSample {
   cellular(x, z, cell, jitter, border, salt, tilt, dome, cone);
-  return { v: cv, dx: cdx, dz: cdz };
+  return { v: CELL.v, dx: CELL.dx, dz: CELL.dz };
 }
 
 // The form share, written by `kind`.
-let ks = 0;
-let ksx = 0;
-let ksz = 0;
+const KIND = { v: 0, dx: 0, dz: 0 };
 
+/** The form share into KIND. */
 function kind(seed: number, x: number, z: number): void {
-  const n = gradientNoise2(x / FACE_KIND_WAVE, z / FACE_KIND_WAVE, seed ^ FACE_KIND_SALT);
+  gradientNoise2Into(x / FACE_KIND_WAVE, z / FACE_KIND_WAVE, seed ^ FACE_KIND_SALT);
+  const nv = NOISE.v;
+  const ndx = NOISE.dx;
+  const ndz = NOISE.dz;
   const span = FACE_KIND_HI - FACE_KIND_LO;
-  const t = (n.v - FACE_KIND_LO) / span;
-  ks = stepT(t);
+  const t = (nv - FACE_KIND_LO) / span;
+  KIND.v = stepT(t);
   const d = stepTd(t) / (span * FACE_KIND_WAVE);
-  ksx = d * n.dx;
-  ksz = d * n.dz;
+  KIND.dx = d * ndx;
+  KIND.dz = d * ndz;
 }
 
 /** The share of blocks in the relief at (x, z): 0 where it is columns, 1 where
  * it is blocks, a quintic blend in the band between. */
 export function faceKindD(seed: number, x: number, z: number): ReliefSample {
   kind(seed, x, z);
-  return { v: ks, dx: ksx, dz: ksz };
+  return { v: KIND.v, dx: KIND.dx, dz: KIND.dz };
 }
 
 function columns(seed: number, x: number, z: number): void {
@@ -385,68 +387,66 @@ function columns(seed: number, x: number, z: number): void {
   );
 }
 
-/** The two octaves of blocks into cv/cdx/cdz. */
+/** The two octaves of blocks into CELL. */
 function blocks(seed: number, x: number, z: number): void {
   cellular(x, z, FACE_BLOCK_CELL, FACE_BLOCK_JITTER, FACE_BLOCK_BORDER, seed ^ FACE_BLOCK_SALT);
-  const av = cv;
-  const adx = cdx;
-  const adz = cdz;
+  const av = CELL.v;
+  const adx = CELL.dx;
+  const adz = CELL.dz;
   cellular(
     x, z, FACE_BLOCK_FINE_CELL, FACE_BLOCK_FINE_JITTER, FACE_BLOCK_FINE_BORDER,
     seed ^ FACE_BLOCK_FINE_SALT,
   );
-  cv = (av + FACE_BLOCK_FINE_WEIGHT * cv) * FACE_BLOCK_NORM;
-  cdx = (adx + FACE_BLOCK_FINE_WEIGHT * cdx) * FACE_BLOCK_NORM;
-  cdz = (adz + FACE_BLOCK_FINE_WEIGHT * cdz) * FACE_BLOCK_NORM;
+  CELL.v = (av + FACE_BLOCK_FINE_WEIGHT * CELL.v) * FACE_BLOCK_NORM;
+  CELL.dx = (adx + FACE_BLOCK_FINE_WEIGHT * CELL.dx) * FACE_BLOCK_NORM;
+  CELL.dz = (adz + FACE_BLOCK_FINE_WEIGHT * CELL.dz) * FACE_BLOCK_NORM;
 }
 
-// The relief's result, written by `relief`.
-let rv = 0;
-let rdx = 0;
-let rdz = 0;
+// The relief's result, written by `fine` and `relief`.
+const RELIEF = { v: 0, dx: 0, dz: 0 };
 
 /** The fine relief, columns, blocks or their mix by the form share, into
- * rv/rdx/rdz. */
+ * RELIEF. */
 function fine(seed: number, x: number, z: number): void {
   kind(seed, x, z);
-  if (ks === 0 || ks === 1) {
-    if (ks === 0) columns(seed, x, z);
+  const s = KIND.v;
+  const sx = KIND.dx;
+  const sz = KIND.dz;
+  if (s === 0 || s === 1) {
+    if (s === 0) columns(seed, x, z);
     else blocks(seed, x, z);
-    rv = cv;
-    rdx = cdx;
-    rdz = cdz;
+    RELIEF.v = CELL.v;
+    RELIEF.dx = CELL.dx;
+    RELIEF.dz = CELL.dz;
     return;
   }
-  const s = ks;
-  const sx = ksx;
-  const sz = ksz;
   columns(seed, x, z);
-  const colV = cv;
-  const colDx = cdx;
-  const colDz = cdz;
+  const colV = CELL.v;
+  const colDx = CELL.dx;
+  const colDz = CELL.dz;
   blocks(seed, x, z);
-  const diff = cv - colV;
-  rv = colV + s * diff;
-  rdx = colDx + s * (cdx - colDx) + sx * diff;
-  rdz = colDz + s * (cdz - colDz) + sz * diff;
+  const diff = CELL.v - colV;
+  RELIEF.v = colV + s * diff;
+  RELIEF.dx = colDx + s * (CELL.dx - colDx) + sx * diff;
+  RELIEF.dz = colDz + s * (CELL.dz - colDz) + sz * diff;
 }
 
-/** The relief into rv/rdx/rdz: the fine relief on the large forms. */
+/** The relief into RELIEF: the fine relief on the large forms. */
 function relief(seed: number, x: number, z: number): void {
   fine(seed, x, z);
   cellular(x, z, FACE_FORM_CELL, FACE_FORM_JITTER, FACE_FORM_BORDER, seed ^ FACE_FORM_SALT);
   const n = FACE_GAIN / (1 + FACE_FORM_WEIGHT);
-  let v = n * (rv + FACE_FORM_WEIGHT * cv);
-  rdx = n * (rdx + FACE_FORM_WEIGHT * cdx);
-  rdz = n * (rdz + FACE_FORM_WEIGHT * cdz);
+  let v = n * (RELIEF.v + FACE_FORM_WEIGHT * CELL.v);
+  RELIEF.dx = n * (RELIEF.dx + FACE_FORM_WEIGHT * CELL.dx);
+  RELIEF.dz = n * (RELIEF.dz + FACE_FORM_WEIGHT * CELL.dz);
   // Each term is within [−1, 1] and the mix is their weighted mean, gained;
   // the clamp holds the gained mix to the range, flat where it holds.
   if (v > 1 || v < -1) {
     v = v > 1 ? 1 : -1;
-    rdx = 0;
-    rdz = 0;
+    RELIEF.dx = 0;
+    RELIEF.dz = 0;
   }
-  rv = v;
+  RELIEF.v = v;
 }
 
 /**
@@ -459,7 +459,7 @@ function relief(seed: number, x: number, z: number): void {
  */
 export function faceReliefD(seed: number, x: number, z: number): ReliefSample {
   relief(seed, x, z);
-  return { v: rv, dx: rdx, dz: rdz };
+  return { v: RELIEF.v, dx: RELIEF.dx, dz: RELIEF.dz };
 }
 
 /**
@@ -468,45 +468,72 @@ export function faceReliefD(seed: number, x: number, z: number): ReliefSample {
  * gradient noise of GROUND_PATCH_WAVE between.
  */
 export function groundPatchD(seed: number, x: number, z: number): ReliefSample {
-  const n = gradientNoise2(x / GROUND_PATCH_WAVE, z / GROUND_PATCH_WAVE, seed ^ GROUND_PATCH_SALT);
-  const t = (n.v + 1) / 2;
-  const d = (stepTd(t) * (1 - GROUND_PATCH_LO)) / (2 * GROUND_PATCH_WAVE);
-  return { v: GROUND_PATCH_LO + (1 - GROUND_PATCH_LO) * stepT(t), dx: d * n.dx, dz: d * n.dz };
+  groundPatchInto(seed, x, z);
+  return { v: PATCH.v, dx: PATCH.dx, dz: PATCH.dz };
 }
+
+/** Where `groundPatchInto` leaves the patches' share and its gradient. */
+const PATCH = { v: 0, dx: 0, dz: 0 };
+
+/** `groundPatchD`, left in PATCH: no memory is made. */
+function groundPatchInto(seed: number, x: number, z: number): void {
+  gradientNoise2Into(x / GROUND_PATCH_WAVE, z / GROUND_PATCH_WAVE, seed ^ GROUND_PATCH_SALT);
+  const nv = NOISE.v;
+  const ndx = NOISE.dx;
+  const ndz = NOISE.dz;
+  const t = (nv + 1) / 2;
+  const d = (stepTd(t) * (1 - GROUND_PATCH_LO)) / (2 * GROUND_PATCH_WAVE);
+  PATCH.v = GROUND_PATCH_LO + (1 - GROUND_PATCH_LO) * stepT(t);
+  PATCH.dx = d * ndx;
+  PATCH.dz = d * ndz;
+}
+
+/** Where `groundField`, and so `groundWalkInto`, leaves its answer: read by number, at once, never kept. */
+export const GROUND: ReliefSample = { v: 0, dx: 0, dz: 0 };
 
 /** The plates (at a joint width), the shards at a weight and the outcrops,
  * gained, in the patches' share, clamped: the ground relief's composition,
- * for the drawn field and its walking twin alike. */
-function groundField(seed: number, x: number, z: number, plateBorder: number, shardWeight: number): ReliefSample {
+ * for the drawn field and its walking twin alike. Into GROUND. */
+function groundField(seed: number, x: number, z: number, plateBorder: number, shardWeight: number): void {
   cellular(x, z, GROUND_PLATE_CELL, GROUND_PLATE_JITTER, plateBorder, seed ^ GROUND_PLATE_SALT, GROUND_PLATE_TILT);
-  let v = cv;
-  let dx = cdx;
-  let dz = cdz;
+  let v = CELL.v;
+  let dx = CELL.dx;
+  let dz = CELL.dz;
   if (shardWeight !== 0) {
     cellular(x, z, GROUND_SHARD_CELL, GROUND_SHARD_JITTER, GROUND_SHARD_BORDER, seed ^ GROUND_SHARD_SALT, GROUND_SHARD_TILT, 0, GROUND_SHARD_CONE);
-    const tip = cv + GROUND_SHARD_LIFT;
+    const tip = CELL.v + GROUND_SHARD_LIFT;
     if (tip > 0) {
       v += shardWeight * tip;
-      dx += shardWeight * cdx;
-      dz += shardWeight * cdz;
+      dx += shardWeight * CELL.dx;
+      dz += shardWeight * CELL.dz;
     }
   }
   cellular(x, z, GROUND_MASS_CELL, GROUND_MASS_JITTER, GROUND_MASS_BORDER, seed ^ GROUND_MASS_SALT, GROUND_MASS_TILT, GROUND_MASS_DOME);
-  v += GROUND_MASS_WEIGHT * cv;
-  dx += GROUND_MASS_WEIGHT * cdx;
-  dz += GROUND_MASS_WEIGHT * cdz;
+  v += GROUND_MASS_WEIGHT * CELL.v;
+  dx += GROUND_MASS_WEIGHT * CELL.dx;
+  dz += GROUND_MASS_WEIGHT * CELL.dz;
   // The weights' sum is the drawn field's whatever the twin leaves out, so
   // the two share one scale and a plate's top is the same height in both.
   const n = GROUND_GAIN / (1 + GROUND_SHARD_WEIGHT + GROUND_MASS_WEIGHT);
-  const p = groundPatchD(seed, x, z);
+  groundPatchInto(seed, x, z);
+  const pv = PATCH.v;
+  const pdx = PATCH.dx;
+  const pdz = PATCH.dz;
   const g = n * v;
   const gx = n * dx;
   const gz = n * dz;
-  v = p.v * g;
-  dx = p.v * gx + p.dx * g;
-  dz = p.v * gz + p.dz * g;
-  if (v > 1 || v < -1) return { v: v > 1 ? 1 : -1, dx: 0, dz: 0 };
-  return { v, dx, dz };
+  v = pv * g;
+  dx = pv * gx + pdx * g;
+  dz = pv * gz + pdz * g;
+  if (v > 1 || v < -1) {
+    GROUND.v = v > 1 ? 1 : -1;
+    GROUND.dx = 0;
+    GROUND.dz = 0;
+    return;
+  }
+  GROUND.v = v;
+  GROUND.dx = dx;
+  GROUND.dz = dz;
 }
 
 /**
@@ -518,7 +545,8 @@ function groundField(seed: number, x: number, z: number, plateBorder: number, sh
  * the faces' joints and none of their lattices.
  */
 export function groundReliefD(seed: number, x: number, z: number): ReliefSample {
-  return groundField(seed, x, z, GROUND_PLATE_BORDER, GROUND_SHARD_WEIGHT);
+  groundField(seed, x, z, GROUND_PLATE_BORDER, GROUND_SHARD_WEIGHT);
+  return { v: GROUND.v, dx: GROUND.dx, dz: GROUND.dz };
 }
 
 /**
@@ -529,5 +557,11 @@ export function groundReliefD(seed: number, x: number, z: number): ReliefSample 
  * plate's top.
  */
 export function groundWalkD(seed: number, x: number, z: number): ReliefSample {
-  return groundField(seed, x, z, GROUND_WALK_BORDER, 0);
+  groundWalkInto(seed, x, z);
+  return { v: GROUND.v, dx: GROUND.dx, dz: GROUND.dz };
+}
+
+/** `groundWalkD`, left in `GROUND`: no memory is made. */
+export function groundWalkInto(seed: number, x: number, z: number): void {
+  groundField(seed, x, z, GROUND_WALK_BORDER, 0);
 }
