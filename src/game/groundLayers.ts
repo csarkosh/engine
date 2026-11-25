@@ -22,7 +22,7 @@
  * the arrays.
  */
 import { textureUrl } from "./assetUrls.js";
-import { fetchRetried } from "./fetchRetry.js";
+import { fetchedOrAhead } from "./filesAhead.js";
 
 export const GROUND_LAYERS = 6;
 export const GROUND_MAP_SIZE = 512;
@@ -92,7 +92,8 @@ export function flipRowsY(data: Uint8ClampedArray, size: number): Uint8ClampedAr
  * the array to agree with the albedo textures' own flip on
  * which way v runs over the same planar world-XZ UV. */
 export async function decodeGroundLayer(url: string, size: number, signal?: AbortSignal): Promise<Uint8ClampedArray> {
-  const blob = await fetchRetried(url, signal, (response) => response.blob());
+  // The copy asked for at the session's start, where the game named this image among its first files (`filesAhead.ts`).
+  const blob = await fetchedOrAhead(url, signal, (response) => response.blob());
   // The decode itself cannot be stopped once begun; this is the last point
   // before it where a teardown still saves the work.
   signal?.throwIfAborted();

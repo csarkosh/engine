@@ -159,6 +159,8 @@ export type PageGame<
   worldWorker(): Worker;
   /** The addresses of the scripts of the game's own workers (the world's), for the page to fetch ahead of them (`workerScripts.ts`); none where it names none. */
   workerScripts?: readonly string[];
+  /** The addresses of the files a session reads first, in its order, for the page to ask for as the session starts, ahead of the renderer that reads them (`filesAhead.ts`; `forestFilesAhead` for a world with a forest); none where it names none. */
+  filesAhead?(): readonly string[];
   /** A staged scene of the game's on its own route, drawn on `canvas` at `tier`. */
   scene(
     at: { canvas: HTMLCanvasElement; container: HTMLElement; tier: QualityTier },

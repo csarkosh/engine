@@ -3,7 +3,7 @@ import { join, posix, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { liteVersion } from '../../../vite/liteVersion.mjs';
-import { enginePreset, enginePublic } from '../../../vite/preset.mjs';
+import { CODE_AHEAD_ID, codeAheadFiles, engineCodeAhead, enginePreset, enginePublic } from '../../../vite/preset.mjs';
 
 // The engine's own folder (this is engine/tools/vite/test/), from here.
 const ENGINE = new URL('../../../', import.meta.url);
@@ -65,8 +65,45 @@ describe("the engine's Vite preset", () => {
     expect(limit('/x/textures/board.a.webp')).toBeUndefined();
   });
 
-  it('carries the engine public plugin', () => {
-    expect(enginePreset().plugins.map((p) => p.name)).toEqual(['engine-public']);
+  it('carries the engine public plugin, and the one that lists the page\'s code', () => {
+    expect(enginePreset().plugins.map((p) => p.name)).toEqual(['engine-public', 'engine-code-ahead']);
+  });
+});
+
+describe("the page's list of its files of code", () => {
+  const bundle = {
+    'assets/index-a.js': { type: 'chunk', fileName: 'assets/index-a.js', isEntry: true },
+    'assets/zeta-b.js': { type: 'chunk', fileName: 'assets/zeta-b.js', isEntry: false },
+    'assets/alpha-c.js': { type: 'chunk', fileName: 'assets/alpha-c.js' },
+    'assets/alpha-c.js.map': { type: 'asset', fileName: 'assets/alpha-c.js.map' },
+    'assets/world.worker-d.js': { type: 'asset', fileName: 'assets/world.worker-d.js' },
+    'assets/tree-e.glb': { type: 'asset', fileName: 'assets/tree-e.glb' },
+  };
+
+  it('names every chunk but the entry, sorted, and no asset', () => {
+    expect(codeAheadFiles(bundle)).toEqual(['assets/alpha-c.js', 'assets/zeta-b.js']);
+  });
+
+  it("is written into a build's page as a block of JSON, the addresses under the build's base", () => {
+    const plugin = engineCodeAhead();
+    plugin.configResolved({ base: '/dayhike/' });
+    expect(plugin.transformIndexHtml.order).toBe('post');
+    const tags = plugin.transformIndexHtml.handler('<html></html>', { bundle });
+    expect(tags).toEqual([
+      { tag: 'script', attrs: { type: 'application/json', id: CODE_AHEAD_ID }, children: '["/dayhike/assets/alpha-c.js","/dayhike/assets/zeta-b.js"]', injectTo: 'head' },
+    ]);
+    expect(CODE_AHEAD_ID).toBe('engine-code-ahead');
+  });
+
+  it('writes nothing on a development server, which has no bundle', () => {
+    const plugin = engineCodeAhead();
+    plugin.configResolved({ base: '/' });
+    expect(plugin.transformIndexHtml.handler('<html></html>', {})).toBeUndefined();
+  });
+
+  it('is read by the page under the same id', () => {
+    const page = readFileSync(new URL('src/game/codeAhead.ts', ENGINE), 'utf8');
+    expect(page).toContain(`export const CODE_AHEAD_ID = "${CODE_AHEAD_ID}";`);
   });
 });
 

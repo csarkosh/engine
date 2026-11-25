@@ -22,7 +22,7 @@ import { glbParts, type GlbPart } from "../glbParts.js";
 import { bakeGeometry, boundsOf, chainMatrix, type PlacedNode } from "../modelBake.js";
 import type { Vec3 } from "../instancePose.js";
 import { BASE } from "../router.js";
-import { fetchRetried } from "../fetchRetry.js";
+import { fetchedOrAhead } from "../filesAhead.js";
 import { pageTurns } from "../downloadTurns.js";
 import { modelLoadTold } from "../loadReport.js";
 
@@ -96,7 +96,8 @@ export function loadModelFile(engine: EngineContext, url: string, lods: readonly
 async function readModelFile(
   engine: EngineContext, url: string, lods: readonly string[], signal: AbortSignal, fetched: (bytes: number) => void,
 ): Promise<{ model: LoadedModel; file: ArrayBuffer }> {
-  const file = await fetchRetried(url, signal, (response) => response.arrayBuffer());
+  // The copy asked for at the session's start, where the game named this file among its first (`filesAhead.ts`).
+  const file = await fetchedOrAhead(url, signal, (response) => response.arrayBuffer());
   fetched(file.byteLength);
   // A model's textures are KTX2 (`KHR_texture_basisu`): Lite reads them with the decoder, which must know where its files are.
   pointKtx2Decoder();

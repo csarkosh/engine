@@ -118,4 +118,35 @@ describe("the next session's world, made before Play", () => {
     ahead.dispose();
     expect(started[1]!.disposed).toBe(0);
   });
+
+  it("says when the world being made has been, for what should not share the machine with its worker", async () => {
+    const ends: { resolve(outcome: WorldPrepOutcome): void; reject(error: unknown): void }[] = [];
+    const ahead = createWorldAhead({
+      mint: () => "token",
+      from: () => ({ seed: 1, variant: "olympic" }),
+      start: () => ({
+        ready: new Promise<WorldPrepOutcome>((resolve, reject) => ends.push({ resolve, reject })),
+        scene: () => Promise.resolve<PreparedScene | null>(null),
+        dispose: () => undefined,
+      }),
+    });
+    // Nothing is being made: there is nothing to wait for.
+    await ahead.whenMade();
+    ahead.warm("", null);
+    let made = false;
+    void ahead.whenMade().then(() => {
+      made = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(made).toBe(false);
+    ends[0]!.resolve({ why: "done" } as WorldPrepOutcome);
+    await ahead.whenMade();
+    expect(made).toBe(true);
+    // A worker that fails has ended too.
+    ahead.warm("?seed=2", null);
+    const second = ahead.whenMade();
+    ends[1]!.reject(new Error("the worker broke"));
+    await expect(second).resolves.toBeUndefined();
+  });
 });

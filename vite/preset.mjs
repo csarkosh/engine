@@ -120,6 +120,51 @@ export function enginePublic() {
   };
 }
 
+/** The id of the page's list of its files of code (`src/game/codeAhead.ts` reads it by the same id). */
+export const CODE_AHEAD_ID = 'engine-code-ahead';
+
+/**
+ * The files of code a build made that the page does not load by itself: every chunk but the entries, by name, sorted.
+ * A worker's script is no chunk of the page's build and is not among them.
+ *
+ * @param {Record<string, { type: string, fileName: string, isEntry?: boolean }>} bundle
+ * @returns {string[]}
+ */
+export function codeAheadFiles(bundle) {
+  return Object.values(bundle)
+    .filter((file) => file.type === 'chunk' && file.isEntry !== true && file.fileName.endsWith('.js'))
+    .map((file) => file.fileName)
+    .sort();
+}
+
+/**
+ * Lists a build's files of code in its page, for the page to load ahead of the session that uses them
+ * (`src/game/codeAhead.ts`): a block of JSON in the head, the addresses under the build's base. A build splits
+ * the game into a few hundred small files that are otherwise asked for one after another, each where it is first
+ * used. A development server has no bundle and lists nothing.
+ *
+ * @returns {import("vite").Plugin}
+ */
+export function engineCodeAhead() {
+  let base = '/';
+  return {
+    name: 'engine-code-ahead',
+    configResolved(config) {
+      base = config.base;
+    },
+    transformIndexHtml: {
+      order: 'post',
+      handler(_html, ctx) {
+        if (ctx.bundle === undefined) return undefined;
+        const urls = codeAheadFiles(ctx.bundle).map((name) => `${base}${name}`);
+        // No `<` can end the block early: an address has none, and one that did is written as its escape.
+        const json = JSON.stringify(urls).replaceAll('<', '\\u003c');
+        return [{ tag: 'script', attrs: { type: 'application/json', id: CODE_AHEAD_ID }, children: json, injectTo: 'head' }];
+      },
+    },
+  };
+}
+
 /**
  * The engine's part of a game's Vite config.
  *
@@ -140,6 +185,6 @@ export function enginePreset() {
     optimizeDeps: { exclude: ['@csarkosh/engine'] },
     // And vitest, which leaves an installed package's modules untransformed, transforms the engine's.
     test: { server: { deps: { inline: [/@csarkosh\/engine/] } } },
-    plugins: [enginePublic()],
+    plugins: [enginePublic(), engineCodeAhead()],
   };
 }

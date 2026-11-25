@@ -27,6 +27,8 @@ import { createWorldAhead, type WorldMadeFrom } from "./game/worldAhead.js";
 import { loadNet, timedProgress, type TimedProgress } from "./game/loadTimes.js";
 import { ENGINE_WORKER_SCRIPTS } from "./game/engineWorkerScripts.js";
 import { warmWorkerScripts } from "./game/workerScripts.js";
+import { codeAheadUrls, preloadCode } from "./game/codeAhead.js";
+import { pageFilesAhead } from "./game/filesAhead.js";
 import type { PreparedScene } from "./game/preparedScene.js";
 import { isDesktop, isTouchDevice, hostPlatform, desktopVersion } from "./game/platform.js";
 import { inviteLink, parseJoinLink } from "./game/joinLink.js";
@@ -357,6 +359,10 @@ export function startShell<
   // The workers' scripts, fetched ahead of the workers at a high priority (`workerScripts.ts`): on the landing page
   // once it has loaded, and at a session's start for one reached by its address.
   const warmScripts = (): void => warmWorkerScripts([...(page.workerScripts ?? []), ...ENGINE_WORKER_SCRIPTS]);
+  // The game's code the page has not loaded yet, as the build listed it (`codeAhead.ts`): asked for once the world's
+  // worker has done its work, never beside it. A few hundred files fetched and compiled at once took a second from a
+  // world made on the same machine, and the world is what a start waits for first.
+  const codeAhead = (): void => preloadCode(codeAheadUrls(document));
   function warmWorld(): void {
     if (signals === null || verdict === null || !verdict.play || !side.landingUp()) return;
     // A follower's session is the host's to name: what was made ahead here is no one's.
@@ -378,6 +384,7 @@ export function startShell<
         { storage: pageStorage(), pixels: () => containerPixels(app), now: () => Date.now() },
       ),
     );
+    void ahead.whenMade().then(codeAhead);
   }
 
   /**
@@ -1082,6 +1089,9 @@ export function startShell<
     setLoadProgress(timed.progress);
     // A session reached by its address had no landing page to fetch its workers' scripts from.
     warmScripts();
+    // The session's first files, asked for now and not when the renderer that reads them stands: through the same
+    // turns behind the film as the rest (`filesAhead.ts`). What no one took is let go when the session is ready or ends.
+    pageFilesAhead.fetch(page.filesAhead?.() ?? []);
     // The session's trail and level check, made off this thread: ahead of Play
     // while the landing page stood, where this is the session that was made for
     // (`worldAhead.ts`), else from now, while the tier is decided, the film
@@ -1099,6 +1109,9 @@ export function startShell<
       prep.dispose();
       again?.dispose();
     };
+    // The game's code, once this world's worker has done its work (see `codeAhead` above): a session reached by its
+    // address, or one whose Play came before the landing page's world was made, has not asked for it yet.
+    void prep.ready.then(codeAhead, codeAhead);
     let prepOutcome: WorldPrepOutcome | null = null;
     // The session's first scene (`preparedScene.ts`): asked of the same worker
     // once the tier is decided, waited for before the build, and taken by the
@@ -1126,6 +1139,7 @@ export function startShell<
       dispose: () => {
         probe.abort();
         endPrep();
+        pageFilesAhead.drop();
       },
     };
     // How long each step of the start took, for its `load` row: the tier's
@@ -1225,6 +1239,7 @@ export function startShell<
       fail: (error) => {
         telemetry.event("start_fail", { ...laps, msg: error instanceof Error ? error.message : String(error) });
         playedAt = null;
+        pageFilesAhead.drop();
         console.error("The game could not start.", error);
         endPrep();
         opening?.failed();
@@ -1317,6 +1332,8 @@ export function startShell<
       },
       () => undefined,
     );
+    // Ready or failed, whatever of the files asked for ahead no one took is no one's now.
+    void handle.ready.then(() => pageFilesAhead.drop(), () => pageFilesAhead.drop());
     // Under an opening the session is covered until its cut (`Opening.launched`).
     opening?.launched(handle);
     announcer.afterPaint();

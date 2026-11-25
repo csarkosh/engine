@@ -118,16 +118,8 @@ import { createImpostorBaker, type BakeMesh } from "./impostorBake.js";
 import type { ReflectionRegistry } from "./lakePanorama.js";
 import { KEPT_INSTANCES, MATRIX_BYTES, listBytes, sameFloats, writeListData } from "./listMeshes.js";
 import { createRebuilds } from "./rebuildJobs.js";
+import { DEADWOOD_MODEL, GIANT_MODELS, NURSE_FERN_ID, NURSE_FERN_MODEL, SAPLING_MODELS } from "../forestFiles.js";
 
-/** The canopy giants' models by `TreeInstance.species`: the fir, then the pine. */
-const GIANT_MODELS = ["models/tree.giant_fir.glb", "models/tree.giant_pine.glb"];
-/** The saplings' models by `TreeInstance.species`: the two conifers, then the alder. */
-const SAPLING_MODELS = ["models/tree.conifer_a.glb", "models/tree.conifer_b.glb", "models/tree.alder.glb"];
-/** The dead trees' one model, both roles. */
-const DEADWOOD_MODEL = "models/deadwood.snag.glb";
-/** The fern on the nurse logs, by catalog id: the understory's fern, in the cover's green as the floor's own are. */
-const NURSE_FERN_ID = "understory.fern";
-const NURSE_FERN_MODEL = `models/${NURSE_FERN_ID}.glb`;
 const NURSE_FERN_LOD = "LOD0";
 const TREE_LODS = ["LOD0", "LOD1", "LOD2"] as const;
 

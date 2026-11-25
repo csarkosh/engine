@@ -51,6 +51,11 @@ export type WorldAhead = {
    * where none was made for it. What was made for any other session is ended.
    */
   take(token: string, from: WorldMadeFrom): WorldTaken | null;
+  /**
+   * Resolves once the world being made now has been (its worker ended, however it ended), and at once where none is
+   * being made: what should not share the machine with the worker waits for this.
+   */
+  whenMade(): Promise<void>;
   /** Ends whatever is being made. */
   dispose(): void;
 };
@@ -94,6 +99,7 @@ export function createWorldAhead(deps: {
       held = null;
       return taken;
     },
+    whenMade: () => (held === null ? Promise.resolve() : held.taken.prep.ready.then(() => undefined, () => undefined)),
     dispose: end,
   };
 }
