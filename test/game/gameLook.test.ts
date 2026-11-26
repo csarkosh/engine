@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { ENGINE_LOOK, NO_FINISH, finishDrawsInGrade, finishDrawsLine, finishGradeUniform, finishLineUniform, gameLook, lookGradeAt, type LookFinish, type LookGrade } from "../../src/game/gameLook.js";
 import { PAINT_OILS, mixPalette } from "../../src/game/gradeParams.js";
+import { SWARD_FLOOR, SWARD_MAX } from "../../src/game/groundHexParams.js";
 import { sunPositionAt } from "../../src/game/sky.js";
 import { FAR_SOFT_RADIUS } from "../../src/game/postFrame.js";
 import { PAINT_STRENGTH } from "../../src/game/postParams.js";
 import { DEFAULT_HOUR } from "../../src/game/skyWait.js";
+import { emptyTerrainUniforms, terrainUniforms } from "../../src/game/terrainUniforms.js";
 import { DEFAULT_WEATHER, WEATHER_PRESETS } from "../../src/game/weather.js";
 import { farSoftWgsl, gradeWgsl, FAR_SOFT_WGSL } from "../../src/game/lite/postWgsl.js";
 import { sourceText } from "../helpers/source.js";
@@ -113,6 +115,23 @@ describe("a game's look over the engine's", () => {
     expect(lookGradeAt(look, 12, 1)?.exposure).toBe(3);
     expect(lookGradeAt(look, 12, 7)?.exposure).toBe(3);
     expect(lookGradeAt(look, 12, -2)?.exposure).toBe(1);
+  });
+
+  it("pulls the ground under the grass to the engine's own floor by default, and to a game's where it gives one", () => {
+    expect(ENGINE_LOOK.sward).toEqual({ floor: [SWARD_FLOOR.r, SWARD_FLOOR.g, SWARD_FLOOR.b], pull: SWARD_MAX });
+    const none = emptyTerrainUniforms();
+    const own = emptyTerrainUniforms();
+    const base = { eye: null, wetness: 0, rain: 0, seconds: 0, sward: true, relief: true, road: null, trail: null, features: null };
+    terrainUniforms(base, none);
+    // The engine's look hands the terrain what it reads with no look at all.
+    const engine = emptyTerrainUniforms();
+    terrainUniforms({ ...base, swardLook: ENGINE_LOOK.sward }, engine);
+    expect(Array.from(engine.terrainSward)).toEqual(Array.from(none.terrainSward));
+    terrainUniforms({ ...base, swardLook: { floor: [0.031, 0.041, 0.013], pull: 1 } }, own);
+    expect(Array.from(own.terrainSward)).toEqual([0.031, 0.041, 0.013, 1]);
+    // Where the blades are not drawn there is no pull, whatever the look.
+    terrainUniforms({ ...base, sward: false, swardLook: { floor: [0.031, 0.041, 0.013], pull: 1 } }, own);
+    expect(own.terrainSward[3]).toBe(0);
   });
 
   it("names nothing of Babylon.js", () => {

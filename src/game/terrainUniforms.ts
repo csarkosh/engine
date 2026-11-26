@@ -170,6 +170,8 @@ export type TerrainUniformInputs = {
   seconds: number;
   /** Whether the sward floor is pulled: only where the blade field is drawn. */
   sward: boolean;
+  /** The floor's colour and the pull at full cover, where a game's look gives its own (`GameLook.sward`); absent, the engine's (`SWARD_FLOOR`, `SWARD_MAX`). */
+  swardLook?: { readonly floor: readonly [number, number, number]; readonly pull: number };
   /** Whether the decoded relief maps are the ones bound. */
   relief: boolean;
   /** The world's tables (`terrainTables.ts`), null where the world has none. */
@@ -245,7 +247,8 @@ export function terrainUniforms(inputs: TerrainUniformInputs, out: TerrainUnifor
   out.terrainMacroOn[0] = 1;
   set3(out.terrainHorizon, HORIZON[0], HORIZON[1], HORIZON_MAX);
   set3(out.terrainTuft, TUFT_ALBEDO.r, TUFT_ALBEDO.g, TUFT_ALBEDO.b);
-  set4(out.terrainSward, SWARD_FLOOR.r, SWARD_FLOOR.g, SWARD_FLOOR.b, inputs.sward ? SWARD_MAX : 0);
+  const floor = inputs.swardLook?.floor;
+  set4(out.terrainSward, floor?.[0] ?? SWARD_FLOOR.r, floor?.[1] ?? SWARD_FLOOR.g, floor?.[2] ?? SWARD_FLOOR.b, inputs.sward ? (inputs.swardLook?.pull ?? SWARD_MAX) : 0);
   set4(out.terrainSwardBand, SWARD_COVER[0], SWARD_COVER[1], SWARD_FADE[0], SWARD_FADE[1]);
   return out;
 }

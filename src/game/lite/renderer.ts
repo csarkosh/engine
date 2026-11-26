@@ -687,6 +687,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     eye: null, wetness: 0, rain: 0, seconds: 0,
     // The sward floor is the shaded ground between the blades: it runs on the tiers that draw them.
     sward: tier !== "low",
+    swardLook: look.sward,
     relief: true,
     road: tables.road, trail: tables.trail, features: tables.features,
   };

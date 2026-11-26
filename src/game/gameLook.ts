@@ -9,6 +9,7 @@
  * Loads no engine.
  */
 import { PAINT_OILS, mixPalette, type PaintPalette } from "./gradeParams.js";
+import { SWARD_FLOOR, SWARD_MAX } from "./groundHexParams.js";
 import { FAR_SOFT_RADIUS } from "./postFrame.js";
 import { PAINT_STRENGTH } from "./postParams.js";
 import { sunPositionAt } from "./sky.js";
@@ -77,7 +78,17 @@ export type GameLook = {
    * exposure's gain are theirs at every hour (`lookGradeAt`), and `palette` and `exposure` are not read. Empty: the one palette and the one gain.
    */
   readonly grades: readonly LookGrade[];
+  /** The ground under the grass (`LookSward`). */
+  readonly sward: LookSward;
 };
+
+/**
+ * The ground under the grass. Inside the blade field's reach the terrain that carries a sward is pulled toward one colour, the shaded
+ * thatch between the blades, so that ground seen between them, or before they are built round an eye that moves fast, reads as the
+ * grass does. `floor` is that colour (linear albedo) and `pull` how far the ground is taken to it at full cover, 0 to 1. A look that
+ * darkens the blades (a line drawn on every blade's edge does) wants a darker floor and a full pull, or bare ground shows pale.
+ */
+export type LookSward = { readonly floor: readonly [number, number, number]; readonly pull: number };
 
 /** The grade where the sun stands at one height. */
 export type LookGrade = {
@@ -102,6 +113,7 @@ export const ENGINE_LOOK: GameLook = {
   hour: DEFAULT_HOUR,
   finish: NO_FINISH,
   grades: [],
+  sward: { floor: [SWARD_FLOOR.r, SWARD_FLOOR.g, SWARD_FLOOR.b], pull: SWARD_MAX },
 };
 
 /**
