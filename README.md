@@ -33,7 +33,7 @@ A release attaches a packed tarball. A game depends on that and not on the Git r
 the shipped files are in Git LFS and a git dependency would get pointers in place of them:
 
 ```json
-"@csarkosh/engine": "https://github.com/csarkosh/engine/releases/download/v0.2.18/csarkosh-engine-0.2.18.tgz"
+"@csarkosh/engine": "https://github.com/csarkosh/engine/releases/download/v0.2.19/csarkosh-engine-0.2.19.tgz"
 ```
 
 The game imports the engine's modules by path under the package name, for example
@@ -64,7 +64,7 @@ A game's server is a package of the engine's, released as a second tarball besid
 that running a server needs none of the engine's 116 MB of game files:
 
 ```json
-"@csarkosh/engine-server": "https://github.com/csarkosh/engine/releases/download/v0.2.18/csarkosh-engine-server-0.2.18.tgz"
+"@csarkosh/engine-server": "https://github.com/csarkosh/engine/releases/download/v0.2.19/csarkosh-engine-server-0.2.19.tgz"
 ```
 
 It holds compiled JavaScript and is told which game it serves by the game's own `game.json`. A game's
