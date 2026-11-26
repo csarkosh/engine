@@ -84,7 +84,7 @@ before any release: pack it (`npm pack` in `server/`), put the tarball, the exam
 `docker build` that folder. A game points the dependency at the release instead:
 
 ```json
-"@csarkosh/engine-server": "https://github.com/csarkosh/engine/releases/download/v0.2.19/csarkosh-engine-server-0.2.19.tgz"
+"@csarkosh/engine-server": "https://github.com/csarkosh/engine/releases/download/v0.2.20/csarkosh-engine-server-0.2.20.tgz"
 ```
 
 and its build context then needs no tarball.
