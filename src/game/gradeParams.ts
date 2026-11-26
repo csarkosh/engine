@@ -332,11 +332,12 @@ export function sightUnder(stare: number): number {
  * callers that do not animate (and every identity test) see the resting
  * weight. `stare` is the local player's lens (stareLens.ts): it dims the
  * frame a little and carries the darkness the pass closes over it. `chase`
- * is the chase's cast (escalation.ts), 0 before the body is found.
+ * is the chase's cast (escalation.ts), 0 before the body is found. `gain` is
+ * what the game's look multiplies the weather's exposure by.
  */
 export function gradeRecordUnder(
   w: WeatherParams, hour: number, night: number, unsettle: number, timeSeconds = 0, stare: StareLens = STARE_LENS_REST, chase = 0,
-  paint: PaintPalette = PAINT_OILS,
+  paint: PaintPalette = PAINT_OILS, gain = 1,
 ): GradeRecord {
   const altitude = sunPositionAt(hour).y;
   const lens = dreadLensUnder(w) * clamp01(unsettle);
@@ -346,7 +347,7 @@ export function gradeRecordUnder(
   const restingVignette = lens === 0 ? vignetteWeightUnder({ ...w, dread: 0 }) : vignetteWeightUnder({ ...w, dread: lens });
   const breath = lens === 0 ? 1 : 1 + VIGNETTE_PULSE * lens * Math.sin((2 * Math.PI * timeSeconds) / VIGNETTE_PULSE_PERIOD);
   return {
-    exposure: exposureUnder(w, altitude) * sightUnder(stare.level),
+    exposure: exposureUnder(w, altitude) * gain * sightUnder(stare.level),
     whitePoint: whitePointMatrix(night),
     purkinje: PURKINJE_MATRIX,
     purkinjeThreshold: PURKINJE_THRESHOLD,

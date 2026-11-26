@@ -100,10 +100,10 @@ export type CalmFade = {
   step(dt: number): void;
 };
 
-/** The calm's fade, standing at the default weather with no fade running. */
-export function createCalmFade(): CalmFade {
-  let from: WeatherPresetName | number = DEFAULT_WEATHER;
-  let to: WeatherPresetName = DEFAULT_WEATHER;
+/** The calm's fade, standing at `start` (the default weather absent) with no fade running. */
+export function createCalmFade(start: WeatherPresetName = DEFAULT_WEATHER): CalmFade {
+  let from: WeatherPresetName | number = start;
+  let to: WeatherPresetName = start;
   let fadeS = 0;
   let elapsedS = 0;
   return {

@@ -51,9 +51,15 @@ export type WorldLight = {
   dispose(): void;
 };
 
-export function createWorldLight(table: SkyTable, viewDistance: number): WorldLight {
-  let hour = DEFAULT_HOUR;
-  let weather: WeatherParams = { ...WEATHER_PRESETS[DEFAULT_WEATHER] };
+/** Where a world light starts: the weather and the hour it stands at (the game's look); the engine's default weather and hour, absent. */
+export type WorldLightStart = { readonly weather: WeatherParams; readonly hour: number };
+
+export function createWorldLight(
+  table: SkyTable, viewDistance: number,
+  start: WorldLightStart = { weather: WEATHER_PRESETS[DEFAULT_WEATHER], hour: DEFAULT_HOUR },
+): WorldLight {
+  let hour = start.hour;
+  let weather: WeatherParams = { ...start.weather };
   let fadeFrom: WeatherParams | null = null;
   let fadeTarget: WeatherParams = weather;
   let fadeDuration = 0;

@@ -53,6 +53,13 @@ says among other things whether the build can reach a signaling server (`signali
 build given `VITE_SIGNALING_URL`). A game can be published before it has a server: a production build
 given no address shows no party box and joins no party, and its own landing page says what it will.
 
+A game's session definition (`SessionGame`) can give a `look`, the part of the engine's look it changes:
+the paint filter's strength (`paint`, 0 to 1; at 0 the paint pass is not drawn), the far softening's
+radius (`farSoft`), a gain on the weather's exposure (`exposure`), the palette the grade starts in
+(`palette`), and the weather and the hour a session starts under (`weather`, `weatherName`, `hour`).
+It is a `Partial<GameLook>` (`src/game/gameLook.ts`): what a game leaves out is the engine's own, so a
+game that gives none renders as the engine always has.
+
 A game's server is a package of the engine's, released as a second tarball beside the engine's, so
 that running a server needs none of the engine's 116 MB of game files:
 

@@ -87,14 +87,17 @@ export function emptyFarSoftUniforms(): FarSoftUniforms {
  * The far softening's uniforms for a frame `width` by `height` seen through
  * `view`: a texel, the band and its radius, and the ray through a pixel as
  * the camera's forward plus the pixel's place across the view, the right
- * and up axes each at the half view's tangent.
+ * and up axes each at the half view's tangent. `radius` is the game's look's
+ * (`GameLook.farSoft`), the engine's own absent.
  */
-export function farSoftUniforms(view: PostView, width: number, height: number, out: FarSoftUniforms = emptyFarSoftUniforms()): FarSoftUniforms {
+export function farSoftUniforms(
+  view: PostView, width: number, height: number, out: FarSoftUniforms = emptyFarSoftUniforms(), radius = FAR_SOFT_RADIUS,
+): FarSoftUniforms {
   out.texel[0] = 1 / width;
   out.texel[1] = 1 / height;
   out.soft[0] = FAR_SOFT_BAND[0];
   out.soft[1] = FAR_SOFT_BAND[1];
-  out.soft[2] = FAR_SOFT_RADIUS;
+  out.soft[2] = radius;
   const tanY = Math.tan(view.fov / 2);
   const tanX = tanY * view.aspect;
   set3(out.farForward, view.forward);
@@ -226,11 +229,13 @@ export function paintUniformsDrawn(strokes: number, width: number, height: numbe
 /** The compose's uniforms: a texel of the half-size strokes, and how far the painted frame replaces the rendered one. */
 export type ComposeUniforms = { halfTexel: V2; strength: [number] };
 
-export function composeUniforms(width: number, height: number, out: ComposeUniforms = { halfTexel: [0, 0], strength: [0] }): ComposeUniforms {
+export function composeUniforms(
+  width: number, height: number, out: ComposeUniforms = { halfTexel: [0, 0], strength: [0] }, strength = PAINT_STRENGTH,
+): ComposeUniforms {
   const target = paintTargetSize(width, height);
   out.halfTexel[0] = 1 / target.width;
   out.halfTexel[1] = 1 / target.height;
-  out.strength[0] = PAINT_STRENGTH;
+  out.strength[0] = strength;
   return out;
 }
 
@@ -393,9 +398,9 @@ export type PaletteFade = {
   now(): PaintPalette;
 };
 
-export function createPaletteFade(clock: () => number): PaletteFade {
-  let from: PaintPalette = PAINT_OILS;
-  let to: PaintPalette = PAINT_OILS;
+export function createPaletteFade(clock: () => number, first: PaintPalette = PAINT_OILS): PaletteFade {
+  let from: PaintPalette = first;
+  let to: PaintPalette = first;
   let start = 0;
   let ms = 0;
   const now = (): PaintPalette => (ms <= 0 ? to : mixPalette(from, to, (clock() - start) / ms));

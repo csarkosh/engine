@@ -59,6 +59,7 @@ import {
 } from "@babylonjs/lite";
 import type { AtmosphereUniforms } from "../atmosphereParams.js";
 import { emptyCloudUniforms, type CloudUniforms } from "../cloudParams.js";
+import { ENGINE_LOOK, type GameLook } from "../gameLook.js";
 import { gradeRecordUnder, type GradeRecord, type PaintPalette } from "../gradeParams.js";
 import { LENS, lensDropletMap } from "../lensParams.js";
 import {
@@ -177,6 +178,8 @@ export type PostChainOptions = {
   /** The scene's pass is broken before the meshes marked for it, and the frame kept as the opaque draws left it: the tier that reads through its water. */
   keep?: boolean;
   uploads?: FrameUploads;
+  /** The game's look: the paint's strength, the far softening's radius, the exposure's gain and the palette the grade starts in; the engine's own absent. */
+  look?: GameLook;
 };
 
 type Target = { texture: GPUTexture; view: GPUTextureView; width: number; height: number; format: GPUTextureFormat; name: string };
@@ -204,6 +207,7 @@ export function chainTargetsStand<D, V>(made: { readonly depth: D; readonly reso
  */
 export function createLitePostChain(engine: EngineContext, scene: SceneContext, options: PostChainOptions): LitePostChain {
   const { features, camera } = options;
+  const look = options.look ?? ENGINE_LOOK;
   if (!features.pipeline || !features.taa || features.paint <= 0) throw new Error("the post chain is a tier's with the far softening, the anti-aliasing and the paint");
   const now = options.now ?? (() => performance.now());
   const start = now();
@@ -312,7 +316,7 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
 
   const taaFrame = createTaaFrame();
   const lensGate = createLensGate();
-  const paletteFade = createPaletteFade(now);
+  const paletteFade = createPaletteFade(now, look.palette);
   let record: GradeRecord = gradeRecordUnder(WEATHER_PRESETS.clear, 12, 0, 1);
   /** What the chase's dim leaves of the frame's exposure (`setDim`). */
   let dim = 1;
@@ -433,8 +437,9 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
       // Over the scene's resolve, which the far softening has read and nothing reads again.
       draw(encoder, scene, pipes.taaSharpen, groups.taaSharpen[flip] as GPUBindGroup);
       flip ^= 1;
-      draw(encoder, targets.paint.view, pipes.paint, groups.paint);
-      drawn += 5;
+      // At a strength of 0 the compose returns the scene whatever the paint holds, so the strokes are not drawn; their target stays, which the grade and the halation bind.
+      if (look.paint > 0) draw(encoder, targets.paint.view, pipes.paint, groups.paint);
+      drawn += look.paint > 0 ? 5 : 4;
       if (quarter !== null && pipes.halationExtract !== null && pipes.halationBlurX !== null && pipes.halationBlurY !== null) {
         draw(encoder, quarter[0].view, pipes.halationExtract, groups.halationExtract as GPUBindGroup);
         draw(encoder, quarter[1].view, pipes.halationBlurX, groups.halationBlurX as GPUBindGroup);
@@ -498,7 +503,7 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
     },
     update(weather, hour, night, unsettle, stare, lens = 0, chase = 0) {
       const seconds = (now() - start) / 1000;
-      record = gradeRecordUnder(weather, hour, night, unsettle, seconds, stare, chase, paletteFade.now());
+      record = gradeRecordUnder(weather, hour, night, unsettle, seconds, stare, chase, paletteFade.now(), look.exposure);
       // The chase's dim (`setDim`): one more factor in the frame's exposure, as the stare's is in the record.
       if (dim !== 1) record = { ...record, exposure: record.exposure * dim };
       ditherSeconds = seconds;
@@ -518,7 +523,7 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
       records.depth.depthTerms[0] = projection[10] as number;
       records.depth.depthTerms[1] = projection[14] as number;
       write("depth", records.depth);
-      farSoftUniforms(view, width, height, records.farSoft);
+      farSoftUniforms(view, width, height, records.farSoft, look.farSoft);
       write("farSoft", records.farSoft);
       write("farSoft", { atmSunDir: air.atmSunDir, atmSunColour: air.atmSunColour });
       write("farSoft", cloud);
@@ -527,13 +532,13 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
       // The strokes as the game's chain lays them out: by the paint's own target's size (`paintUniformsDrawn`).
       write("paint", paintUniformsDrawn(features.paint, width, height, records.paint));
       gradeUniforms(record, width, height, ditherSeconds, shadeMask !== null && shadeAny, records.grade);
-      composeUniforms(width, height, records.grade);
+      composeUniforms(width, height, records.grade, look.paint);
       write("grade", records.grade);
       if (lensOn) write("lens", lensUniforms(lensStrength, (now() - start) / 1000, width, height, records.lens));
       if (features.halation) {
         const extract = (records as unknown as { halationExtract: { exposure: [number]; halfTexel: [number, number]; strength: [number]; texel: [number, number] } }).halationExtract;
         extractUniforms(record, extract);
-        composeUniforms(width, height, extract);
+        composeUniforms(width, height, extract, look.paint);
         extract.texel[0] = 1 / width;
         extract.texel[1] = 1 / height;
         write("halationExtract" as SectionName, extract);

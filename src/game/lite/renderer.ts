@@ -424,6 +424,7 @@ import { PAINT_PALETTES, gradeRecordUnder, sightUnder, type PaintPaletteName } f
 import { brushBoxes } from "../propBoxes.js";
 import { emptyMaterialGradeUniforms, materialGradeUniforms } from "../materialGrade.js";
 import { LAMP_ANGLE, LAMP_COLOUR, LAMP_EXPONENT, LAMP_RANGE, lampPlace, lampUnder, type LampState } from "../lampParams.js";
+import { ENGINE_LOOK } from "../gameLook.js";
 import { createCalmFade } from "../lakeCalmFrame.js";
 import { createLakeChoice } from "../lakeChoice.js";
 import { createLensCanopy } from "../lensCanopy.js";
@@ -448,7 +449,7 @@ import { createSprayThrow, type SprayLight } from "../sprayField.js";
 import { SILENT_SURF_SOUND, createSurfSound, fillSurfSound, type SurfSound } from "../surfSound.js";
 import type { SkyState } from "../skyState.js";
 import { STARE_LENS_REST, stareShadeUnder, type StareLens } from "../stareLens.js";
-import { DEFAULT_HOUR, sunAltitudeDeg, whenSkyHeld } from "../skyWait.js";
+import { sunAltitudeDeg, whenSkyHeld } from "../skyWait.js";
 import { createSyncJobs, finish, stepSlices, type SyncJobsLast } from "../syncJobs.js";
 import { followRoadCentre, terrainTablesFor, type TerrainTables } from "../terrainTables.js";
 import { terrainCoverFor, terrainSurfaceUnder, terrainUniforms, type TerrainUniformInputs } from "../terrainUniforms.js";
@@ -662,6 +663,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
   canvas: HTMLCanvasElement, level: Level, forest: Forest | null, options: RendererOptions, game: RenderGame<S, P, X>,
 ): WorldRenderer<S> & X {
   const tier = options.tier ?? detectTier(globalThis.navigator);
+  const look = options.look ?? ENGINE_LOOK;
   const clock = options.clock ?? (() => performance.now());
   /** When the renderer was made, on its clock (ms): the shades' smoke rises from then. */
   const madeAt = clock();
@@ -670,9 +672,9 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
 
   // The sky's slices: the page's table or, given none, a source of this renderer's own.
   let ownSky: SkySource | null = null;
-  if (options.skyTable === undefined) ownSky = startSkySource(sunAltitudeDeg(DEFAULT_HOUR));
+  if (options.skyTable === undefined) ownSky = startSkySource(sunAltitudeDeg(look.hour));
   const skyTable = options.skyTable ?? (ownSky as SkySource).table;
-  const light = createWorldLight(skyTable, FOG_DISTANCE);
+  const light = createWorldLight(skyTable, FOG_DISTANCE, { weather: look.weather, hour: look.hour });
 
   // What the terrain is drawn with, each one record filled in place a frame.
   const prepared = options.prepared?.tier === tier ? options.prepared : null;
@@ -762,7 +764,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     wetBodies.push({ ...lakeWaterRow(lake.murk), level: lake.level, x: lake.x, z: lake.z, radius: lake.shape.shoreMax, bound: lake.bound });
   }
   /** The weather's preset as the lakes' calm follows it (`lakeCalmFrame.ts`): `setWeatherName`. */
-  const calmFade = createCalmFade();
+  const calmFade = createCalmFade(look.weatherName);
   /** The sun and the fill as the spray takes its colour from them, refilled each frame it is aged. */
   const sprayLights: SprayLight[] = [];
   /** What a frame hands the sea (`SeaFrame`), filled in place. */
@@ -1062,7 +1064,8 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     scene.imageProcessing.toneMappingEnabled = !chained;
     scene.imageProcessing.toneMapping = NeutralToneMapping;
     scene.imageProcessing.contrast = DISPLAY_CONTRAST;
-    scene.imageProcessing.exposure = chained ? 1 : light.exposure;
+    // The look's exposure is the whole frame's, once: here where the materials grade, in the grade's record where the chain does. What is lit by its own exposure (the dome, the rain) is not given it a second time.
+    scene.imageProcessing.exposure = chained ? 1 : light.exposure * look.exposure;
 
     // Never given controls: the camera is placed by `sync` alone.
     const camera = createBankedFreeCamera(vec3(pose.x, pose.y, pose.z), vec3(pose.x, pose.y, pose.z + LOOK_AHEAD), vec3(0, 1, 0));
@@ -1162,7 +1165,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     // The chain: the scene's pass into its first target and its own passes after, before the scene is registered.
     // The scene's pass is broken, and the frame kept, on the high tier for its water, and on any tier with a chain for a game whose own
     // materials read it (`RenderSide.keepsFrame`).
-    const chain = chained && cloudMap !== null ? createLitePostChain(engine, scene, { features: postFeatures, camera, cloudMap, now: clock, keep: tier === "high" || side.keepsFrame === true, uploads }) : null;
+    const chain = chained && cloudMap !== null ? createLitePostChain(engine, scene, { features: postFeatures, camera, cloudMap, now: clock, keep: tier === "high" || side.keepsFrame === true, uploads, look }) : null;
     // The frame kept, for whatever reads it: the game's own parts are handed it (`RenderMakeLate.behind`).
     const frameBehind = chain === null || chain.kept === null ? undefined : createWaterBehind(engine, chain.kept);
     // The frame behind the water, on the tier that reads through its water: the sea's, the lip's and every lake's surface read it. A
@@ -1569,7 +1572,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     relight(made);
     placeLamp(made);
     redrawSky(made);
-    if (!chained) scene.imageProcessing.exposure = shownExposure();
+    if (!chained) scene.imageProcessing.exposure = shownExposure() * look.exposure;
     // The road's table follows the eye before the uniforms are made: they carry where it is centred.
     if (tables.road !== null && made.road !== null && followRoadCentre(tables.road, pose.z)) {
       made.road.write();
@@ -1636,7 +1639,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     frameValues.exposure = shownExposure();
     if (made.chain === null) {
       // No chain: the frame is graded in its materials, by the weather's curves, the chase's cast and the vignette.
-      const record = gradeRecordUnder(light.weather, light.hour, light.sky?.night ?? 0, side.look.unsettle, (clock() - madeAt) / 1000, shownStare, side.look.cast);
+      const record = gradeRecordUnder(light.weather, light.hour, light.sky?.night ?? 0, side.look.unsettle, (clock() - madeAt) / 1000, shownStare, side.look.cast, undefined, look.exposure);
       frameValues.grade = materialGradeUniforms(light.weather, record, canvas.width, canvas.height, gradeValues);
     }
     // The projection as Lite makes it for the hike's own pass, at the canvas's shape.

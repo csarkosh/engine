@@ -91,3 +91,18 @@ describe("the hour and the weather a renderer is set to, as light", () => {
     light.dispose();
   });
 });
+
+describe("the weather and the hour a world light starts at", () => {
+  it("starts where it is told, and the defaults are the light made with no start", () => {
+    const own = createWorldLight(skyFixture(), VIEW);
+    const told = createWorldLight(skyFixture(), VIEW, { weather: WEATHER_PRESETS[DEFAULT_WEATHER], hour: DEFAULT_HOUR });
+    expect(told.hour).toBe(own.hour);
+    expect(told.weather).toEqual(own.weather);
+    expect(told.exposure).toBe(own.exposure);
+    const rain = createWorldLight(skyFixture(), VIEW, { weather: WEATHER_PRESETS.rain, hour: 9 });
+    expect(rain.hour).toBe(9);
+    expect(rain.weather).toEqual(WEATHER_PRESETS.rain);
+    for (const light of [own, told, rain]) light.dispose();
+  });
+});
+

@@ -15,6 +15,7 @@ import type { EngineHandle, EngineName } from "./engineHandle.js";
 import type { WatchEngine } from "./engineWatch.js";
 import type { EyePose } from "./eyeBlend.js";
 import type { FirstBuilds } from "./firstBuilds.js";
+import type { GameLook } from "./gameLook.js";
 import type { GpuTimeReport } from "./gpuTimeReport.js";
 import type { PaintPaletteName } from "./gradeParams.js";
 import type { ImpostorBake } from "./impostorBake.js";
@@ -251,6 +252,8 @@ export type WorldRenderer<S> = {
 
 export type RendererOptions = {
   tier?: QualityTier;
+  /** The game's look (`gameLook`): the paint, the far softening, the exposure, the palette and the weather and hour the renderer starts under. Absent, the engine's own (`ENGINE_LOOK`). */
+  look?: GameLook;
   /** The clock (ms) the wind, the post effects and everything that moves
    * with time read; `performance.now` absent. A scene stepped a frame at a
    * time hands in its own, so the grass and the water move in step with it. */

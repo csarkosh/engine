@@ -17,6 +17,7 @@ import { createPauseMenu, createPlayGate } from "./game/pauseMenu.js";
 import { findCommand, parseCommandLine, registerTerrainVariants, resolveTypedArgs, validateCommand } from "./game/commands.js";
 import { lastEntry, parseScript, serialiseScript, setEntry, splitEntries, type ScriptEntry } from "./game/script.js";
 import { aimAt, stepFreecam, type FreecamState } from "./game/freecam.js";
+import { ENGINE_LOOK, gameLook } from "./game/gameLook.js";
 import { DEFAULT_HOUR, sunAltitudeDeg } from "./game/skyWait.js";
 import { startSkySource } from "./game/skyWorker.js";
 import { worldInputs } from "./game/worldInputs.js";
@@ -252,6 +253,8 @@ function buildGame<
 
   // The game's level: the shape the renderer and both sessions expect.
   const level = parseLevel(game.level);
+  // The game's look over the engine's: what the frame is drawn with and the weather and the hour a session starts under.
+  const look = gameLook(game.look);
 
   const params = new URLSearchParams(location.search);
   const { entries, errors } = parseScript(params.get("cmd") ?? "");
@@ -315,7 +318,7 @@ function buildGame<
   // branch reads it, before that branch applies it to the renderer.
   const timeEntry = lastEntry(view, "time");
   const timeValue = timeEntry === undefined ? undefined : findCommand("time")?.scriptValue?.(timeEntry.args);
-  const startHour = typeof timeValue === "number" ? timeValue : DEFAULT_HOUR;
+  const startHour = typeof timeValue === "number" ? timeValue : look.hour;
   const skySource = startSkySource(sunAltitudeDeg(startHour));
   made(() => skySource.dispose());
   /** Stops listening to the running renderer's engine for failures (`Renderer.ownWatch`). */
@@ -384,7 +387,7 @@ function buildGame<
     [options.tier, ...options.fallbackTiers],
     {
       build: (next, at) =>
-        game.renderer(next, level, forest, { tier: at, deferClipmap: options.deferClipmap, start, prepared: options.takePrepared?.() ?? null, firstBuilds, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator) }),
+        game.renderer(next, level, forest, { tier: at, look, deferClipmap: options.deferClipmap, start, prepared: options.takePrepared?.() ?? null, firstBuilds, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator) }),
       freshCanvas: () => document.createElement("canvas"),
       ...engineBindings,
     },
@@ -461,12 +464,12 @@ function buildGame<
   // The forest's birdsong bed: fetched now, decoded at the unlock, silent
   // until a forest world's climb raises it (`syncAtmosphere`).
   if (renderer.hasWildlife) void loadBirdBed(ambient);
-  let weatherName: WeatherPresetName = DEFAULT_WEATHER;
+  let weatherName: WeatherPresetName = look.weatherName;
   /**
    * The console's preset and hour: what the escalation departs from on a
    * forest world (escalation.ts), and simply what shows everywhere else.
    */
-  let base: AtmosphereBase = { weather: WEATHER_PRESETS[DEFAULT_WEATHER], hour: DEFAULT_HOUR };
+  let base: AtmosphereBase = { weather: look.weather, hour: look.hour };
   let worstFrameMs = 0;
   let stalls = 0;
   // The page's mute: the ambient master follows it from now to the session's end.
@@ -476,7 +479,9 @@ function buildGame<
   // moves the weather on its own. `wildlifePresenceUnder` builds a
   // per-species array, but that per-frame allocation is one it already
   // accepts (see its own doc comment).
-  let wildlifePresence = wildlifePresenceUnder(WEATHER_PRESETS[DEFAULT_WEATHER]);
+  let wildlifePresence = wildlifePresenceUnder(look.weather);
+  // The ambient bed starts under the engine's own weather; a game's look is told it.
+  if (look.weather !== ENGINE_LOOK.weather) ambient.setWeather(look.weather);
   // The audio graph is gated on a user gesture; this is the same click that
   // requests pointer lock, so unlocking here needs no dedicated UI of its own.
   // Named so dispose() can remove it: a world command (e.g. `/seed`) can
@@ -1570,7 +1575,7 @@ function buildGame<
     // The renderer makes its own engine from the canvas it is built on: the
     // one made for the switch (`options.engineFor`), which `freshCanvas`
     // hands out first.
-    build: (next, target) => game.renderer(next, level, forest, { tier: target, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator) }),
+    build: (next, target) => game.renderer(next, level, forest, { tier: target, look, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator) }),
     freshCanvas: () => document.createElement("canvas"),
     extras: { dispose: side.disposeExtras, build: side.buildExtras },
     rebind: (next) => {

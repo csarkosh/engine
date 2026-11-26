@@ -8,6 +8,7 @@
  */
 import type { AmbientAudio } from "./ambientAudio.js";
 import type { FreecamState } from "./freecam.js";
+import type { GameLook } from "./gameLook.js";
 import type { InputSampler } from "./input.js";
 import type { RenderPlayer, RenderState } from "./lite/renderGame.js";
 import type { ModeList } from "./modeList.js";
@@ -154,6 +155,8 @@ export type SessionGame<
   startOf(seed: number): { x: number; z: number; yaw: number } | null;
   /** Whether the weather is the mode's own to turn: a preset asked for at the console is then answered, not set. */
   weatherIsOwn(mode: string): boolean;
+  /** What the game changes of the engine's look (`GameLook`); the rest is the engine's own, which a game giving none renders with. */
+  look?: Partial<GameLook>;
   /** The game's renderer on a canvas. */
   renderer(canvas: HTMLCanvasElement, level: Level, forest: Forest | null, options: RendererOptions): R;
   /** The sound's bus with the game's voices on it. */

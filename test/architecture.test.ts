@@ -807,6 +807,7 @@ describe("layer boundaries", () => {
       at("game", "seaLattice.ts"),
       at("game", "seaUniforms.ts"),
       at("game", "postFrame.ts"),
+      at("game", "gameLook.ts"),
       at("game", "materialGrade.ts"),
       at("game", "shadeMaskParams.ts"),
       at("game", "loadReport.ts"),
