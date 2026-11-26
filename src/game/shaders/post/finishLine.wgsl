@@ -1,5 +1,3 @@
-const LINE_DEPTH_LOW:f32=0.01;
-const LINE_DEPTH_HIGH:f32=0.05;
 fn lineInverse(uv:vec2<f32>)->f32{
   return 1.0/farDepth(uv);
 }
@@ -13,7 +11,7 @@ fn lineEdge(uv:vec2<f32>)->f32{
   let wu=lineInverse(uv+vec2<f32>(0.0,o.y));
   let second=wl+wr+wd+wu-4.0*wc;
   let largest=max(max(max(wl,wr),max(wd,wu)),wc);
-  return smoothstep(LINE_DEPTH_LOW,LINE_DEPTH_HIGH,abs(second)/largest);
+  return smoothstep(u.finishLineBand.x,u.finishLineBand.y,abs(second)/largest);
 }
 fn finishLine(uv:vec2<f32>,col:vec3<f32>)->vec3<f32>{
   return mix(col,col*u.finishLine.xyz,lineEdge(uv)*u.finishLine.w);

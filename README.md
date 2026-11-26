@@ -58,7 +58,7 @@ the paint filter's strength (`paint`, 0 to 1; at 0 the paint pass is not drawn),
 radius (`farSoft`), a gain on the weather's exposure (`exposure`), the palette the grade starts in
 (`palette`), and the weather and the hour a session starts under (`weather`, `weatherName`, `hour`).
 A `finish` (`bands`, `grain`, `edge`, and a `line` drawn from the scene's depth where one thing ends against another,
-with its `lineColour`) is laid over the picture on the medium and high tiers; a game gives a whole one, and the low tier ignores it.
+with its `lineColour` and the two steps in depth it begins at and is full at, `lineFrom` and `lineTo`) is laid over the picture on the medium and high tiers; a game gives a whole one, and the low tier ignores it.
 With every strength 0, the default, the passes' shaders and uniforms are exactly the engine's own.
 A game can give `sward`, the colour the ground under the grass is pulled to and how far, where its look darkens the blades and bare ground would show pale.
 A game whose day is long can give `grades`, a palette and an exposure's gain (under a clear sky and under full cloud) for each of a few

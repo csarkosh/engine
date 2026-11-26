@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ENGINE_LOOK, NO_FINISH, finishDrawsInGrade, finishDrawsLine, finishGradeUniform, finishLineUniform, gameLook, lookGradeAt, type LookFinish, type LookGrade } from "../../src/game/gameLook.js";
+import { ENGINE_LOOK, LINE_FROM, LINE_TO, NO_FINISH, finishDrawsInGrade, finishDrawsLine, finishGradeUniform, finishLineBandUniform, finishLineUniform, gameLook, lookGradeAt, type LookFinish, type LookGrade } from "../../src/game/gameLook.js";
 import { PAINT_OILS, mixPalette } from "../../src/game/gradeParams.js";
 import { SWARD_FLOOR, SWARD_MAX } from "../../src/game/groundHexParams.js";
 import { sunPositionAt } from "../../src/game/sky.js";
@@ -44,13 +44,17 @@ describe("a game's look over the engine's", () => {
   });
 
   it("lays a game's whole finish over the engine's none", () => {
-    const finish: LookFinish = { grain: 0.028, edge: 0.14, line: 0.6, lineColour: [0.16, 0.17, 0.22], bands: 0.25 };
+    const finish: LookFinish = { grain: 0.028, edge: 0.14, line: 0.6, lineColour: [0.16, 0.17, 0.22], lineFrom: 0.005, lineTo: 0.025, bands: 0.25 };
     const look = gameLook({ finish });
     expect(look.finish).toBe(finish);
     expect(look.paint).toBe(ENGINE_LOOK.paint);
     expect(finishDrawsLine(finish)).toBe(true);
     expect(finishDrawsInGrade(finish)).toBe(true);
     expect(finishLineUniform(finish)).toEqual([0.16, 0.17, 0.22, 0.6]);
+    expect(finishLineBandUniform(finish)).toEqual([0.005, 0.025]);
+    // Where a finish does not say, the line begins and is full where it always has.
+    expect(finishLineBandUniform(NO_FINISH)).toEqual([LINE_FROM, LINE_TO]);
+    expect([LINE_FROM, LINE_TO]).toEqual([0.01, 0.05]);
     expect(finishGradeUniform(finish)).toEqual([0.028, 0.14, 0.25]);
   });
 
@@ -74,7 +78,7 @@ describe("a game's look over the engine's", () => {
   it("puts the finish's code in a shader only where it is asked for", () => {
     const line = farSoftWgsl(true);
     expect(line).toContain("fn finishLine(");
-    expect(line).toContain("const LINE_DEPTH_LOW:f32=");
+    expect(line).toContain("smoothstep(u.finishLineBand.x,u.finishLineBand.y,");
     expect(line).toContain("col=finishLine(vUV,col);");
     for (const halation of [true, false]) {
       const grade = gradeWgsl(halation, true);

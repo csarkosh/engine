@@ -29,12 +29,24 @@ export type LookFinish = {
   readonly line: number;
   /** What the line multiplies the picture by where it is full. [0.16, 0.17, 0.22]. */
   readonly lineColour: readonly [number, number, number];
+  /**
+   * How deep a step must be to be drawn, as a share of the distance to what is behind it: the line begins at `lineFrom` and is full at
+   * `lineTo` (`LINE_FROM` and `LINE_TO`, 0.01 and 0.05: a step of a metre is drawn out to 100 m and full within 20). Lower, shallower
+   * relief is drawn and from further off, and so is anything laid a few centimetres off a wall; the depth the line reads is kept to
+   * about one part in two thousand, so a `lineFrom` much under 0.005 speckles a flat wall.
+   */
+  readonly lineFrom: number;
+  readonly lineTo: number;
   /** How far the picture's light is gathered into five soft bands, 0 to 1 (0: none). 0.25. */
   readonly bands: number;
 };
 
+/** Where a line begins and where it is full, where a game's finish does not say: a step of 1 and of 5 parts in a hundred of the distance behind it. */
+export const LINE_FROM = 0.01;
+export const LINE_TO = 0.05;
+
 /** No finish: every strength 0. */
-export const NO_FINISH: LookFinish = { grain: 0, edge: 0, line: 0, lineColour: [1, 1, 1], bands: 0 };
+export const NO_FINISH: LookFinish = { grain: 0, edge: 0, line: 0, lineColour: [1, 1, 1], lineFrom: LINE_FROM, lineTo: LINE_TO, bands: 0 };
 
 /** Whether the far softening draws the finish's line. */
 export function finishDrawsLine(finish: LookFinish): boolean {
@@ -44,6 +56,11 @@ export function finishDrawsLine(finish: LookFinish): boolean {
 /** Whether the grade lays the finish's bands, grain or edge over the picture. */
 export function finishDrawsInGrade(finish: LookFinish): boolean {
   return finish.grain > 0 || finish.edge > 0 || finish.bands > 0;
+}
+
+/** The far softening's `finishLineBand` uniform: where the line begins and where it is full. */
+export function finishLineBandUniform(finish: LookFinish): [number, number] {
+  return [finish.lineFrom, finish.lineTo];
 }
 
 /** The far softening's `finishLine` uniform: the line's colour, then its strength. */
