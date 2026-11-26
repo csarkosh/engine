@@ -12,7 +12,7 @@ describe("the hike's sky", () => {
   it("makes one source for the hike's life, from the hour the script starts it at", () => {
     expect(src.match(/\bstartSkySource\(/g)).toHaveLength(1);
     expect(src).toContain('  const timeEntry = lastEntry(view, "time");');
-    expect(src).toContain('  const startHour = typeof timeValue === "number" ? timeValue : DEFAULT_HOUR;');
+    expect(src).toContain('  const startHour = typeof timeValue === "number" ? timeValue : look.hour;');
     expect(src).toContain("  const skySource = startSkySource(sunAltitudeDeg(startHour));");
   });
 
@@ -32,11 +32,11 @@ describe("the hike's sky", () => {
     expect(src).toContain(
       // The first renderer is also told where the hike starts (`start`), so its first terrain and water are built
       // there, handed what the world's worker sampled there (`prepared`, taken once), and given the loader of first
-      // builds a start under a film has (`firstBuilds`).
-      "game.renderer(next, level, forest, { tier: at, deferClipmap: options.deferClipmap, start, prepared: options.takePrepared?.() ?? null, firstBuilds, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator) }),",
+      // builds a start under a film has (`firstBuilds`). Every renderer is given the game's look (`look`, `gameLook.ts`).
+      "game.renderer(next, level, forest, { tier: at, look, deferClipmap: options.deferClipmap, start, prepared: options.takePrepared?.() ?? null, firstBuilds, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator) }),",
     );
     expect(src).toContain(
-      "build: (next, target) => game.renderer(next, level, forest, { tier: target, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator) }),",
+      "build: (next, target) => game.renderer(next, level, forest, { tier: target, look, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator) }),",
     );
   });
 
