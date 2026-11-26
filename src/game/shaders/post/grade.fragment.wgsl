@@ -82,7 +82,7 @@ ${shadeBlock}  let vr=length(centred)/1.41421356;
   c=mix(u.vignetteColour,c,vig);
 ${halation}
 ${stareBlock}  var shown=toSrgb(clamp(c,vec3<f32>(0.0),vec3<f32>(1.0)));
-  let pixel=vUV/u.texelSize;
+  let pixel=vUV/u.texelSize;${finish}
   let d1=gradeNoise(pixel,fract(u.time*3.17));
   let d2=gradeNoise(pixel+vec2<f32>(37.0,11.0),fract(u.time*5.03));
   shown+=(d1+d2-1.0)*DITHER_LSB;

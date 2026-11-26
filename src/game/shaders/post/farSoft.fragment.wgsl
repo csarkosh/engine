@@ -7,7 +7,7 @@
 @group(0)@binding(5)var atmCloudMapSampler:sampler;
 const FAR_SOFT_SKY:f32=100000.0;
 const ATM_CLOUD_EDGE:f32=0.5/64.0;
-const ATM_CLOUD_STEPS_MAX:i32=12;
+const ATM_CLOUD_STEPS_MAX:i32=12;${lineFunctions}
 fn farDepth(uv:vec2<f32>)->f32{
   let d=textureSampleLevel(depthSampler,postSampler,tx(uv),0.0).r;
   return select(FAR_SOFT_SKY,d,d>0.0);
@@ -71,6 +71,6 @@ fn farSoftened(uv:vec2<f32>,d:f32,c:vec3<f32>)->vec3<f32>{
     let cloudGlow=pow(max(dot(rd,u.atmSunDir),0.0),u.atmCloudGlow.y)*u.atmCloudGlow.x;
     let cloud=u.atmCloudColour+u.atmSunColour*cloudGlow;
     col=mix(cloud,col,exp(-od));
-  }
+  }${lineCall}
   return vec4<f32>(col,c.a);
 }

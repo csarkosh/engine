@@ -424,7 +424,7 @@ import { PAINT_PALETTES, gradeRecordUnder, sightUnder, type PaintPaletteName } f
 import { brushBoxes } from "../propBoxes.js";
 import { emptyMaterialGradeUniforms, materialGradeUniforms } from "../materialGrade.js";
 import { LAMP_ANGLE, LAMP_COLOUR, LAMP_EXPONENT, LAMP_RANGE, lampPlace, lampUnder, type LampState } from "../lampParams.js";
-import { ENGINE_LOOK } from "../gameLook.js";
+import { ENGINE_LOOK, lookGradeAt } from "../gameLook.js";
 import { createCalmFade } from "../lakeCalmFrame.js";
 import { createLakeChoice } from "../lakeChoice.js";
 import { createLensCanopy } from "../lensCanopy.js";
@@ -675,6 +675,8 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
   if (options.skyTable === undefined) ownSky = startSkySource(sunAltitudeDeg(look.hour));
   const skyTable = options.skyTable ?? (ownSky as SkySource).table;
   const light = createWorldLight(skyTable, FOG_DISTANCE, { weather: look.weather, hour: look.hour });
+  // What the look multiplies the weather's exposure by this moment: its grade's by the sun's height where it has any, else its one gain.
+  const lookGain = (): number => lookGradeAt(look, light.hour, light.weather.cloudCover)?.exposure ?? look.exposure;
 
   // What the terrain is drawn with, each one record filled in place a frame.
   const prepared = options.prepared?.tier === tier ? options.prepared : null;
@@ -1065,7 +1067,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     scene.imageProcessing.toneMapping = NeutralToneMapping;
     scene.imageProcessing.contrast = DISPLAY_CONTRAST;
     // The look's exposure is the whole frame's, once: here where the materials grade, in the grade's record where the chain does. What is lit by its own exposure (the dome, the rain) is not given it a second time.
-    scene.imageProcessing.exposure = chained ? 1 : light.exposure * look.exposure;
+    scene.imageProcessing.exposure = chained ? 1 : light.exposure * lookGain();
 
     // Never given controls: the camera is placed by `sync` alone.
     const camera = createBankedFreeCamera(vec3(pose.x, pose.y, pose.z), vec3(pose.x, pose.y, pose.z + LOOK_AHEAD), vec3(0, 1, 0));
@@ -1572,7 +1574,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     relight(made);
     placeLamp(made);
     redrawSky(made);
-    if (!chained) scene.imageProcessing.exposure = shownExposure() * look.exposure;
+    if (!chained) scene.imageProcessing.exposure = shownExposure() * lookGain();
     // The road's table follows the eye before the uniforms are made: they carry where it is centred.
     if (tables.road !== null && made.road !== null && followRoadCentre(tables.road, pose.z)) {
       made.road.write();
@@ -1639,7 +1641,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     frameValues.exposure = shownExposure();
     if (made.chain === null) {
       // No chain: the frame is graded in its materials, by the weather's curves, the chase's cast and the vignette.
-      const record = gradeRecordUnder(light.weather, light.hour, light.sky?.night ?? 0, side.look.unsettle, (clock() - madeAt) / 1000, shownStare, side.look.cast, undefined, look.exposure);
+      const record = gradeRecordUnder(light.weather, light.hour, light.sky?.night ?? 0, side.look.unsettle, (clock() - madeAt) / 1000, shownStare, side.look.cast, undefined, lookGain());
       frameValues.grade = materialGradeUniforms(light.weather, record, canvas.width, canvas.height, gradeValues);
     }
     // The projection as Lite makes it for the hike's own pass, at the canvas's shape.

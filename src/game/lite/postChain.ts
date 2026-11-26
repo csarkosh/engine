@@ -59,7 +59,7 @@ import {
 } from "@babylonjs/lite";
 import type { AtmosphereUniforms } from "../atmosphereParams.js";
 import { emptyCloudUniforms, type CloudUniforms } from "../cloudParams.js";
-import { ENGINE_LOOK, type GameLook } from "../gameLook.js";
+import { ENGINE_LOOK, finishDrawsInGrade, finishDrawsLine, finishGradeUniform, finishLineUniform, lookGradeAt, type GameLook } from "../gameLook.js";
 import { gradeRecordUnder, type GradeRecord, type PaintPalette } from "../gradeParams.js";
 import { LENS, lensDropletMap } from "../lensParams.js";
 import {
@@ -72,7 +72,7 @@ import { WEATHER_PRESETS, type WeatherParams } from "../weather.js";
 import { movedWords } from "./frameBlock.js";
 import type { FrameUploads } from "./frameUploads.js";
 import {
-  FAR_SOFT_WGSL, HALATION_EXTRACT_WGSL, LENS_WGSL, PAINT_WGSL, POST_VERTEX_WGSL, TAA_SHARPEN_WGSL, TAA_WGSL, blurWgsl, depthResolveWgsl, gradeWgsl, passLayout,
+  HALATION_EXTRACT_WGSL, LENS_WGSL, PAINT_WGSL, POST_VERTEX_WGSL, TAA_SHARPEN_WGSL, TAA_WGSL, blurWgsl, depthResolveWgsl, farSoftWgsl, gradeWgsl, passLayout,
   writePass, type PassLayout,
 } from "./postWgsl.js";
 import { askRenderPipeline } from "./pipelineAsk.js";
@@ -97,9 +97,10 @@ const RENDER_ATTACHMENT = 0x10;
 type CloudSun = Pick<AtmosphereUniforms, "atmSunDir" | "atmSunColour">;
 
 /** The uniforms of every pass, each a record by name: the order is the buffer's. */
-function sections(features: PostFeatures) {
-  const far = { ...emptyFarSoftUniforms(), atmSunDir: [0, 0, 0], atmSunColour: [0, 0, 0], ...emptyCloudUniforms() };
-  const grade = { ...emptyGradeUniforms(), ...composeUniforms(2, 2) };
+function sections(features: PostFeatures, look: GameLook) {
+  // The finish's uniforms are in a pass's record only where its code is in the pass: a look with none hands the passes what they always had.
+  const far = { ...emptyFarSoftUniforms(), atmSunDir: [0, 0, 0], atmSunColour: [0, 0, 0], ...emptyCloudUniforms(), ...(finishDrawsLine(look.finish) ? { finishLine: finishLineUniform(look.finish) } : {}) };
+  const grade = { ...emptyGradeUniforms(), ...composeUniforms(2, 2), ...(finishDrawsInGrade(look.finish) ? { finishGrade: finishGradeUniform(look.finish) } : {}) };
   return {
     depth: { depthTerms: [0, 0] },
     farSoft: far,
@@ -229,7 +230,7 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
   const kept = options.keep === true ? enableRenderTaskBreak(sceneTask, engine, { depth: true, keep: true }) : null;
 
   // The chain's one buffer, a part a pass.
-  const records: Sections = sections(features);
+  const records: Sections = sections(features, look);
   const names = Object.keys(records) as SectionName[];
   const layouts = new Map<SectionName, { layout: PassLayout; offset: number }>();
   let bytes = 0;
@@ -275,11 +276,11 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
   let pipelines: Pipelines | null = null;
   const ready: Promise<void> = Promise.all([
     ask("depth", depthResolveWgsl(MSAA_SAMPLES), POST_DEPTH_RESOLVE_FORMAT),
-    ask("farSoft", FAR_SOFT_WGSL, POST_FORMAT),
+    ask("farSoft", farSoftWgsl(finishDrawsLine(look.finish)), POST_FORMAT),
     ask("taa", TAA_WGSL, POST_FORMAT),
     ask("taaSharpen", TAA_SHARPEN_WGSL, POST_FORMAT),
     ask("paint", PAINT_WGSL, POST_FORMAT),
-    ask("grade", gradeWgsl(features.halation), surface.format),
+    ask("grade", gradeWgsl(features.halation, finishDrawsInGrade(look.finish)), surface.format),
     features.halation ? ask("halationExtract" as SectionName, HALATION_EXTRACT_WGSL, POST_FORMAT) : none,
     features.halation ? ask("halationBlurX" as SectionName, blurWgsl(HALATION_KERNEL), POST_FORMAT) : none,
     features.halation ? ask("halationBlurY" as SectionName, blurWgsl(HALATION_KERNEL), POST_FORMAT) : none,
@@ -455,7 +456,7 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
       }
       if (lensOn) {
         // The grade into the far softening's target, which nothing reads after the anti-aliasing, and the lens from it.
-        pipes.gradeForLens ??= pipeline("grade", gradeWgsl(features.halation), POST_FORMAT);
+        pipes.gradeForLens ??= pipeline("grade", gradeWgsl(features.halation, finishDrawsInGrade(look.finish)), POST_FORMAT);
         pipes.lens ??= pipeline("lens", LENS_WGSL, surface.format);
         if (droplets === null) {
           droplets = device.createTexture({ label: "lensDroplets", size: { width: LENS.size, height: LENS.size }, format: "rgba8unorm", usage: TEXTURE_BINDING | TEXTURE_COPY_DST });
@@ -503,7 +504,9 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
     },
     update(weather, hour, night, unsettle, stare, lens = 0, chase = 0) {
       const seconds = (now() - start) / 1000;
-      record = gradeRecordUnder(weather, hour, night, unsettle, seconds, stare, chase, paletteFade.now(), look.exposure);
+      // A look with grades by the sun's height wears theirs; one with none, the palette of the moment and its one gain.
+      const graded = lookGradeAt(look, hour, weather.cloudCover);
+      record = gradeRecordUnder(weather, hour, night, unsettle, seconds, stare, chase, graded?.palette ?? paletteFade.now(), graded?.exposure ?? look.exposure);
       // The chase's dim (`setDim`): one more factor in the frame's exposure, as the stare's is in the record.
       if (dim !== 1) record = { ...record, exposure: record.exposure * dim };
       ditherSeconds = seconds;

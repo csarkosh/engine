@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { ENGINE_LOOK, gameLook } from "../../src/game/gameLook.js";
-import { PAINT_OILS } from "../../src/game/gradeParams.js";
+import { ENGINE_LOOK, NO_FINISH, finishDrawsInGrade, finishDrawsLine, finishGradeUniform, finishLineUniform, gameLook, lookGradeAt, type LookFinish, type LookGrade } from "../../src/game/gameLook.js";
+import { PAINT_OILS, mixPalette } from "../../src/game/gradeParams.js";
+import { sunPositionAt } from "../../src/game/sky.js";
 import { FAR_SOFT_RADIUS } from "../../src/game/postFrame.js";
 import { PAINT_STRENGTH } from "../../src/game/postParams.js";
 import { DEFAULT_HOUR } from "../../src/game/skyWait.js";
 import { DEFAULT_WEATHER, WEATHER_PRESETS } from "../../src/game/weather.js";
+import { farSoftWgsl, gradeWgsl, FAR_SOFT_WGSL } from "../../src/game/lite/postWgsl.js";
 import { sourceText } from "../helpers/source.js";
 
 describe("a game's look over the engine's", () => {
@@ -27,6 +29,90 @@ describe("a game's look over the engine's", () => {
     expect(look.paint).toBe(0);
     expect(look.hour).toBe(18);
     expect({ ...look, paint: ENGINE_LOOK.paint, hour: ENGINE_LOOK.hour }).toEqual(ENGINE_LOOK);
+  });
+
+  it("has no finish by default: every strength 0", () => {
+    expect(ENGINE_LOOK.finish).toBe(NO_FINISH);
+    expect(ENGINE_LOOK.finish.grain).toBe(0);
+    expect(ENGINE_LOOK.finish.edge).toBe(0);
+    expect(ENGINE_LOOK.finish.line).toBe(0);
+    expect(ENGINE_LOOK.finish.bands).toBe(0);
+    expect(finishDrawsLine(ENGINE_LOOK.finish)).toBe(false);
+    expect(finishDrawsInGrade(ENGINE_LOOK.finish)).toBe(false);
+  });
+
+  it("lays a game's whole finish over the engine's none", () => {
+    const finish: LookFinish = { grain: 0.028, edge: 0.14, line: 0.6, lineColour: [0.16, 0.17, 0.22], bands: 0.25 };
+    const look = gameLook({ finish });
+    expect(look.finish).toBe(finish);
+    expect(look.paint).toBe(ENGINE_LOOK.paint);
+    expect(finishDrawsLine(finish)).toBe(true);
+    expect(finishDrawsInGrade(finish)).toBe(true);
+    expect(finishLineUniform(finish)).toEqual([0.16, 0.17, 0.22, 0.6]);
+    expect(finishGradeUniform(finish)).toEqual([0.028, 0.14, 0.25]);
+  });
+
+  it("asks the grade for its part and the far softening for the line separately", () => {
+    expect(finishDrawsLine({ ...NO_FINISH, line: 0.5 })).toBe(true);
+    expect(finishDrawsInGrade({ ...NO_FINISH, line: 0.5 })).toBe(false);
+    expect(finishDrawsLine({ ...NO_FINISH, grain: 0.02 })).toBe(false);
+    expect(finishDrawsInGrade({ ...NO_FINISH, grain: 0.02 })).toBe(true);
+    expect(finishDrawsInGrade({ ...NO_FINISH, edge: 0.1 })).toBe(true);
+    expect(finishDrawsInGrade({ ...NO_FINISH, bands: 0.1 })).toBe(true);
+  });
+
+  it("leaves the passes' shader text the engine's own where the finish is off", () => {
+    for (const text of [FAR_SOFT_WGSL, farSoftWgsl(false), gradeWgsl(true), gradeWgsl(false), gradeWgsl(true, false), gradeWgsl(false, false)]) {
+      expect(text).not.toMatch(/finish/i);
+      expect(text).not.toContain("LINE_DEPTH");
+      expect(text).not.toContain("${");
+    }
+  });
+
+  it("puts the finish's code in a shader only where it is asked for", () => {
+    const line = farSoftWgsl(true);
+    expect(line).toContain("fn finishLine(");
+    expect(line).toContain("const LINE_DEPTH_LOW:f32=");
+    expect(line).toContain("col=finishLine(vUV,col);");
+    for (const halation of [true, false]) {
+      const grade = gradeWgsl(halation, true);
+      expect(grade).toContain("u.finishGrade.z");
+      expect(grade.indexOf("finishShown=finishShown*mix(")).toBeLessThan(grade.indexOf("u.finishGrade.x"));
+      expect(grade.indexOf("u.finishGrade.x")).toBeLessThan(grade.indexOf("u.finishGrade.y"));
+      expect(grade.indexOf("u.finishGrade.y")).toBeLessThan(grade.indexOf("shown+=(d1+d2-1.0)*DITHER_LSB;"));
+      expect(grade.indexOf("let pixel=vUV/u.texelSize;")).toBeLessThan(grade.indexOf("var finishShown"));
+    }
+  });
+
+  it("has no grades by default, and then reads none: the caller keeps the one palette and gain", () => {
+    expect(ENGINE_LOOK.grades).toEqual([]);
+    expect(lookGradeAt(ENGINE_LOOK, 12, 0.5)).toBeNull();
+    expect(lookGradeAt(gameLook({ exposure: 1.5 }), 3, 1)).toBeNull();
+  });
+
+  it("wears the grade the sun's height asks for: the first and the last past either end, the two between mixed", () => {
+    const dark = { ...PAINT_OILS, contrast: 1.5 };
+    const night: LookGrade = { sun: -0.5, palette: dark, exposure: 2, overcast: 4 };
+    const day: LookGrade = { sun: 0.5, palette: PAINT_OILS, exposure: 1, overcast: 3 };
+    const look = gameLook({ grades: [night, day] });
+    // Midnight is under the first, noon over the last.
+    expect(lookGradeAt(look, 0, 0)).toEqual({ palette: dark, exposure: 2 });
+    expect(lookGradeAt(look, 12, 0)).toEqual({ palette: PAINT_OILS, exposure: 1 });
+    // Sunset, the sun on the horizon, is half way between the two.
+    const sunset = lookGradeAt(look, 18, 0);
+    const half = (sunPositionAt(18).y + 0.5) / 1;
+    expect(half).toBeCloseTo(0.5, 6);
+    expect(sunset?.exposure).toBeCloseTo(1.5, 6);
+    expect(sunset?.palette).toEqual(mixPalette(dark, PAINT_OILS, half));
+  });
+
+  it("takes the gain from clear to overcast by the cloud's cover, held to 0 and 1", () => {
+    const look = gameLook({ grades: [{ sun: 0, palette: PAINT_OILS, exposure: 1, overcast: 3 }] });
+    expect(lookGradeAt(look, 12, 0)?.exposure).toBe(1);
+    expect(lookGradeAt(look, 12, 0.25)?.exposure).toBeCloseTo(1.5, 6);
+    expect(lookGradeAt(look, 12, 1)?.exposure).toBe(3);
+    expect(lookGradeAt(look, 12, 7)?.exposure).toBe(3);
+    expect(lookGradeAt(look, 12, -2)?.exposure).toBe(1);
   });
 
   it("names nothing of Babylon.js", () => {

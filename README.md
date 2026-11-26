@@ -57,6 +57,11 @@ A game's session definition (`SessionGame`) can give a `look`, the part of the e
 the paint filter's strength (`paint`, 0 to 1; at 0 the paint pass is not drawn), the far softening's
 radius (`farSoft`), a gain on the weather's exposure (`exposure`), the palette the grade starts in
 (`palette`), and the weather and the hour a session starts under (`weather`, `weatherName`, `hour`).
+A `finish` (`bands`, `grain`, `edge`, and a `line` drawn from the scene's depth where one thing ends against another,
+with its `lineColour`) is laid over the picture on the medium and high tiers; a game gives a whole one, and the low tier ignores it.
+With every strength 0, the default, the passes' shaders and uniforms are exactly the engine's own.
+A game whose day is long can give `grades`, a palette and an exposure's gain (under a clear sky and under full cloud) for each of a few
+heights of the sun: the grade wears the two the sun stands between, mixed, at every hour, in place of the one `palette` and `exposure`.
 It is a `Partial<GameLook>` (`src/game/gameLook.ts`): what a game leaves out is the engine's own, so a
 game that gives none renders as the engine always has.
 

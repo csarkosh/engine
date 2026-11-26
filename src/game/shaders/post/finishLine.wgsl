@@ -1,0 +1,20 @@
+const LINE_DEPTH_LOW:f32=0.01;
+const LINE_DEPTH_HIGH:f32=0.05;
+fn lineInverse(uv:vec2<f32>)->f32{
+  return 1.0/farDepth(uv);
+}
+fn lineEdge(uv:vec2<f32>)->f32{
+  let o=1.0/vec2<f32>(textureDimensions(depthSampler));
+  if(any(uv<o)||any(uv>vec2<f32>(1.0)-o)){return 0.0;}
+  let wc=lineInverse(uv);
+  let wl=lineInverse(uv-vec2<f32>(o.x,0.0));
+  let wr=lineInverse(uv+vec2<f32>(o.x,0.0));
+  let wd=lineInverse(uv-vec2<f32>(0.0,o.y));
+  let wu=lineInverse(uv+vec2<f32>(0.0,o.y));
+  let second=wl+wr+wd+wu-4.0*wc;
+  let largest=max(max(max(wl,wr),max(wd,wu)),wc);
+  return smoothstep(LINE_DEPTH_LOW,LINE_DEPTH_HIGH,abs(second)/largest);
+}
+fn finishLine(uv:vec2<f32>,col:vec3<f32>)->vec3<f32>{
+  return mix(col,col*u.finishLine.xyz,lineEdge(uv)*u.finishLine.w);
+}

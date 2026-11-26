@@ -51,6 +51,8 @@ import shadeBlockSource from "../shaders/post/shadeBlock.wgsl?raw";
 import stareBlockSource from "../shaders/post/stareBlock.wgsl?raw";
 import gradeHalationSource from "../shaders/post/gradeHalation.wgsl?raw";
 import gradeFragmentSource from "../shaders/post/grade.fragment.wgsl?raw";
+import finishGradeSource from "../shaders/post/finishGrade.wgsl?raw";
+import finishLineSource from "../shaders/post/finishLine.wgsl?raw";
 import lensFragmentSource from "../shaders/post/lens.fragment.wgsl?raw";
 import { fill, wgsl } from "../shaders/shaderText.js";
 
@@ -110,8 +112,24 @@ export function depthResolveWgsl(samples: number): string {
   return fill(wgsl(depthResolveFragmentSource), { samples });
 }
 
-/** farSoft.fragment.glsl. */
-export const FAR_SOFT_WGSL = wgsl(farSoftFragmentSource);
+/**
+ * farSoft.fragment.glsl. `line`: the look's finish draws a line (`GameLook.finish.line`); without it the text is
+ * the game's own, none of the line's code in it.
+ *
+ * The line is drawn here, from the depth this pass already reads, ahead of the anti-aliasing, which steadies it
+ * (the depth is jittered a frame at a time, as the scene is). What it measures is the second difference, over the
+ * four neighbours a texel of the depth texture away, of the inverse of the distance (affine across the screen on
+ * any flat plane, so a wall seen at a glancing angle gives 0; the sky is about 0), divided by the largest of the
+ * five readings: about the relative step in inverse distance, the same at any distance. `LINE_DEPTH_LOW` and
+ * `LINE_DEPTH_HIGH` in `finishLine.wgsl` ease it in. The line multiplies the colour by `finishLine.xyz`, by
+ * `finishLine.w` where it is full.
+ */
+export function farSoftWgsl(line: boolean): string {
+  return fill(wgsl(farSoftFragmentSource), { lineFunctions: line ? `\n${wgsl(finishLineSource)}` : "", lineCall: line ? "\n  col=finishLine(vUV,col);" : "" });
+}
+
+/** farSoft.fragment.glsl, with no finish. */
+export const FAR_SOFT_WGSL = farSoftWgsl(false);
 
 /** taa.fragment.glsl. */
 export const TAA_WGSL = wgsl(taaFragmentSource);
@@ -225,10 +243,12 @@ export const STARE_BLOCK_WGSL = wgsl(stareBlockSource);
 /**
  * grade.fragment.glsl, the compose ahead of it. `halation`: the tier makes a
  * halation, read from `halationSampler`; without it the GLSL screens the
- * frame with black, which changes nothing, and nothing is read here.
+ * frame with black, which changes nothing, and nothing is read here. `finish`: the look's
+ * bands, grain and edge (`GameLook.finish`), laid over the shown colour at the end, before the dither
+ * and after the pixel's place is known; without it the text is the game's own.
  */
-export function gradeWgsl(halation: boolean): string {
-  return fill(wgsl(gradeFragmentSource), { halationBinding: halation ? "@group(0)@binding(5)var halationSampler:texture_2d<f32>;" : "", compose: COMPOSE_WGSL, shadeHelpers: SHADE_HELPERS_WGSL, shadeBlock: SHADE_BLOCK_WGSL, halation: halation ? wgsl(gradeHalationSource) : "", stareBlock: STARE_BLOCK_WGSL });
+export function gradeWgsl(halation: boolean, finish = false): string {
+  return fill(wgsl(gradeFragmentSource), { halationBinding: halation ? "@group(0)@binding(5)var halationSampler:texture_2d<f32>;" : "", compose: COMPOSE_WGSL, shadeHelpers: SHADE_HELPERS_WGSL, shadeBlock: SHADE_BLOCK_WGSL, halation: halation ? wgsl(gradeHalationSource) : "", stareBlock: STARE_BLOCK_WGSL, finish: finish ? `\n${wgsl(finishGradeSource)}` : "" });
 }
 
 /** lens.fragment.glsl. */
