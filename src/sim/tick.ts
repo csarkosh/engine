@@ -3,7 +3,8 @@
  * player from its command, on every peer, so that a client predicts what its host computes;
  * what else a tick does is the game's, and runs on the host alone. A game says where a player
  * arrives and what its record holds beside the engine's fields, when a player is held still,
- * what further limits a move, and what the host does once everyone has moved.
+ * whether it moves a player itself in place of the engine's walking, what further limits a
+ * walking move, and what the host does once everyone has moved.
  *
  * sim/ determinism rules: no trig, no Math.pow, no `**`, no hypot.
  */
@@ -56,6 +57,21 @@ export type Rules<W extends SimWorld<P>, P extends PlayerCore> = {
   /** Whether a player is held still: they look where their command looks and make no move. */
   held(player: P): boolean;
   /**
+   * Moves a player in place of the engine's walking step, or declines. Called first for every
+   * move, with the command the move is made from. Answer true after moving the player (its
+   * `pos`, `vel` and `grounded`, and whatever else of its record the move changes): the engine
+   * then does nothing more for that player on that step, so no walking step, no `constrain`
+   * and no lake walls. Answer false and the step is the engine's walking, as if there were no
+   * `move`. The engine has already set the player's look from the command. It runs on every
+   * peer: the host, a client's prediction, and a client's replay of its unacknowledged
+   * commands, so it must be deterministic from the world, the player and the command alone.
+   * It runs before `lastProcessedInput` is set to the command's `seq`, so a fresh command's
+   * `seq` differs from `player.lastProcessedInput`. A tick with no command for a player passes
+   * a standing command (no movement, no buttons) whose `seq` is `player.lastProcessedInput`,
+   * and that is how a move tells a standing command from a fresh one.
+   */
+  move?(world: W, player: P, cmd: InputCommand): boolean;
+  /**
    * What further limits a move, on the place and velocity the step arrived at, before the
    * lakes' own walls. Inside the step and on every peer, so a client predicts it exactly.
    */
@@ -76,8 +92,9 @@ export function removePlayer<P extends PlayerCore>(world: SimWorld<P>, id: numbe
   world.state.players.delete(id);
 }
 
-/** One player's move for one command: the movement step, what the rules add to it, then the lakes' walls. */
+/** One player's move for one command: the rules' own move if it answers true, else the movement step, what the rules add to it, then the lakes' walls. */
 function movePlayer<W extends SimWorld<P>, P extends PlayerCore>(world: W, player: P, cmd: InputCommand, rules: Rules<W, P>): void {
+  if (rules.move?.(world, player, cmd) === true) return;
   const before: MoveState = { pos: player.pos, vel: player.vel, grounded: player.grounded };
   const after = stepMovement(
     before,
