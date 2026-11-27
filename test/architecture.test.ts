@@ -784,6 +784,8 @@ describe("layer boundaries", () => {
       at("game", "terrainVertexData.ts"),
       at("game", "ringBuild.ts"),
       at("game", "ringServe.ts"),
+      at("game", "ringWire.ts"),
+      at("game", "ringWork.ts"),
       at("game", "sceneLights.ts"),
       at("game", "gameLens.ts"),
       at("game", "skyWait.ts"),
@@ -847,7 +849,7 @@ describe("layer boundaries", () => {
    */
   it("what the terrain, the air and the light are drawn with, and the lens, is computed without loading Babylon, whatever it imports", () => {
     const ENGINE_FREE = [
-      "terrainTables.ts", "terrainUniforms.ts", "groundLayers.ts", "wetSurface.ts", "terrainVertices.ts", "terrainVertexData.ts", "ringBuild.ts", "ringServe.ts",
+      "terrainTables.ts", "terrainUniforms.ts", "groundLayers.ts", "wetSurface.ts", "terrainVertices.ts", "terrainVertexData.ts", "ringBuild.ts", "ringServe.ts", "ringWire.ts",
       "atmosphereParams.ts", "cloudParams.ts", "skyState.ts", "skyDomeParams.ts", "skyProbeParams.ts", "weather.ts", "sceneLights.ts", "lampParams.ts", "gameLens.ts",
       "mistField.ts", "mistBanks.ts", "motesParams.ts", "moteField.ts",
       "rainParams.ts", "rainField.ts", "splashField.ts", "rainCover.ts", "lensCanopy.ts",
