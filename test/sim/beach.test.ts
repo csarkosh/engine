@@ -38,11 +38,13 @@ function bayRect(seed: number, z: number): [number, number, number, number] {
 /** The bays that have a beach for each seed: a headland's shore has none. */
 const BAYS: readonly (readonly [number, number])[] = [[20261121, 300], [20261121, 700], [1, 700], [7, 300], [7, 700]];
 
-registerOlympic({ tunables: {}, shapeD: (_seed, _x, _z, _u, _uDz, base) => base, beach: {} });
+// These tests are of the things on the beach, on the ground the coast always had: `shape: 0` (`beachShape.test.ts` holds the relief and what
+// it does to the kelp's lines). Without it the cusps wander the tide lines enough to fill the gaps the wrack's clump noise leaves.
+registerOlympic({ tunables: {}, shapeD: (_seed, _x, _z, _u, _uDz, base) => base, beach: { shape: 0 } });
 const hooked = activeTerrainVariant();
 registerTerrainVariant({ ...hooked, name: "olympic-plain", tunables: Object.fromEntries(Object.entries(hooked.tunables).filter(([k]) => !(k in beachTunables({})))), beach: undefined });
-registerTerrainVariant({ ...hooked, name: "olympic-quiet", beach: { wrack: 0.5, cobbles: 0, driftwood: 1, duneGrass: 0.25 }, tunables: { ...hooked.tunables, ...beachTunables({ wrack: 0.5, cobbles: 0, driftwood: 1, duneGrass: 0.25 }) } });
-registerTerrainVariant({ ...hooked, name: "olympic-nowrack", beach: { wrack: 0 } });
+registerTerrainVariant({ ...hooked, name: "olympic-quiet", beach: { wrack: 0.5, cobbles: 0, driftwood: 1, duneGrass: 0.25, shape: 0 }, tunables: { ...hooked.tunables, ...beachTunables({ wrack: 0.5, cobbles: 0, driftwood: 1, duneGrass: 0.25, shape: 0 }) } });
+registerTerrainVariant({ ...hooked, name: "olympic-nowrack", beach: { wrack: 0, shape: 0 } });
 registerTerrainVariant({ ...hooked, name: "olympic-made", featureMask: () => ({ tree: 1, clutter: 0, meadow: 0, bare: 0, loose: 0 }) });
 registerTerrainVariant({ ...hooked, name: "olympic-stands", clutterStands: () => false });
 

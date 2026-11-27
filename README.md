@@ -77,6 +77,16 @@ densities are part of its level id. A place that gives no `beach` is exactly the
 kept off ground the place has made by the same hooks as the clutter: its `featureMask` (`loose` for the heaps, the cobbles and the driftwood, `clutter` for the
 grass), its shore strip, and its `clutterStands` (asked as the litter, a rock, driftwood and grass: `BEACH_STANDS_AS`). The pieces are five draws on every tier (the low tier
 draws at most half the density, and a smaller reach); the game registers nothing more.
+`beach` can also give `shape` (0 to 1; left out, 1; 0, none), the beach's own ground (`src/sim/beachShape.ts`): a storm ridge above the storm line
+(15 to 30 cm over the plain profile, its seaward face a step of 20 to 40 cm over about 2 m, its crest wandering along the shore and breached in places),
+cusps along the swash (12 to 30 m apart, horns 10 to 20 cm over the bays), bars and channels on the wet flat (6 to 15 m across, 8 to 15 cm, so the waterline
+is irregular and a few channels hold water below the still sea), and hummocks at the back of the sand (3 to 7 m across, 15 to 35 cm), the dune grass leaning
+toward their tops. It is laid in terms of height above the still sea and position along the shore, on a bay's shore only (not a headland's, the cove's
+headlands or the sea stacks'), over the coast's ground and under the place's own `shapeD` and the road's corridor, so whatever a place cuts afterwards, and the
+road's bed, are as they were; the cove keeps half of the ridge, the cusps and the hummocks and none of the bars. The paint, the beach's things, walking and
+props all read the one height, so they follow it. A place that gives no `beach`, or `shape: 0`, has the same ground, to the bit, and the same level id as before;
+a place with the shape has its constants in its level id. A sample costs nothing more outside -0.8 m to the sand's top (4 m) and at most 5 gradient-noise
+evaluations inside it. The sea's own tables (`oceanTables.ts`) read the straight shore profile, not the relief.
 
 A game's server is a package of the engine's, released as a second tarball beside the engine's, so
 that running a server needs none of the engine's 116 MB of game files:

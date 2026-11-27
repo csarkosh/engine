@@ -26,6 +26,7 @@
 import { fbm2, hash3, valueNoise2 } from "./field.js";
 import { activeTerrainVariant, elevationSampleAt, shoreHeight } from "./terrain.js";
 import { NO_FEATURE_MASK } from "./features.js";
+import { beachShapeTunables, hummockTop } from "./beachShape.js";
 import { CLUTTER_DRIFTWOOD, CLUTTER_GRASS, CLUTTER_LITTER, CLUTTER_ROCK, CLUTTER_ROCK_ROAD_FAR, CLUTTER_ROCK_ROAD_NEAR } from "./clutter.js";
 import { COAST_FADE_END_HEIGHT, OLD_WRACK_LINE_HEIGHT, SAND_TOP_HEIGHT, STORM_LINE_HEIGHT, WRACK_LINE_HEIGHT } from "./tideLines.js";
 
@@ -42,6 +43,12 @@ export type BeachOptions = {
   driftwood?: number;
   /** Dune grass. */
   duneGrass?: number;
+  /**
+   * The beach's own ground (`beachShape.ts`): a storm ridge with a step above the storm line, cusps along the swash, bars and
+   * channels on the wet flat (a few channels hold water below the still sea) and hummocks at the back, 0 to 1. Left out, 1; 0, none:
+   * the place's ground is then exactly what it was, and so is its level id.
+   */
+  shape?: number;
 };
 
 /** The densities a place's `BeachOptions` come to: each a number from 0 to 1. */
@@ -107,6 +114,8 @@ export const BEACH_GRASS_FULL = 6;
 export const BEACH_GRASS_CLUMP_WAVELENGTH = 6;
 export const BEACH_GRASS_CLUMP_LO = 0.38;
 export const BEACH_GRASS_CLUMP_HI = 0.55;
+/** With a shaped beach, how far the dune grass leans toward the hummocks' tops: its density runs from `1 - LEAN * 0.5` between them to `1 + LEAN * 0.5` on a top. */
+export const BEACH_GRASS_LEAN = 1.2;
 /** Driftwood's gaps: wavelength (m) and edges. */
 export const BEACH_DRIFT_CLUMP_WAVELENGTH = 9;
 export const BEACH_DRIFT_CLUMP_LO = 0.35;
@@ -140,6 +149,11 @@ function unit(v: number | undefined): number {
   return v > 1 ? 1 : v;
 }
 
+/** How much of the beach's own relief a place asks for, 0 to 1: left out, 1. */
+export function resolveShape(options: BeachOptions): number {
+  return unit(options.shape);
+}
+
 /** A place's `BeachOptions` as the densities they come to: left out, 1. */
 export function resolveBeach(options: BeachOptions): BeachDensities {
   return { wrack: unit(options.wrack), cobbles: unit(options.cobbles), driftwood: unit(options.driftwood), duneGrass: unit(options.duneGrass) };
@@ -159,6 +173,9 @@ export function beachTunables(options: BeachOptions): Record<string, number> {
     BEACHLAY_STRAND_SHARE: BEACH_STRAND_SHARE, BEACHLAY_SLOPE_MAX: BEACH_SLOPE_MAX, BEACHLAY_TRAIL_CLEAR: BEACH_TRAIL_CLEAR, BEACHLAY_CURVE_MARGIN: BEACH_CURVE_MARGIN, BEACHLAY_WANDER_SALT: BEACH_WANDER_SALT, BEACHLAY_CLUMP_SALT: BEACH_CLUMP_SALT,
     WRACK_LINE_HEIGHT, OLD_WRACK_LINE_HEIGHT, STORM_LINE_HEIGHT,
   };
+  // A shaped beach is its own level; one with `shape: 0` is the beach it was, the shape's constants and all.
+  const shape = resolveShape(options);
+  if (shape > 0) Object.assign(out, beachShapeTunables(shape), { BEACHLAY_GRASS_LEAN: BEACH_GRASS_LEAN });
   for (let k = 0; k < BEACH_KIND_COUNT; k++) {
     out[`BEACHLAY_CANDIDATES_${k}`] = BEACH_CANDIDATES[k] as number;
     out[`BEACHLAY_KEEP_${k}`] = BEACH_KEEP[k] as number;
@@ -240,6 +257,8 @@ export function beachInCell(seed: number, cx: number, cz: number, out: BeachInst
   const lo = centre.h - reach;
   const hi = shoreHeight(seed, x0 + half, z0 + half, centre.h) + reach;
   const densities = resolveBeach(beach);
+  const shape = resolveShape(beach);
+  const coastDistance = variant.coastDistance;
   const density = [densities.wrack, densities.cobbles, densities.driftwood, densities.duneGrass];
   for (let kind = 0; kind < BEACH_KIND_COUNT; kind++) {
     const d = density[kind] as number;
@@ -263,6 +282,11 @@ export function beachInCell(seed: number, cx: number, cz: number, out: BeachInst
       const sh = shoreHeight(seed, x, z, g.h);
       p *= heightWeight(seed, kind, x, z, sh);
       if (u >= p) continue;
+      // On a shaped beach the dune grass grows on the hummocks.
+      if (kind === BEACH_GRASS && shape > 0 && coastDistance !== undefined) {
+        p *= 1 + shape * BEACH_GRASS_LEAN * (hummockTop(seed, coastDistance(seed, x, z), z) - 0.5);
+        if (u >= p) continue;
+      }
       const road = variant.roadDistance?.(seed, x, z) ?? Infinity;
       p *= smoothstep(CLUTTER_ROCK_ROAD_NEAR, CLUTTER_ROCK_ROAD_FAR, road);
       if (u >= p) continue;

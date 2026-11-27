@@ -41,7 +41,8 @@ import {
   registerTerrainVariant, type LakeSource, type TerrainSample, type TerrainVariant, type WaterBodySource,
 } from "./terrain.js";
 import type { FeatureMask } from "./features.js";
-import { beachTunables } from "./beach.js";
+import { beachTunables, resolveShape } from "./beach.js";
+import { bayMaskInto, BAY, beachShapeInto, SHAPE_HI, SHAPE_LO, SHAPED } from "./beachShape.js";
 
 // ---- Tunables ---------------------------------------------------------------
 export const SEA_LEVEL = 0;
@@ -831,7 +832,7 @@ export function roadFrameAt(seed: number, x: number, z: number): { u: number; uD
  * Where `coastStagesInto` leaves its answer: the road's frame at the point and the coast's ground there, as
  * numbers. Written by every call of it; read at once.
  */
-const COAST = { u: 0, uDz: 0, h: 0, dx: 0, dz: 0 };
+const COAST = { u: 0, uDz: 0, d: 0, dDz: 0, blendEnd: 0, blendEndDz: 0, h: 0, dx: 0, dz: 0 };
 
 /**
  * The coast's ground before any place is laid over it, with the road's frame it was made in, left in
@@ -894,6 +895,10 @@ function coastStagesInto(seed: number, x: number, z: number): void {
   }
   COAST.u = u;
   COAST.uDz = uDz;
+  COAST.d = d;
+  COAST.dDz = frameDDz;
+  COAST.blendEnd = blendEnd;
+  COAST.blendEndDz = blendEndDz;
   COAST.h = h;
   COAST.dx = dx;
   COAST.dz = dz;
@@ -955,9 +960,21 @@ function olympicSample(seed: number, x: number, z: number): TerrainSample {
   let sH = cH;
   let sDx = cDx;
   let sDz = cDz;
+  // A place that asked for its beach's own relief: laid on the coast's ground (the road's corridor and the
+  // ground under the sea or above the sand untouched) before the place's own ground and the road's cut.
+  if (beachShape > 0 && cH > SHAPE_LO && cH < SHAPE_HI) {
+    const cove = coveFor(seed);
+    coveWeightInto(cove, z, u, uDz);
+    bayMaskInto(COAST.blendEnd, COAST.blendEndDz, z, (cove.heads[0] as Headland).z, (cove.heads[1] as Headland).z);
+    if (beachShapeInto(seed, z, COAST.d, COAST.dDz, u, uDz, cH, cDx, cDz, WEIGHT.v, WEIGHT.dx, WEIGHT.dz, BAY.v, BAY.dz, beachShape)) {
+      sH = SHAPED.h;
+      sDx = SHAPED.dx;
+      sDz = SHAPED.dz;
+    }
+  }
   let placed: TerrainSample | null = null;
   if (overlay !== null) {
-    placed = overlay.shapeD(seed, x, z, u, uDz, { h: cH, dx: cDx, dz: cDz });
+    placed = overlay.shapeD(seed, x, z, u, uDz, { h: sH, dx: sDx, dz: sDz });
     sH = placed.h;
     sDx = placed.dx;
     sDz = placed.dz;
@@ -1096,6 +1113,8 @@ export type CoastOverlay = {
 
 /** The place laid over the coast in this thread, once the coast is registered with one. */
 let overlay: CoastOverlay | null = null;
+/** How much of the beach's own relief the place asked for (`BeachOptions.shape`): 0 where it gave no beach or no shape. */
+let beachShape = 0;
 
 /**
  * Registers the coast as the terrain `olympic`, with the place a game lays over it or with
@@ -1128,4 +1147,5 @@ export function registerOlympic(place: CoastOverlay | null): void {
     sample: olympicSample,
   });
   overlay = place;
+  beachShape = place?.beach === undefined ? 0 : resolveShape(place.beach);
 }
