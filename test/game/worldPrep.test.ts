@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PreparedScene } from "../../src/game/preparedScene.js";
 import { startWorldPrep } from "../../src/game/worldPrep.js";
 import type { WorldPrepReply } from "../../src/game/worldWork.js";
+import { registeredPasses } from "../../src/sim/chunk.js";
+import { installPassHash } from "../../src/sim/forest.js";
 
 /** A worker that records what it is sent and how often it was ended; the test answers for it. */
 type FakeWorker = {
@@ -235,6 +237,41 @@ describe("startWorldPrep: the worker's life", () => {
     vi.advanceTimersByTime(LIMIT * 2);
     expect(worker.terminated).toBe(0);
     expect(prep.handOver()).toBe(worker);
+  });
+
+  it("a prep the page held the world for starts a worker for the scene alone, and hands that one over", async () => {
+    // A terrain of its own, whose pass hash the page holds and which prepares nothing: the prep comes to `cached`.
+    const held = { seed: 7, variant: "held-terrain" };
+    expect(installPassHash(1234, { passCount: registeredPasses().length, variant: held.variant })).toBe(true);
+    const worker = fakeWorker();
+    let started = 0;
+    const prep = startWorldPrep(held, () => {
+      started++;
+      return worker as unknown as Worker;
+    }, { now: () => 0, timeoutMs: LIMIT });
+    expect((await prep.ready).why).toBe("cached");
+    expect(started).toBe(0);
+    // The scene starts a worker for itself, and asks it.
+    const asked = prep.scene("medium");
+    await flush();
+    expect(started).toBe(1);
+    expect(worker.posted.map((m) => m.kind)).toEqual(["scene"]);
+    const { id } = worker.posted[0]!;
+    worker.onmessage?.({ data: { id, kind: "scene", scene: { seed: held.seed, variant: held.variant, tier: "medium" } as unknown as PreparedScene } });
+    worker.onmessage?.({ data: { id, kind: "done" } as WorldPrepReply });
+    expect((await asked)?.tier).toBe("medium");
+    await flush();
+    // That worker is the one handed over, alive and with no listener of the prep's on it.
+    expect(prep.handOver()).toBe(worker);
+    expect(worker.onmessage).toBeNull();
+    expect(worker.terminated).toBe(0);
+    // A scene asked after the hand-over starts no worker and posts nothing.
+    expect(prep.scene("medium")).toBe(asked);
+    await flush();
+    expect(started).toBe(1);
+    expect(worker.posted).toHaveLength(1);
+    prep.dispose();
+    expect(worker.terminated).toBe(0);
   });
 
   it("an error from the worker after its scene ends it", async () => {

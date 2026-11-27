@@ -145,7 +145,8 @@ type PatchRun = { request: WorldPatchesRequest; next: number; trail: TrailGraph 
  * request served, null before any: a set for another world is one `failed`. A step builds the next cell with the
  * active terrain, posts it (a cell with no steep ground as a null patch) with its arrays transferred, and posts
  * `patchesDone` after the last. A cell that throws, a spacing no band has, or a world that is no longer the set's is
- * one `failed` and ends the set. The arrays are not touched after they are posted.
+ * one `failed` and ends the set. The arrays are not touched after they are posted. The world's trail graph is made
+ * once for its seed and variant, by the first set for it, and again only for a set of another world.
  */
 export function createPatchServer(
   post: (reply: WorldPrepReply, transfer: ArrayBuffer[]) => void,
@@ -153,6 +154,14 @@ export function createPatchServer(
   now: () => number = () => performance.now(),
 ): PatchServer {
   let run: PatchRun | null = null;
+  /** The trail graph of the world made, with its seed and variant: made for the first set of a world, kept for the next. */
+  let trailFor: { seed: number; variant: string; trail: TrailGraph | null } | null = null;
+  const trailOf = (seed: number, variant: string): TrailGraph | null => {
+    if (trailFor === null || trailFor.seed !== seed || trailFor.variant !== variant) {
+      trailFor = { seed, variant, trail: activeTerrainVariant().trailGraph?.(seed) ?? null };
+    }
+    return trailFor.trail;
+  };
 
   const fail = (id: number, error: unknown): void => {
     run = null;
@@ -171,7 +180,7 @@ export function createPatchServer(
         const { seed } = request;
         const hook = activeTerrainVariant().pavedGround;
         run = {
-          request, next: 0, trail: activeTerrainVariant().trailGraph?.(seed) ?? null,
+          request, next: 0, trail: trailOf(seed, request.variant),
           paved: hook === undefined ? null : (x, z) => hook(seed, x, z),
         };
       } catch (error) {

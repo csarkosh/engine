@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import "../../src/sim/montane.js";
 import { registerOlympic } from "../../src/sim/olympic.js";
 import { activeTerrainVariant, activeTerrainVariantName } from "../../src/sim/terrain.js";
+import type { TrailGraph } from "../../src/sim/trail.js";
 import {
   NO_STITCH, OPEN_NORTH_EAST, OPEN_WEST, PATCH_CELL, PATCH_FAR_SPACING, PATCH_NEAR_SPACING, PATCH_WIDE_SPACING,
   facePatchGeometry, type FacePatch, type PatchStitch,
@@ -186,6 +187,33 @@ describe("the world's worker serving a set of rock-face cells", () => {
     expect(posted.map((p) => p.reply.kind)).toEqual(["patch", "failed"]);
     expect(posted[1]?.reply).toMatchObject({ id: 7, kind: "failed" });
     expect(server.step()).toBe(false);
+  });
+
+  it("makes the trail graph once for the world made, and again only for another world", () => {
+    const before = variant.trailGraph;
+    /** A graph with no trail: what it is matters not here, only how often it is made. */
+    const none = { nodes: [], edges: [], trailhead: { x: 0, z: 0, u: 0 }, summit: 0, stem: [], loops: [], features: [] } as unknown as TrailGraph;
+    let made = 0;
+    variant.trailGraph = () => {
+      made++;
+      return none;
+    };
+    try {
+      let world = { seed: SEED, variant: VARIANT };
+      const { posted, server, run } = collect(() => world);
+      server.ask(request(1, [FLAT]));
+      run();
+      server.ask(request(2, [FLAT]));
+      run();
+      expect(made).toBe(1);
+      world = { seed: 2, variant: VARIANT };
+      server.ask(request(3, [FLAT], { seed: 2 }));
+      run();
+      expect(made).toBe(2);
+      expect(posted.map((p) => p.reply.kind)).toEqual(["patch", "patchesDone", "patch", "patchesDone", "patch", "patchesDone"]);
+    } finally {
+      variant.trailGraph = before;
+    }
   });
 
   it("ms is the time the cell took", () => {
