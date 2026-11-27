@@ -34,13 +34,22 @@
  * one step.
  *
  * The patches change when the camera crosses a line of their cells: at a
- * walk as one patient job, the cells to build made one a slice, nearest
- * first, each into a slot of the patches' mesh that no triangle drawn
- * names yet, then in the last slice the list of triangles written with the
- * new ones in it and without the ones they replace or that left, at once. Until then the last set shown is drawn whole, and the rings
+ * walk as one job, the cells to build placed nearest first, each into a
+ * slot of the patches' mesh that no triangle drawn names yet, then in the
+ * last slice the list of triangles written with the new ones in it and
+ * without the ones they replace or that left, at once. Given the world's
+ * worker (`patchWork`), the job asks it for the set's cells as its first
+ * slice begins, so a request held behind a job that has started asks
+ * nothing until that job is shown, and places each cell as it arrives,
+ * waiting at no cost while none has (`patchJob.ts`); such a job is not
+ * patient. Without a worker, or once it has failed, the job is patient and
+ * makes the cells on this thread, one a slice, and a worker that fails
+ * while a job waits leaves the rest of its set to this thread. Until then the last set shown is drawn whole, and the rings
  * leave out the ground that set covers. The first update draws the near
  * band at once and leaves the rest to the job; with nothing pending, idle
- * work builds ahead the cells the next crossing will want. The rings are
+ * work builds ahead the cells the next crossing will want, asked of the
+ * worker where there is one. A set built at once is this thread's, and
+ * stops the worker first. The rings are
  * drawn first, the finest first, and the patches after them, ahead of
  * everything else (`drawOrder.ts`), their triangles in the order of their
  * cells' places (`patchPlace`): whenever a set is shown and whichever
@@ -86,12 +95,15 @@ import {
   type FacePatch, type PatchCell, type PavedGround, type PatchReach, type PatchStitch,
 } from "../facePatches.js";
 import { buildAtOnce, type FirstBuilds } from "../firstBuilds.js";
+import type { PatchWork } from "../patchWork.js";
 import type { QualityTier } from "../quality.js";
 import { createCrossing, crossingAt, finish, nextCrossing, type Slices, type SyncJobs } from "../syncJobs.js";
 import { facePatchVertices, ringVertices, type TerrainVertices } from "../terrainVertices.js";
 import { activeTerrainVariant } from "../../sim/terrain.js";
+import type { PatchCellAsk } from "../worldWork.js";
 import { DRAW_ORDER, DRAW_PLACES } from "./drawOrder.js";
 import type { FrameUploads } from "./frameUploads.js";
+import { placeAsked, type PatchPlacing } from "./patchJob.js";
 import {
   createMarkedRun, createPatchPool, firstDifference, patchIndexCapacity, patchIndexCount, patchVertexCount, writePatchTriangles,
   type DrawnPatch, type PatchSlot,
@@ -163,6 +175,9 @@ export type TerrainMeshOptions = {
   /** What a lake's shore panorama draws of the ground: the rings out to the ridges (`REFLECTED_RINGS`) and the patches'
    * mesh, likewise (`lakePanorama.ts`). */
   reflections?: ReflectionRegistry;
+  /** The session's client of the world's worker (`patchWork.ts`): given it, and while it has not failed, a crossing's
+   * rock faces are asked of the worker and placed as they arrive. The meshes never end it. */
+  patchWork?: PatchWork | null;
 };
 
 /** The rings of the terrain in a lake's reflections: the five finest, to the ridges past the fourth's 512 m. */
@@ -405,6 +420,9 @@ export function createTerrainMeshes(
   const ahead = new Float64Array(2);
   /** The patches' place in the scheduler's queue and the loader's. */
   const patchOwner = {};
+  /** The world's worker's client, the session's: the patches' jobs at a walk and their idle work ask it for their
+   * cells while it has not failed. */
+  const patchWork = options.patchWork ?? null;
 
   /** Whether `entry` is the cell as wanted at `spacing` with `bits`: an empty cell is empty whatever its stitch. */
   const holds = (entry: PatchEntry | undefined, spacing: number, bits: number): entry is PatchEntry =>
@@ -611,6 +629,62 @@ export function createTerrainMeshes(
     }
   }
 
+  /** Asks `work` for the cells of `w` to build that are not built yet, each under its key in `ready` as wanted with a
+   * patch (`readyKey`), which names the cell, its band and its stitch: one key, one geometry. */
+  function askPatches(work: PatchWork, w: Wanted): void {
+    const asks: PatchCellAsk[] = [];
+    const keys: number[] = [];
+    for (const i of w.changed) {
+      if (isReady(w, i)) continue;
+      const c = w.cells[i] as PatchCell;
+      asks.push({ ci: c.ci, cj: c.cj, spacing: c.spacing, stitch: w.stitches[i] as PatchStitch });
+      keys.push(readyKey(w, i, false));
+    }
+    work.ask(asks, keys);
+  }
+
+  /** What placing the cells of `w` that `work` sends takes (`patchJob.ts`). */
+  function placing(work: PatchWork, w: Wanted): PatchPlacing {
+    return {
+      changed: w.changed,
+      isReady: (i) => isReady(w, i),
+      key: (i) => readyKey(w, i, false),
+      arrived: (key) => work.take(key),
+      failed: () => work.failed,
+      *hold(i, patch): Slices {
+        if (uploads !== undefined) yield* uploads.hold(shapeBytes(patch, (w.cells[i] as PatchCell).spacing));
+      },
+      enter: (i, patch) => enter(w, i, patch),
+      makeHere: (i) => makeSlices(w, i),
+      disposed: () => disposed,
+    };
+  }
+
+  /**
+   * The patches' rebuild for cell (ci, cj) with the world's worker: the set worked out and its cells not built yet
+   * asked of `work` as the job's first slice begins, never at the crossing, since a request held behind a job that
+   * has started would otherwise take the cells that job waits on; then each cell placed as it arrives, nearest first,
+   * and the set drawn in the last slice, as `rebuildPatches` draws it.
+   */
+  function* rebuildAsked(work: PatchWork, ci: number, cj: number): Slices {
+    const w = want(ci, cj);
+    askPatches(work, w);
+    yield* placeAsked(placing(work, w));
+    if (disposed) return;
+    yield FACE_PATCH_SHOW_MS;
+    if (uploads !== undefined) yield* uploads.hold(showBytes(w, false));
+    if (disposed) return;
+    showPatches(w, false);
+  }
+
+  /** Idle work with the world's worker: the cells the set for cell (ci, cj) will want, asked of `work` as its first
+   * slice begins and placed as they arrive, nearest first. */
+  function* buildAheadAsked(work: PatchWork, ci: number, cj: number): Slices {
+    const w = want(ci, cj);
+    askPatches(work, w);
+    yield* placeAsked(placing(work, w));
+  }
+
   /** The idle work stopped: the next `aimPatches` sets it again. */
   function stopAhead(): void {
     jobs?.idle(patchOwner, null);
@@ -630,7 +704,14 @@ export function createTerrainMeshes(
     if (Object.is(ci, aheadCi) && Object.is(cj, aheadCj)) return;
     aheadCi = ci;
     aheadCj = cj;
-    jobs.idle(patchOwner, Number.isNaN(ci) ? null : buildAhead(ci, cj));
+    jobs.idle(patchOwner, Number.isNaN(ci) ? null : patchWork !== null && !patchWork.failed ? buildAheadAsked(patchWork, ci, cj) : buildAhead(ci, cj));
+  }
+
+  /** Begins the patches' rebuild for cell (ci, cj) as a job: asked of the worker where there is one that has not
+   * failed, a job that is not patient; else built on this thread, a patient one. */
+  function beginRebuild(ci: number, cj: number): void {
+    if (patchWork !== null && !patchWork.failed) (jobs as SyncJobs).begin(patchOwner, rebuildAsked(patchWork, ci, cj), false, "facePatches");
+    else (jobs as SyncJobs).begin(patchOwner, rebuildPatches(ci, cj), true, "facePatches");
   }
 
   function updatePatches(camX: number, camZ: number): void {
@@ -651,13 +732,16 @@ export function createTerrainMeshes(
     }
     // A new place: a set the loader still holds for the last one is dropped.
     firstBuilds?.cancel(patchOwner);
-    // Idle work runs beside a patient job: the job builds what it needs, and the idle work starts again once it is drawn.
+    // Idle work runs beside a patient job, and a job's ask of the worker replaces the idle work's: the job builds what
+    // it needs, and the idle work starts again once it is drawn.
     stopAhead();
     if (kind === "later") {
-      (jobs as SyncJobs).begin(patchOwner, rebuildPatches(ci, cj), true, "facePatches");
+      beginRebuild(ci, cj);
       return;
     }
     jobs?.cancel(patchOwner);
+    // Built at once on this thread: the worker stops, and holds nothing of a set no job will place.
+    patchWork?.clear();
     if (first && jobs !== undefined) {
       if (firstBuilds?.open === true) {
         // Under the film no frame shows the face in front of the camera: the whole set is the loader's.
@@ -668,7 +752,7 @@ export function createTerrainMeshes(
       const startedAt = jobs.atOnceStart();
       finish(rebuildPatches(ci, cj, true));
       jobs.atOnceEnd("facePatches", startedAt);
-      jobs.begin(patchOwner, rebuildPatches(ci, cj), true, "facePatches");
+      beginRebuild(ci, cj);
       return;
     }
     const startedAt = jobs?.atOnceStart() ?? Number.NaN;
@@ -985,6 +1069,8 @@ export function createTerrainMeshes(
       jobs?.cancel(ringOwner);
       jobs?.idle(patchOwner, null);
       jobs?.idle(ringOwner, null);
+      // The worker stops, and its client, the session's, holds nothing of these meshes: a renderer made next asks anew.
+      patchWork?.clear();
       for (const entry of cells.values()) dropPatch(entry);
       for (const entry of ready.values()) discardPatch(entry);
       cells.clear();
