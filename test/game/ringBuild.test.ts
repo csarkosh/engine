@@ -1,0 +1,123 @@
+import { describe, expect, it } from "vitest";
+import "../../src/sim/montane.js";
+import { registerOlympic } from "../../src/sim/olympic.js";
+import { RING_COUNT, createRingSamples, holeCellsFor, ringGeometryBuffers, ringGeometrySlices, type CoveredGround, type RingSamples } from "../../src/game/clipmap.js";
+import { PATCH_CELL, PATCH_REACH, facePatchCover } from "../../src/game/facePatches.js";
+import { ringBuildSlices, ringDrawnOf, ringStale, type RingBuffers, type RingDrawn } from "../../src/game/ringBuild.js";
+import { finish } from "../../src/game/syncJobs.js";
+import { terrainVertexData as fromPlugins } from "../../src/game/lite/terrainPlugins.js";
+import { terrainVertexData } from "../../src/game/terrainVertexData.js";
+import { ringVertices } from "../../src/game/terrainVertices.js";
+
+registerOlympic(null);
+
+const SEED = 1;
+const CAM_X = (-22 + 0.5) * PATCH_CELL;
+const CAM_Z = (-30 + 0.5) * PATCH_CELL;
+const rings: RingSamples[] = [];
+for (let level = 0; level < RING_COUNT; level++) rings.push(createRingSamples(SEED, level, CAM_X, CAM_Z, 2));
+const cover: CoveredGround = facePatchCover(CAM_X, CAM_Z, PATCH_REACH.low);
+
+const empty = (): RingBuffers => ({ geometry: null, indices: null, plugin: null });
+
+/** Every element of `a` and `b` the same by `Object.is`, and the same length. */
+function same(a: ArrayLike<number>, b: ArrayLike<number>): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (!Object.is(a[i], b[i])) return false;
+  return true;
+}
+
+describe("ringBuildSlices", () => {
+  for (const level of [0, 3, RING_COUNT - 1]) {
+    for (const covered of [null, cover]) {
+      it(`is the composition emit was: level ${level}, ${covered === null ? "no" : "a"} covered ground`, () => {
+        const ring = rings[level] as RingSamples;
+        const finer = level > 0 ? (rings[level - 1] as RingSamples) : null;
+        const coarser = level < RING_COUNT - 1 ? (rings[level + 1] as RingSamples) : null;
+        const to = empty();
+        finish(ringBuildSlices(ring, finer, coarser, covered, to));
+        const want = ringGeometryBuffers(level > 0);
+        finish(ringGeometrySlices(ring, finer === null ? null : holeCellsFor(ring, finer), coarser, want, covered));
+        const got = to.geometry;
+        if (got === null) throw new Error("no geometry made");
+        for (const name of ["positions", "normals", "colors", "weights", "weights2", "cover", "indices"] as const) expect(same(got[name], want[name]), name).toBe(true);
+        expect(got.indexCount).toBe(want.indexCount);
+        const vertices = ringVertices(want);
+        expect(same(to.plugin as Float32Array, terrainVertexData(vertices))).toBe(true);
+        const whole = new Uint32Array(want.indices.length);
+        whole.set(vertices.indices);
+        expect(same(to.indices as Uint32Array, whole)).toBe(true);
+      });
+    }
+  }
+
+  it("leaves out triangles under a covered ground, which is what the zeros after the list are", () => {
+    const ring = rings[0] as RingSamples;
+    const open = empty();
+    finish(ringBuildSlices(ring, null, rings[1] as RingSamples, null, open));
+    const left = empty();
+    finish(ringBuildSlices(ring, null, rings[1] as RingSamples, cover, left));
+    expect((left.geometry?.indexCount ?? 0)).toBeLessThan(open.geometry?.indexCount ?? 0);
+    const tail = (left.indices as Uint32Array).subarray(left.geometry?.indexCount ?? 0);
+    expect(tail.length).toBeGreaterThan(0);
+    expect(tail.every((v) => v === 0)).toBe(true);
+  });
+
+  it("writes into the buffers given", () => {
+    const to = empty();
+    const ring = rings[2] as RingSamples;
+    finish(ringBuildSlices(ring, rings[1] as RingSamples, rings[3] as RingSamples, null, to));
+    const once = { geometry: to.geometry, indices: to.indices, plugin: to.plugin };
+    expect(once.geometry).not.toBeNull();
+    finish(ringBuildSlices(ring, rings[1] as RingSamples, rings[3] as RingSamples, cover, to));
+    expect(to.geometry).toBe(once.geometry);
+    expect(to.indices).toBe(once.indices);
+    expect(to.plugin).toBe(once.plugin);
+  });
+});
+
+describe("ringStale", () => {
+  const base: RingDrawn = { x: 1, z: 2, fx: 3, fz: 4, cx: 5, cz: 6, kx: 7, kz: 8, kr: 9, kf: 10 };
+
+  it("is false for equal records, NaN against NaN included", () => {
+    expect(ringStale({ ...base }, base)).toBe(false);
+    const none = { ...base, fx: Number.NaN, kr: Number.NaN };
+    expect(ringStale({ ...none }, none)).toBe(false);
+  });
+
+  it("is true when any one of the ten fields differs", () => {
+    for (const key of Object.keys(base) as (keyof RingDrawn)[]) {
+      expect(ringStale({ ...base, [key]: base[key] + 1 }, base), key).toBe(true);
+      expect(ringStale({ ...base, [key]: Number.NaN }, base), `${key} NaN drawn`).toBe(true);
+      expect(ringStale(base, { ...base, [key]: Number.NaN }), `${key} NaN now`).toBe(true);
+    }
+  });
+
+  it("is true for no record", () => {
+    expect(ringStale(undefined, base)).toBe(true);
+    expect(ringStale(null, base)).toBe(true);
+  });
+});
+
+describe("ringDrawnOf", () => {
+  it("is NaN for a missing finer, coarser or cover", () => {
+    const d = ringDrawnOf(rings[0] as RingSamples, null, null, null);
+    expect(d.x).toBe((rings[0] as RingSamples).originX);
+    expect(d.z).toBe((rings[0] as RingSamples).originZ);
+    for (const key of ["fx", "fz", "cx", "cz", "kx", "kz", "kr", "kf"] as const) expect(d[key], key).toBeNaN();
+  });
+
+  it("holds the neighbours' origins and the cover's x, z, reach and fine", () => {
+    const finer = rings[1] as RingSamples;
+    const coarser = rings[3] as RingSamples;
+    const d = ringDrawnOf(rings[2] as RingSamples, finer, coarser, cover);
+    expect([d.fx, d.fz, d.cx, d.cz]).toEqual([finer.originX, finer.originZ, coarser.originX, coarser.originZ]);
+    expect([d.kx, d.kz, d.kr, d.kf]).toEqual([cover.x, cover.z, cover.reach, cover.fine]);
+  });
+});
+
+describe("the interleave", () => {
+  it("is unchanged by its move", () => {
+    expect(fromPlugins).toBe(terrainVertexData);
+  });
+});

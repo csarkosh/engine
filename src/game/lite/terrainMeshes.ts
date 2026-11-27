@@ -85,7 +85,7 @@ import {
 } from "@babylonjs/lite";
 import type { TrailGraph } from "../../sim/trail.js";
 import {
-  BASE_SPACING_BY_TIER, RING_COUNT, commitRingMove, coversRing, createRingSamples, holeCellsFor, prepareRingMove, ringGeometryBuffers, ringGeometrySlices,
+  BASE_SPACING_BY_TIER, RING_COUNT, commitRingMove, coversRing, createRingSamples, prepareRingMove,
   ringSampleSlices, snapOrigin,
   type CoveredGround, type RingArrays, type RingGeometry, type RingMove, type RingSamples,
 } from "../clipmap.js";
@@ -98,6 +98,7 @@ import { buildAtOnce, type FirstBuilds } from "../firstBuilds.js";
 import type { PatchWork } from "../patchWork.js";
 import type { QualityTier } from "../quality.js";
 import { createCrossing, crossingAt, finish, nextCrossing, type Slices, type SyncJobs } from "../syncJobs.js";
+import { ringBuildSlices, ringDrawnOf, ringStale, type RingBuffers, type RingDrawn } from "../ringBuild.js";
 import { facePatchVertices, ringVertices, type TerrainVertices } from "../terrainVertices.js";
 import { activeTerrainVariant } from "../../sim/terrain.js";
 import type { PatchCellAsk } from "../worldWork.js";
@@ -110,7 +111,7 @@ import {
 } from "./patchPool.js";
 import type { ReflectionRegistry } from "./lakePanorama.js";
 import { RAIN_MAP_RINGS, type CoverRegistry } from "./rainMap.js";
-import { TERRAIN_VERTEX_FLOATS, terrainVertexData, terrainVertexDataSlices } from "./terrainPlugins.js";
+import { TERRAIN_VERTEX_FLOATS, terrainVertexData } from "./terrainPlugins.js";
 
 /** What writing one ring's buffers is expected to take (ms): the game's own estimate. The
  * rings' job says so before its last slice (`syncJobs.ts`). */
@@ -203,13 +204,9 @@ function geometryBytes(vertices: TerrainVertices, indices: Uint32Array): number 
   return vertices.positions.byteLength + vertices.normals.byteLength + indices.byteLength;
 }
 
-/** The origins a ring's buffers were made from: its own, the finer ring's,
- * the coarser ring's, and where its covered ground is measured from. */
-type Drawn = { x: number; z: number; fx: number; fz: number; cx: number; cz: number; kx: number; kz: number; kr: number; kf: number };
-
 /** One of a ring's two meshes, and what it is written from: the ring's geometry, its triangles at the index buffer's
  * full size, and its plugin vertex data. Null until the ring is first made into it. */
-type RingTwin = { mesh: Mesh | null; geometry: RingGeometry | null; indices: Uint32Array | null; plugin: Float32Array | null; inScene: boolean };
+type RingTwin = RingBuffers & { mesh: Mesh | null; inScene: boolean };
 
 /** A cell as built: its spacing and stitch, its place among the draws, and its patch's slot in the pool, null for a
  * cell with no steep ground. */
@@ -764,7 +761,7 @@ export function createTerrainMeshes(
    * draws, and its last slice shows it in the drawn one's place. */
   const twins: [RingTwin, RingTwin][] = [];
   const shown: number[] = [];
-  const drawn: (Drawn | undefined)[] = [];
+  const drawn: (RingDrawn | undefined)[] = [];
   /** The one spare set of sample arrays the rings' moves share (`ringSampleSlices`). */
   const spare: RingArrays[] = [];
   /** The covered ground of the rebuild in progress, or of the last. */
@@ -794,13 +791,7 @@ export function createTerrainMeshes(
     const ring = rings[level] as RingSamples;
     const finer = level > 0 ? (rings[level - 1] as RingSamples) : null;
     const coarser = level < RING_COUNT - 1 ? (rings[level + 1] as RingSamples) : null;
-    const d = drawn[level];
-    const k = coverOf(level);
-    return d === undefined || d.x !== ring.originX || d.z !== ring.originZ ||
-      (finer !== null && (d.fx !== finer.originX || d.fz !== finer.originZ)) ||
-      (coarser !== null && (d.cx !== coarser.originX || d.cz !== coarser.originZ)) ||
-      !Object.is(d.kx, k?.x ?? Number.NaN) || !Object.is(d.kz, k?.z ?? Number.NaN) ||
-      !Object.is(d.kr, k?.reach ?? Number.NaN) || !Object.is(d.kf, k?.fine ?? Number.NaN);
+    return ringStale(drawn[level], ringDrawnOf(ring, finer, coarser, coverOf(level)));
   }
 
   /** Ring `level` made again from its samples, in slices, into the arrays its hidden mesh is written from. */
@@ -810,16 +801,7 @@ export function createTerrainMeshes(
     // The border blends to the coarser ring's samples, so every ring has moved before any ring emits.
     const coarser = level < RING_COUNT - 1 ? (rings[level + 1] as RingSamples) : null;
     const to = hidden(level);
-    const geometry = to.geometry ?? ringGeometryBuffers(level > 0);
-    to.geometry = geometry;
-    yield* ringGeometrySlices(ring, finer === null ? null : holeCellsFor(ring, finer), coarser, geometry, coverOf(level));
-    const vertices = ringVertices(geometry);
-    to.plugin = yield* terrainVertexDataSlices(vertices, to.plugin);
-    const whole = to.indices ?? new Uint32Array(geometry.indices.length);
-    to.indices = whole;
-    whole.set(vertices.indices);
-    // The triangles left out: three times the first vertex, which draws nothing.
-    whole.fill(0, vertices.indices.length);
+    yield* ringBuildSlices(ring, finer, coarser, coverOf(level), to);
   }
 
   /** The bytes writing ring `level` to its hidden mesh sends: its geometry, and its plugin vertex data where the
@@ -878,13 +860,7 @@ export function createTerrainMeshes(
       if (old.mesh !== null) setMeshVisible(old.mesh, false);
     }
     shown[level] = was === 0 ? 1 : 0;
-    const k = coverOf(level);
-    drawn[level] = {
-      x: ring.originX, z: ring.originZ,
-      fx: finer?.originX ?? Number.NaN, fz: finer?.originZ ?? Number.NaN,
-      cx: coarser?.originX ?? Number.NaN, cz: coarser?.originZ ?? Number.NaN,
-      kx: k?.x ?? Number.NaN, kz: k?.z ?? Number.NaN, kr: k?.reach ?? Number.NaN, kf: k?.fine ?? Number.NaN,
-    };
+    drawn[level] = ringDrawnOf(ring, finer, coarser, coverOf(level));
   }
 
   /** Hands back a prepared move that is not for ring `level` as it stands, going to (ox, oz), or, with `onTheWay`,
