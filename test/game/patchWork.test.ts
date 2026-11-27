@@ -219,7 +219,7 @@ describe("createPatchWork", () => {
 
   it("record counts", () => {
     const { work, patch, reply } = make();
-    expect(work.record()).toEqual({ asked: 0, arrived: 0, waiting: 0, workerMs: 0, sets: 0, failed: false });
+    expect(work.record()).toEqual({ asked: 0, arrived: 0, waiting: 0, workerMs: 0, replies: 0, sets: 0, failed: false });
     work.ask([cell(1), cell(2), cell(3)], [1, 2, 3]);
     expect(work.record()).toMatchObject({ asked: 3, waiting: 3, sets: 1 });
     patch(1, 0, patchOf(1), 5);
@@ -228,9 +228,22 @@ describe("createPatchWork", () => {
     work.ask([cell(3)], [3]);
     patch(1, 2, patchOf(3), 4); // older set's reply, kept: its key is named
     patch(2, 0, patchOf(3), 3); // duplicate: dropped, but its ms count
-    expect(work.record()).toEqual({ asked: 4, arrived: 3, waiting: 0, workerMs: 19, sets: 2, failed: false });
+    expect(work.record()).toEqual({ asked: 4, arrived: 3, waiting: 0, workerMs: 19, replies: 4, sets: 2, failed: false });
     reply({ kind: "failed", message: "x" });
     expect(work.record().failed).toBe(true);
+  });
+
+  it("counts every patch reply of its own, kept or dropped, so workerMs / replies is the worker's time a cell", () => {
+    const { work, patch, reply } = make();
+    work.ask([cell(1), cell(2)], [1, 2]);
+    patch(1, 0, patchOf(1), 6);
+    // A duplicate, dropped: the worker built it all the same.
+    patch(1, 0, patchOf(1), 2);
+    // Another client's: not this one's.
+    reply({ kind: "patch", set: 1, index: 1, patch: patchOf(2), ms: 50 }, 999999);
+    reply({ kind: "patchesDone", set: 1 });
+    expect(work.record()).toMatchObject({ arrived: 1, replies: 2, workerMs: 8 });
+    expect(work.record().workerMs / work.record().replies).toBe(4);
   });
 
   it("a reply with another id is ignored", () => {

@@ -26,8 +26,12 @@
 import type { FacePatch } from "./facePatches.js";
 import type { PatchCellAsk, WorldPatchesRequest, WorldPrepReply } from "./worldWork.js";
 
-/** Counts since the client was made, for the read-out. */
-export type PatchWorkRecord = { asked: number; arrived: number; waiting: number; workerMs: number; sets: number; failed: boolean };
+/**
+ * Counts since the client was made, for the read-out. `workerMs` is the worker's time over every `patch` reply of this
+ * client's received, kept or dropped, and `replies` how many those are, so `workerMs / replies` is the worker's time a
+ * cell; `arrived` counts only the replies kept.
+ */
+export type PatchWorkRecord = { asked: number; arrived: number; waiting: number; workerMs: number; replies: number; sets: number; failed: boolean };
 
 export type PatchWork = {
   /** Asks for `cells` as the newest set, `cells[i]` under `keys[i]`. What arrived under a key the set does not name is let go. */
@@ -58,6 +62,7 @@ export function createPatchWork(worker: Worker, input: { seed: number; variant: 
   let arrivedCount = 0;
   let sets = 0;
   let workerMs = 0;
+  let replies = 0;
   /** Index-to-key lists of sets a reply may still come for, by set number. */
   const lists = new Map<number, number[]>();
   /** Keys the newest set names, and which of them have not arrived. */
@@ -98,6 +103,7 @@ export function createPatchWork(worker: Worker, input: { seed: number; variant: 
     else if (reply.kind === "patchesDone") lists.delete(reply.set);
     else if (reply.kind === "patch") {
       workerMs += reply.ms;
+      replies += 1;
       for (const older of [...lists.keys()]) if (older < reply.set) lists.delete(older);
       const key = lists.get(reply.set)?.[reply.index];
       if (key === undefined || !wanted.has(key) || arrived.has(key) || taken.has(key)) return;
@@ -146,7 +152,7 @@ export function createPatchWork(worker: Worker, input: { seed: number; variant: 
       post([]);
     },
     record() {
-      return { asked, arrived: arrivedCount, waiting: pending.size, workerMs, sets, failed };
+      return { asked, arrived: arrivedCount, waiting: pending.size, workerMs, replies, sets, failed };
     },
     dispose() {
       fail();
