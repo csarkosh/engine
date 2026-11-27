@@ -49,6 +49,13 @@
  * there is water, as the game's is. A frame with no water in sight is one
  * pass, as on the tiers below.
  *
+ * **The line can be drawn on what shows through such a surface** (`GameLook.finish.lineThrough`, with `keep`): the far
+ * softening then also reads the depth the first half left and the scene's own depth as the whole pass left it, to tell
+ * where a surface drawn after the break covers what the first half drew, and draws the lines of what is behind it by what
+ * the surface hides (its alpha, in the scene's colour). Whether the frame broke is known when the chain's pass is
+ * recorded, the scene's pass having been recorded before it (`RenderTaskBreak.breaks` has moved), so it is written then,
+ * ahead of the far softening, and a frame that did not break reads no stale depth.
+ *
  * **The jitter is the camera's projection hook**: a step along the walk a
  * frame (`TaaFrame.jitter`), which every draw of the scene's pass is seen
  * through and no other pass.
@@ -59,7 +66,7 @@ import {
 } from "@babylonjs/lite";
 import type { AtmosphereUniforms } from "../atmosphereParams.js";
 import { emptyCloudUniforms, type CloudUniforms } from "../cloudParams.js";
-import { ENGINE_LOOK, finishDrawsInGrade, finishDrawsLine, finishGradeUniform, finishLineBandUniform, finishLineFarUniform, finishLineUniform, lookGradeAt, type GameLook } from "../gameLook.js";
+import { ENGINE_LOOK, finishDrawsInGrade, finishDrawsLine, finishDrawsLineThrough, finishGradeUniform, finishLineBandUniform, finishLineFarUniform, finishLineUniform, lookGradeAt, type GameLook } from "../gameLook.js";
 import { gradeRecordUnder, type GradeRecord, type PaintPalette } from "../gradeParams.js";
 import { LENS, lensDropletMap } from "../lensParams.js";
 import {
@@ -97,9 +104,14 @@ const RENDER_ATTACHMENT = 0x10;
 type CloudSun = Pick<AtmosphereUniforms, "atmSunDir" | "atmSunColour">;
 
 /** The uniforms of every pass, each a record by name: the order is the buffer's. */
-function sections(features: PostFeatures, look: GameLook) {
+function sections(features: PostFeatures, look: GameLook, lineThrough: boolean) {
   // The finish's uniforms are in a pass's record only where its code is in the pass: a look with none hands the passes what they always had.
-  const far = { ...emptyFarSoftUniforms(), atmSunDir: [0, 0, 0], atmSunColour: [0, 0, 0], ...emptyCloudUniforms(), ...(finishDrawsLine(look.finish) ? { finishLine: finishLineUniform(look.finish), finishLineBand: finishLineBandUniform(look.finish), finishLineFar: finishLineFarUniform(look.finish) } : {}) };
+  // The line on what shows through marked surfaces adds the depth's two terms and whether the frame broke (`finishLineThrough.wgsl`), after the others.
+  const far = {
+    ...emptyFarSoftUniforms(), atmSunDir: [0, 0, 0], atmSunColour: [0, 0, 0], ...emptyCloudUniforms(),
+    ...(finishDrawsLine(look.finish) ? { finishLine: finishLineUniform(look.finish), finishLineBand: finishLineBandUniform(look.finish), finishLineFar: finishLineFarUniform(look.finish) } : {}),
+    ...(lineThrough ? { depthTerms: [0, 0], lineKept: [0] } : {}),
+  };
   const grade = { ...emptyGradeUniforms(), ...composeUniforms(2, 2), ...(finishDrawsInGrade(look.finish) ? { finishGrade: finishGradeUniform(look.finish) } : {}) };
   return {
     depth: { depthTerms: [0, 0] },
@@ -228,9 +240,11 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
   // The break, on the tier that reads through its water: made only on a frame that shows a mesh marked for it.
   // What the break keeps stands while the frame's size does, as the chain's own targets do.
   const kept = options.keep === true ? enableRenderTaskBreak(sceneTask, engine, { depth: true, keep: true }) : null;
+  // The line is drawn on what shows through the surfaces that hide it (`GameLook.finish.lineThrough`), where the frame is kept to read it from.
+  const lineThrough = kept !== null && finishDrawsLineThrough(look.finish, true);
 
   // The chain's one buffer, a part a pass.
-  const records: Sections = sections(features, look);
+  const records: Sections = sections(features, look, lineThrough);
   const names = Object.keys(records) as SectionName[];
   const layouts = new Map<SectionName, { layout: PassLayout; offset: number }>();
   let bytes = 0;
@@ -246,6 +260,12 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
   const dataBits = new Uint32Array(data.buffer);
   const dataSent = new Uint32Array(dataBits.length);
   const dataMoved = { from: 0, to: 0 };
+  /** Sends the run of the buffer's words that moved since it was last sent, and nothing when none did. */
+  const send = (): void => {
+    if (!movedWords(dataBits, dataSent, dataMoved)) return;
+    device.queue.writeBuffer(buffer, dataMoved.from * 4, data.buffer, dataMoved.from * 4, (dataMoved.to - dataMoved.from) * 4);
+    options.uploads?.count("uniforms", (dataMoved.to - dataMoved.from) * 4);
+  };
   const part = (name: SectionName): { layout: PassLayout; offset: number } => layouts.get(name) as { layout: PassLayout; offset: number };
   const write = (name: SectionName, record: Readonly<Record<string, ArrayLike<number>>>): void => {
     const { layout, offset } = part(name);
@@ -276,7 +296,7 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
   let pipelines: Pipelines | null = null;
   const ready: Promise<void> = Promise.all([
     ask("depth", depthResolveWgsl(MSAA_SAMPLES), POST_DEPTH_RESOLVE_FORMAT),
-    ask("farSoft", farSoftWgsl(finishDrawsLine(look.finish)), POST_FORMAT),
+    ask("farSoft", farSoftWgsl(finishDrawsLine(look.finish), lineThrough), POST_FORMAT),
     ask("taa", TAA_WGSL, POST_FORMAT),
     ask("taaSharpen", TAA_SHARPEN_WGSL, POST_FORMAT),
     ask("paint", PAINT_WGSL, POST_FORMAT),
@@ -302,6 +322,10 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
   let depthSamples: GPUTextureView | null = null;
   /** The scene's depth and resolve the chain's targets and groups were made for (`chainTargetsStand`). */
   let madeFor: { depth: GPUTexture; resolve: GPUTextureView } | null = null;
+  /** The first half's depth the far softening's group reads (`lineThrough`): made again by the break when the frame's size changes, and the group with it. */
+  let madeKept: GPUTextureView | null = null;
+  /** The breaks the frame count had at the last frame drawn, to tell whether this frame broke. */
+  let breaksSeen = 0;
   let groups: {
     depth: GPUBindGroup; farSoft: GPUBindGroup; taa: [GPUBindGroup, GPUBindGroup]; taaSharpen: [GPUBindGroup, GPUBindGroup]; paint: GPUBindGroup;
     halationExtract: GPUBindGroup | null; halationBlurX: GPUBindGroup | null; halationBlurY: GPUBindGroup | null;
@@ -343,6 +367,7 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
     targets = null;
     quarter = null;
     madeFor = null;
+    madeKept = null;
     groups = null;
     gradeGroup = null;
     gradeLensGroup = null;
@@ -359,11 +384,15 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
   function build(): void {
     const own = getRenderTargetAttachments(samples);
     const scene = getRenderTargetAttachments(resolved).colorView;
+    // The depth the break keeps is made again with the scene's own targets; the group that reads it is made again with it.
+    const keptDepth = lineThrough ? kept?.depthTexture?.view ?? null : null;
+    if (lineThrough && madeKept !== keptDepth) release();
     if (chainTargetsStand(madeFor, own.depthTexture, scene)) return;
     release();
     const made = pipelines;
-    if (own.depthTexture === null || scene === null || made === null) return;
+    if (own.depthTexture === null || scene === null || made === null || (lineThrough && keptDepth === null)) return;
     madeFor = { depth: own.depthTexture, resolve: scene };
+    madeKept = keptDepth;
     counts.builds++;
     const { width, height } = own;
     const half = paintTargetSize(width, height);
@@ -383,7 +412,7 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
     }
     groups = {
       depth: group(made.depth, [uniforms("depth"), depthSamples]),
-      farSoft: group(made.farSoft, [uniforms("farSoft"), linear, scene, targets.depth.view, options.cloudMap.view, repeat]),
+      farSoft: group(made.farSoft, [uniforms("farSoft"), linear, scene, targets.depth.view, options.cloudMap.view, repeat, ...(keptDepth === null ? [] : [keptDepth, depthSamples])]),
       // Writing history `flip`, the anti-aliasing reads the other; the sharpen then reads the one just written.
       taa: [0, 1].map((to) => group(made.taa, [uniforms("taa"), linear, (targets as NonNullable<typeof targets>).far.view, (histories[1 - to] as Target).view, (targets as NonNullable<typeof targets>).depth.view])) as [GPUBindGroup, GPUBindGroup],
       taaSharpen: [0, 1].map((from) => group(made.taaSharpen, [uniforms("taaSharpen"), linear, (histories[from] as Target).view])) as [GPUBindGroup, GPUBindGroup],
@@ -431,6 +460,16 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
       const pipes = pipelines;
       if (disposed || encoder === undefined || canvas === null || scene === null || targets === null || groups === null || pipes === null) return 0;
       let drawn = 0;
+      // Whether this frame broke is known now, the scene's pass having been recorded into the frame's encoder before this task: the first half's depth is this frame's, or a stale one that the line does not read.
+      if (kept !== null && lineThrough) {
+        const broke = kept.breaks !== breaksSeen;
+        breaksSeen = kept.breaks;
+        // In the record too, so that the next frame's write of the whole record holds what this one sent.
+        const flag = (records.farSoft as unknown as { lineKept: number[] }).lineKept;
+        flag[0] = broke ? 1 : 0;
+        write("farSoft", { lineKept: flag });
+        send();
+      }
       const history = flip === 0 ? targets.historyA : targets.historyB;
       draw(encoder, targets.depth.view, pipes.depth, groups.depth);
       draw(encoder, targets.far.view, pipes.farSoft, groups.farSoft);
@@ -526,6 +565,11 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
       records.depth.depthTerms[0] = projection[10] as number;
       records.depth.depthTerms[1] = projection[14] as number;
       write("depth", records.depth);
+      if (lineThrough) {
+        const terms = (records.farSoft as unknown as { depthTerms: number[] }).depthTerms;
+        terms[0] = projection[10] as number;
+        terms[1] = projection[14] as number;
+      }
       farSoftUniforms(view, width, height, records.farSoft, look.farSoft);
       write("farSoft", records.farSoft);
       write("farSoft", { atmSunDir: air.atmSunDir, atmSunColour: air.atmSunColour });
@@ -552,10 +596,7 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
         write("halationBlurY" as SectionName, { delta: [0, 1 / h] });
       }
       // The run of the buffer's words that moved, and nothing on a frame none did.
-      if (movedWords(dataBits, dataSent, dataMoved)) {
-        device.queue.writeBuffer(buffer, dataMoved.from * 4, data.buffer, dataMoved.from * 4, (dataMoved.to - dataMoved.from) * 4);
-        options.uploads?.count("uniforms", (dataMoved.to - dataMoved.from) * 4);
-      }
+      send();
     },
     dispose() {
       if (disposed) return;

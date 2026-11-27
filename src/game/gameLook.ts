@@ -50,6 +50,15 @@ export type LookFinish = {
   readonly lineFar?: number;
   readonly lineFarBand?: number;
   readonly lineFarWeight?: number;
+  /**
+   * The line is drawn on what shows through a surface that says how much of the lines behind it it hides (optional; where it is not said the
+   * line is drawn from the depth alone, as it always was). It takes effect only on a tier that keeps the frame (`RenderTaskBreak`: the chain's, or the scene's pass on the tier with no chain, where the game's side asks, `RenderSide.keepsFrame`):
+   * a surface drawn after the break that writes its own depth (a pane of glass, the water) and writes into the frame's alpha how much it hides
+   * of what is behind it, 0 to 1. A line is then drawn behind such a surface by the depth the first half left, and is lighter by that alpha at
+   * the nearest thing it is drawn on: a thing out of focus behind a pane has no outline, one at the glass keeps its own. The tier with no chain
+   * draws it in its own pass (`lite/lineOnly.ts`), by the same rule; where it keeps no frame it draws the line from the depth alone, as it always did.
+   */
+  readonly lineThrough?: boolean;
   /** How far the picture's light is gathered into five soft bands, 0 to 1 (0: none). 0.25. */
   readonly bands: number;
 };
@@ -68,6 +77,11 @@ export const NO_FINISH: LookFinish = { grain: 0, edge: 0, line: 0, lineColour: [
 /** Whether the finish's line is drawn: in the far softening, or on the low tier by its own pass (`lite/lineOnly.ts`). */
 export function finishDrawsLine(finish: LookFinish): boolean {
   return finish.line > 0;
+}
+
+/** Whether the line is drawn on what shows through marked surfaces, in the far softening or the no-chain tier's line pass: the finish asks for it (`LookFinish.lineThrough`), draws a line, and the tier keeps the frame (`keeps`). */
+export function finishDrawsLineThrough(finish: LookFinish, keeps: boolean): boolean {
+  return keeps && finish.lineThrough === true && finishDrawsLine(finish);
 }
 
 /** Whether the grade lays the finish's bands, grain or edge over the picture. */

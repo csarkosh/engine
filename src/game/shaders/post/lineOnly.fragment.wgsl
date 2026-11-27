@@ -1,6 +1,9 @@
 // The finish's line on the tier with no post chain: the scene's colour and its multisampled depth read as they stand,
 // the line multiplied in, written to the canvas. The edge measure is finishLine.wgsl's (the second difference of the
 // inverse of the distance over four neighbours, over the largest of the five), and a change to one is a change to the other.
+// Where this tier keeps the frame (`RenderSide.keepsFrame`) and the look draws the line through (`finish.lineThrough`), the line on what shows through a
+// surface drawn after the break is finishLineThroughCore.wgsl's rule, the chain's far softening's too, with this pass's reads of its own. Otherwise
+// it is not in the text at all.
 // Depth is Lite's: 1 at the near plane, 0 where nothing was drawn. A pixel's distance is made as the chain's depth
 // resolve makes it (depthResolve.fragment.wgsl): depthTerms.y/(d-depthTerms.x) for each of the pixel's samples that holds
 // something, summed and divided by the samples, so a wire thinner than a pixel is in every pixel it crosses and not in
@@ -8,7 +11,7 @@
 @group(0)@binding(0)var<uniform>u:U;
 @group(0)@binding(1)var sceneColour:texture_2d<f32>;
 @group(0)@binding(2)var sceneDepth:texture_depth_multisampled_2d;
-const LINE_SKY:f32=100000.0;
+const LINE_SKY:f32=100000.0;${lineThroughFunctions}
 fn lineInverse(at:vec2<i32>)->f32{
   var sum=0.0;
   for(var i:i32=0;i<${samples};i++){
@@ -42,5 +45,5 @@ fn lineEdge(at:vec2<i32>)->f32{
 @fragment fn postFragment(input:PostVertex)->@location(0)vec4<f32>{
   let at=vec2<i32>(input.position.xy);
   let c=textureLoad(sceneColour,at,0);
-  return vec4<f32>(mix(c.rgb,c.rgb*u.finishLine.xyz,lineEdge(at)*u.finishLine.w),c.a);
+  return vec4<f32>(mix(c.rgb,c.rgb*u.finishLine.xyz,${lineMeasure}*u.finishLine.w),c.a);
 }

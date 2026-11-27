@@ -53,6 +53,9 @@ import gradeHalationSource from "../shaders/post/gradeHalation.wgsl?raw";
 import gradeFragmentSource from "../shaders/post/grade.fragment.wgsl?raw";
 import finishGradeSource from "../shaders/post/finishGrade.wgsl?raw";
 import finishLineSource from "../shaders/post/finishLine.wgsl?raw";
+import finishLineThroughSource from "../shaders/post/finishLineThrough.wgsl?raw";
+import finishLineThroughCoreSource from "../shaders/post/finishLineThroughCore.wgsl?raw";
+import lineOnlyThroughSource from "../shaders/post/lineOnlyThrough.wgsl?raw";
 import lineOnlyFragmentSource from "../shaders/post/lineOnly.fragment.wgsl?raw";
 import lensFragmentSource from "../shaders/post/lens.fragment.wgsl?raw";
 import { fill, wgsl } from "../shaders/shaderText.js";
@@ -125,18 +128,35 @@ export function depthResolveWgsl(samples: number): string {
  * `lineFrom` and `lineTo` (`finishLineBand`) ease it in, and `lineNear`, `lineFar`, `lineFarBand` and `lineFarWeight`
  * (`finishLineFar`) make the line need a deeper step, and draw lighter, the farther off the nearest of the five lies. The line multiplies the colour by `finishLine.xyz`, by
  * `finishLine.w` where it is full.
+ *
+ * `through` (with `line`): the chain keeps the frame and the look draws the line on what shows through the surfaces it
+ * marks (`GameLook.finish.lineThrough`: the rule in `finishLineThroughCore.wgsl`, which the tier with no chain's pass runs too, and this pass's reads in `finishLineThrough.wgsl`): two textures more (bindings 6 and 7: the depth the first
+ * half left and the scene's multisampled depth) and two uniforms more (`depthTerms`, `lineKept`). Without it the text is
+ * what it always was. The tier with no chain has its own (`lineOnlyWgsl`).
  */
-export function farSoftWgsl(line: boolean): string {
-  return fill(wgsl(farSoftFragmentSource), { lineFunctions: line ? `\n${wgsl(finishLineSource)}` : "", lineCall: line ? "\n  col=finishLine(vUV,col);" : "" });
+export function farSoftWgsl(line: boolean, through = false): string {
+  const seen = line && through;
+  return fill(wgsl(farSoftFragmentSource), {
+    lineFunctions: line ? `\n${wgsl(finishLineSource)}${seen ? `\n${wgsl(finishLineThroughCoreSource)}\n${wgsl(finishLineThroughSource)}` : ""}` : "",
+    lineCall: seen ? "\n  col=finishLineThrough(vUV,col);" : line ? "\n  col=finishLine(vUV,col);" : "",
+  });
 }
 
 /**
  * The finish's line on the tier with no post chain (`lineOnly.ts`): the scene's colour and its multisampled depth read
  * as they stand, the line multiplied in. The measure is `finishLine.wgsl`'s, from the depth's own samples: no depth
  * resolve and no far softening stand between.
+ *
+ * `through`: the tier keeps the frame (`RenderSide.keepsFrame`) and the look draws the line on what shows through the surfaces the game marks
+ * (`GameLook.finish.lineThrough`): the same rule as the chain's (`finishLineThroughCore.wgsl`) with this pass's reads (`lineOnlyThrough.wgsl`: the kept
+ * depth as binding 3) and a `lineKept` uniform after the others. Without it the text is what it was.
  */
-export function lineOnlyWgsl(samples: number): string {
-  return fill(wgsl(lineOnlyFragmentSource), { samples });
+export function lineOnlyWgsl(samples: number, through = false): string {
+  return fill(wgsl(lineOnlyFragmentSource), {
+    samples,
+    lineThroughFunctions: through ? `\n${wgsl(finishLineThroughCoreSource)}\n${wgsl(lineOnlyThroughSource)}` : "",
+    lineMeasure: through ? "lineSeen(at)" : "lineEdge(at)",
+  });
 }
 
 /** farSoft.fragment.glsl, with no finish. */

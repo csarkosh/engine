@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ENGINE_LOOK, LINE_FAR, LINE_FROM, LINE_NEAR, LINE_TO, NO_FINISH, finishDrawsInGrade, finishDrawsLine, finishGradeUniform, finishLineBandUniform, finishLineFarUniform, finishLineUniform, gameLook, lookGradeAt, type LookFinish, type LookGrade } from "../../src/game/gameLook.js";
+import { ENGINE_LOOK, LINE_FAR, LINE_FROM, LINE_NEAR, LINE_TO, NO_FINISH, finishDrawsInGrade, finishDrawsLine, finishDrawsLineThrough, finishGradeUniform, finishLineBandUniform, finishLineFarUniform, finishLineUniform, gameLook, lookGradeAt, type LookFinish, type LookGrade } from "../../src/game/gameLook.js";
 import { PAINT_OILS, mixPalette } from "../../src/game/gradeParams.js";
 import { SWARD_FLOOR, SWARD_MAX } from "../../src/game/groundHexParams.js";
 import { sunPositionAt } from "../../src/game/sky.js";
@@ -10,6 +10,9 @@ import { emptyTerrainUniforms, terrainUniforms } from "../../src/game/terrainUni
 import { DEFAULT_WEATHER, WEATHER_PRESETS } from "../../src/game/weather.js";
 import { farSoftWgsl, gradeWgsl, FAR_SOFT_WGSL, POST_VERTEX_WGSL, depthResolveWgsl, lineOnlyWgsl, passLayout } from "../../src/game/lite/postWgsl.js";
 import { lineOnTier, lineOnlyUniforms } from "../../src/game/lite/lineOnly.js";
+import { emptyFarSoftUniforms } from "../../src/game/postFrame.js";
+import { fill, wgsl } from "../../src/game/shaders/shaderText.js";
+import { createHash } from "node:crypto";
 import { sourceText } from "../helpers/source.js";
 
 describe("a game's look over the engine's", () => {
@@ -142,9 +145,62 @@ describe("a game's look over the engine's", () => {
   it("makes no line pass for a look with no line: the renderer asks first", () => {
     const renderer = sourceText("game/lite/renderer.ts");
     expect(renderer).toContain("line = lineOnTier(chained, look.finish) ? createLiteLineOnly(");
-    expect(renderer).toContain(": null;\n      addTask(scene, createRenderTask(");
+    expect(renderer).toContain(": null;\n      const sceneTask = createRenderTask(");
     expect(renderer).toContain("if (line !== null) addTask(scene, line.task);");
     expect(renderer).toContain("if (line !== null) await line.ready;");
+  });
+
+  it("breaks the no-chain tier's scene pass only where the game's side asks, and makes the water's read-through no more the tier's", () => {
+    const renderer = sourceText("game/lite/renderer.ts");
+    // The task is the same one; the break is enabled on it only for a side that keeps the frame, before it is added to the scene.
+    expect(renderer).toContain("if (side.keepsFrame === true) sceneKept = enableRenderTaskBreak(sceneTask, engine, { depth: true, keep: true });");
+    expect(renderer.indexOf("sceneKept = enableRenderTaskBreak(")).toBeLessThan(renderer.indexOf("addTask(scene, sceneTask);"));
+    expect(renderer).toContain("...(side.keepsFrame === true ? { kept: () => sceneKept } : {})");
+    // What is kept is handed to the game's parts as the chain's is, and the water reads it on the high tier alone.
+    expect(renderer).toContain("const keptFrame = chain === null ? sceneKept : chain.kept;");
+    expect(renderer).toContain('const behind = tier === "high" ? frameBehind : undefined;');
+    expect(renderer).toContain("waterThrough = behind !== undefined;");
+  });
+
+  it("builds the line-only pass's text as it was where the look does not draw the line through (the comment lines aside)", () => {
+    const stripped = (text: string): string => text.split("\n").filter((l) => !l.startsWith("//")).join("\n");
+    // The pass's text before the field, without its comment lines, by its hash: the text with the slots filled as an unset look fills them.
+    const was = "ca5d0243161a4ac767246857e753211699a5ad84ceb634707932a04ee80f4fc4";
+    expect(createHash("sha256").update(stripped(lineOnlyWgsl(4))).digest("hex")).toBe(was);
+    expect(createHash("sha256").update(stripped(lineOnlyWgsl(4, false))).digest("hex")).toBe(was);
+    expect(lineOnlyWgsl(4)).not.toContain("keptDepth");
+    expect(lineOnlyWgsl(4)).not.toContain("${");
+    expect(lineOnlyWgsl(4)).toContain("lineEdge(at)*u.finishLine.w)");
+  });
+
+  it("runs the same through rule in the line-only pass, with reads of its own", () => {
+    const text = lineOnlyWgsl(4, true);
+    expect(text).not.toContain("${");
+    // The rule is the chain's text, byte for byte.
+    const core = wgsl(sourceText("game/shaders/post/finishLineThroughCore.wgsl"));
+    expect(text).toContain(core);
+    expect(farSoftWgsl(true, true)).toContain(core);
+    // This pass's reads: the kept depth as binding 3, the whole pass's depth sample 0 from the binding it has, and the alpha of the colour it reads.
+    expect(text).toContain("@group(0)@binding(3)var keptDepth:texture_2d<f32>;");
+    expect(text).toContain("return textureLoad(sceneDepth,at,0)>textureLoad(keptDepth,at,0).r;");
+    expect(text).toContain("return textureLoad(sceneColour,at,0).a;");
+    expect(text).toContain("return 1.0/select(LINE_SKY,u.depthTerms.y/(d-u.depthTerms.x),d>0.0);");
+    expect(text).toContain("mix(c.rgb,c.rgb*u.finishLine.xyz,lineSeen(at)*u.finishLine.w)");
+    expect(text).not.toContain("lineEdge(at)*u.finishLine.w)");
+    // The plain line's code stands as it was (the new code is laid after the sky's constant, and WGSL takes its functions in any order).
+    expect(text).toContain("fn lineEdge(at:vec2<i32>)->f32{");
+    expect(text).toContain("fn lineInverse(at:vec2<i32>)->f32{");
+    // The uniforms: the plain pass's record and layout are as they were, and the through pass's has the break's flag after them.
+    const finish: LookFinish = { ...NO_FINISH, line: 0.6 };
+    expect(Object.keys(lineOnlyUniforms(finish))).toEqual(["finishLine", "finishLineBand", "depthTerms", "finishLineFar"]);
+    expect(Object.keys(lineOnlyUniforms(finish, [0, 0], true))).toEqual(["finishLine", "finishLineBand", "depthTerms", "finishLineFar", "lineKept"]);
+    expect(passLayout(lineOnlyUniforms(finish, [0, 0], true)).struct).toBe("struct U{finishLine:vec4<f32>,finishLineBand:vec2<f32>,depthTerms:vec2<f32>,finishLineFar:vec4<f32>,lineKept:f32}");
+    // The pass asks for the break where the renderer gives it, and writes whether the frame broke when it is recorded.
+    const only = sourceText("game/lite/lineOnly.ts");
+    expect(only).toContain("const through = options.kept !== undefined && finishDrawsLineThrough(finish, true);");
+    expect(only).toContain("lineOnlyWgsl(options.sampleCount, through)");
+    expect(only).toContain("record.lineKept[0] = kept.breaks !== breaksSeen ? 1 : 0;");
+    expect(only).toContain("...(keptDepth === null ? [] : [{ binding: 3, resource: keptDepth }]),");
   });
 
   it("puts the finish's code in a shader only where it is asked for", () => {
@@ -160,6 +216,94 @@ describe("a game's look over the engine's", () => {
       expect(grade.indexOf("u.finishGrade.y")).toBeLessThan(grade.indexOf("shown+=(d1+d2-1.0)*DITHER_LSB;"));
       expect(grade.indexOf("let pixel=vUV/u.texelSize;")).toBeLessThan(grade.indexOf("var finishShown"));
     }
+  });
+
+  it("draws the line on what shows through marked surfaces only where the look asks, the look draws a line and the chain keeps the frame", () => {
+    const line: LookFinish = { ...NO_FINISH, line: 0.6 };
+    expect(NO_FINISH.lineThrough).toBeUndefined();
+    expect(finishDrawsLineThrough(line, true)).toBe(false);
+    expect(finishDrawsLineThrough({ ...line, lineThrough: false }, true)).toBe(false);
+    expect(finishDrawsLineThrough({ ...line, lineThrough: true }, true)).toBe(true);
+    // No frame kept (the tiers below, and a chain that does not break its pass): the line is the depth's alone.
+    expect(finishDrawsLineThrough({ ...line, lineThrough: true }, false)).toBe(false);
+    // And no line, nothing to draw through.
+    expect(finishDrawsLineThrough({ ...NO_FINISH, lineThrough: true }, true)).toBe(false);
+    // The tier with no chain draws its line as it always did, whatever the look says.
+    expect(lineOnTier(false, { ...line, lineThrough: true })).toBe(true);
+    expect(lineOnlyWgsl(4)).not.toContain("keptDepth");
+  });
+
+  it("builds the far softening's text as it was where the look does not draw the line through", () => {
+    const farSoft = wgsl(sourceText("game/shaders/post/farSoft.fragment.wgsl"));
+    const lineText = wgsl(sourceText("game/shaders/post/finishLine.wgsl"));
+    // The text a look with a line had before the field: the line's functions after the constants and its call after the cloud.
+    const before = fill(farSoft, { lineFunctions: `\n${lineText}`, lineCall: "\n  col=finishLine(vUV,col);" });
+    expect(farSoftWgsl(true)).toBe(before);
+    expect(farSoftWgsl(true, false)).toBe(before);
+    expect(farSoftWgsl(false)).toBe(fill(farSoft, { lineFunctions: "", lineCall: "" }));
+    // With no line there is nothing to draw through.
+    expect(farSoftWgsl(false, true)).toBe(FAR_SOFT_WGSL);
+    for (const text of [before, FAR_SOFT_WGSL]) {
+      expect(text).not.toContain("keptDepth");
+      expect(text).not.toContain("wholeDepth");
+      expect(text).not.toContain("lineKept");
+      expect(text).not.toContain("@binding(6)");
+    }
+  });
+
+  it("reads the depth the first half left and the whole pass's where the look draws the line through", () => {
+    const text = farSoftWgsl(true, true);
+    const plain = farSoftWgsl(true, false);
+    expect(text).not.toContain("${");
+    // The plain line's functions stand as they were, and the new code is laid after them; the call is the new one's.
+    expect(text).toContain(wgsl(sourceText("game/shaders/post/finishLine.wgsl")));
+    expect(text).toContain("fn finishLine(uv:vec2<f32>,col:vec3<f32>)->vec3<f32>{");
+    expect(text).toContain("col=finishLineThrough(vUV,col);");
+    expect(text).not.toContain("col=finishLine(vUV,col);");
+    expect(text.indexOf("fn lineSeen(")).toBeGreaterThan(text.indexOf("fn lineEdge("));
+    expect(text.indexOf("fn lineHidden(")).toBeLessThan(text.indexOf("fn lineSeen("));
+    // Two textures more, after the pass's six: the kept depth is read by pixel, as r32float must be, and the whole pass's depth by its sample.
+    expect(text).toContain("@group(0)@binding(6)var keptDepth:texture_2d<f32>;");
+    expect(text).toContain("@group(0)@binding(7)var wholeDepth:texture_depth_multisampled_2d;");
+    expect(text).not.toContain("textureSample(keptDepth");
+    expect(text).not.toContain("textureSampleLevel(keptDepth");
+    expect(text).toContain("textureLoad(wholeDepth,at,0)>textureLoad(keptDepth,at,0).r");
+    // The kept depth's distance is made as the depth's resolve makes it, the sky as the line reads it.
+    expect(text).toContain("return 1.0/select(FAR_SOFT_SKY,u.depthTerms.y/(d-u.depthTerms.x),d>0.0);");
+    expect(depthResolveWgsl(4)).toContain("u.depthTerms.y/(d-u.depthTerms.x)");
+    // The same measure on it, the same band and reach as the line's own.
+    for (const same of ["let reach=lineReach(largest);", "smoothstep(u.finishLineBand.x*reach.x,u.finishLineBand.y*reach.x,abs(second)/largest)*reach.y"]) {
+      expect(text.split(same).length).toBe(3);
+    }
+    // A frame that did not break, a pixel with no tap through, and the border leave the line as lineEdge makes it.
+    expect(text).toContain("if(u.lineKept<0.5){return edge;}");
+    expect(text).toContain("if(!seen){return edge;}");
+    // What a surface hides is its alpha in the scene's colour, at the nearest tap if that tap is through; the line is the larger of the two.
+    expect(text).toContain("if(inverse[i]>inverse[nearest]){nearest=i;}");
+    expect(text).toContain("keep=1.0-clamp(lineTapAlpha(taps[nearest]),0.0,1.0);");
+    expect(text).toContain("fn lineTapAlpha(at:vec2<i32>)->f32{\n  return textureLoad(textureSampler,at,0).a;");
+    expect(text).toContain("return max(edge,hidden*keep);");
+    // Bigger by that code alone.
+    expect(text.length).toBeGreaterThan(plain.length);
+    expect(text.startsWith(plain.slice(0, plain.indexOf("fn farDepth(")))).toBe(true);
+  });
+
+  it("lays the far softening's uniforms out with the depth's two terms and the break flag after the line's own, where the line is drawn through", () => {
+    const base = { ...emptyFarSoftUniforms(), atmSunDir: [0, 0, 0], atmSunColour: [0, 0, 0], finishLine: [0, 0, 0, 0], finishLineBand: [0, 0], finishLineFar: [0, 0, 0, 0] };
+    const plain = passLayout(base);
+    const through = passLayout({ ...base, depthTerms: [0, 0], lineKept: [0] });
+    expect([...through.offsets.keys()].slice(0, plain.offsets.size)).toEqual([...plain.offsets.keys()]);
+    for (const [name, at] of plain.offsets) expect(through.offsets.get(name)).toBe(at);
+    expect([...through.offsets.keys()].slice(-2)).toEqual(["depthTerms", "lineKept"]);
+    expect(through.struct).toContain("depthTerms:vec2<f32>,lineKept:f32}");
+    expect(through.bytes).toBeLessThanOrEqual(512);
+    // The chain asks for it where the look does and the frame is kept, and writes whether this frame broke where the chain's pass is recorded.
+    const chain = sourceText("game/lite/postChain.ts");
+    expect(chain).toContain("const lineThrough = kept !== null && finishDrawsLineThrough(look.finish, true);");
+    expect(chain).toContain("farSoftWgsl(finishDrawsLine(look.finish), lineThrough)");
+    expect(chain).toContain("...(lineThrough ? { depthTerms: [0, 0], lineKept: [0] } : {}),");
+    expect(chain).toContain("const broke = kept.breaks !== breaksSeen;");
+    expect(chain).toContain("...(keptDepth === null ? [] : [keptDepth, depthSamples])");
   });
 
   it("has no grades by default, and then reads none: the caller keeps the one palette and gain", () => {

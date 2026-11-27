@@ -390,12 +390,12 @@
  */
 import {
   NeutralToneMapping, addTask, addToScene, createBankedFreeCamera, createTexture2DFromPixels, createDirectionalLight, createEngine, createHemisphericLight, createPbrMaterial, createSpotLight,
-  createPluginUniformBlock, createRenderTarget, createRenderTask, createSceneContext, disposeEngine, disposeScene, enableAsyncPbrPipelines, enableAsyncShaderMaterialPipelines,
+  createPluginUniformBlock, createRenderTarget, createRenderTask, createSceneContext, disposeEngine, disposeScene, enableAsyncPbrPipelines, enableRenderTaskBreak, enableAsyncShaderMaterialPipelines,
   enableMaterialPlugins, enablePbrLinearOutput, enablePbrMaterialPluginVertexData, getGpuDevice, getProjectionMatrix,
   markLightDirty, markMaterialUboDirty, onEngineDeviceLost, onEngineGpuError, registerScene, renderFrame, setPipelineAsksPerFrame, setSurfaceSize, vec3,
   whenPbrPipelinesIdle, writePluginUniformBlock,
   type BankedFreeCamera, type DirectionalLight, type EngineContext, type HemisphericLight, type MaterialPlugin, type Mesh, type PbrMaterialProps,
-  type PluginUniformBlock, type SceneContext, type SpotLight,
+  type PluginUniformBlock, type RenderTaskBreak, type SceneContext, type SpotLight,
 } from "@babylonjs/lite";
 import { gameIdentity } from "../../identity.js";
 import { MAX_PLAYERS, PLAYER_EYE_OFFSET } from "../../sim/constants.js";
@@ -1076,10 +1076,16 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     // A look that asks for a line draws it on this tier too (`lineOnly.ts`): the scene then resolves into a target of its
     // own and one more task, straight after the pass, writes the canvas with the line in. Without a line, none of that is made.
     let line: LiteLineOnly | null = null;
+    // A game whose own materials read the frame the opaque draws left (`RenderSide.keepsFrame`) has the scene's pass broken here too, and the frame kept, as the
+    // chain does on the tiers that have one; a game that does not ask gets the pass it always had (no break, nothing kept). The water's read through
+    // is the high tier's alone, which has a chain: nothing here makes this tier's water read it.
+    let sceneKept: RenderTaskBreak | null = null;
     if (!chained) {
       const samples = createRenderTarget({ lbl: "scene-color", format: engine.format, dFormat: "depth24plus-stencil8", samples: FRAME_SAMPLES, size: engine, keep: true });
-      line = lineOnTier(chained, look.finish) ? createLiteLineOnly(engine, scene, { samples, sampleCount: FRAME_SAMPLES, camera: () => camera, finish: look.finish }) : null;
-      addTask(scene, createRenderTask({ name: "scene", rt: samples, rst: line === null ? engine.scRT : line.resolved, clr: true }, engine, scene));
+      line = lineOnTier(chained, look.finish) ? createLiteLineOnly(engine, scene, { samples, sampleCount: FRAME_SAMPLES, camera: () => camera, finish: look.finish, ...(side.keepsFrame === true ? { kept: () => sceneKept } : {}) }) : null;
+      const sceneTask = createRenderTask({ name: "scene", rt: samples, rst: line === null ? engine.scRT : line.resolved, clr: true }, engine, scene);
+      if (side.keepsFrame === true) sceneKept = enableRenderTaskBreak(sceneTask, engine, { depth: true, keep: true });
+      addTask(scene, sceneTask);
       if (line !== null) addTask(scene, line.task);
     }
     scene.imageProcessing.toneMappingEnabled = !chained;
@@ -1188,7 +1194,8 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     // materials read it (`RenderSide.keepsFrame`).
     const chain = chained && cloudMap !== null ? createLitePostChain(engine, scene, { features: postFeatures, camera, cloudMap, now: clock, keep: tier === "high" || side.keepsFrame === true, uploads, look }) : null;
     // The frame kept, for whatever reads it: the game's own parts are handed it (`RenderMakeLate.behind`).
-    const frameBehind = chain === null || chain.kept === null ? undefined : createWaterBehind(engine, chain.kept);
+    const keptFrame = chain === null ? sceneKept : chain.kept;
+    const frameBehind = keptFrame === null ? undefined : createWaterBehind(engine, keptFrame);
     // The frame behind the water, on the tier that reads through its water: the sea's, the lip's and every lake's surface read it. A
     // medium tier that keeps the frame for a game's glass draws its water as it always has.
     const behind = tier === "high" ? frameBehind : undefined;

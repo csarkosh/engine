@@ -81,10 +81,10 @@ export type RenderMakeLate = RenderMakeMasked & {
   hardCover: { add(mesh: Mesh, place?: MaterialPlugin): void; remove(mesh: Mesh): void } | undefined;
   /**
    * The frame as the opaque draws left it, its colour and its depth, where the scene's pass is broken to keep it
-   * (`waterBehind.ts`, `postChain.ts`): the high tier, and the medium tier of a game that asks for it
-   * (`RenderSide.keepsFrame`). A material of the game's own on a mesh marked `afterBreak` may read it: a pane of
-   * glass that shows what is behind it out of focus. Undefined where no frame is kept: the low tier, and the medium
-   * tier of a game that does not ask.
+   * (`waterBehind.ts`, `postChain.ts`, and `renderer.ts` for the tier with no chain): the high tier, and the medium and
+   * low tiers of a game that asks for it (`RenderSide.keepsFrame`). A material of the game's own on a mesh marked
+   * `afterBreak` may read it: a pane of glass that shows what is behind it out of focus. Undefined where no frame is
+   * kept: the medium and low tiers of a game that does not ask.
    */
   behind: WaterBehind | undefined;
 };
@@ -135,8 +135,8 @@ export type RenderSide<S, P> = {
   readonly look: RenderLook;
   /**
    * Whether the game's own materials read the frame the opaque draws left (`RenderMakeLate.behind`). The high tier
-   * keeps that frame for its water whatever this says; with it true the medium tier keeps it too, on the frames that
-   * show one of the game's meshes marked `afterBreak`, and its water is drawn as it was. Read once, when the
+   * keeps that frame for its water whatever this says; with it true the medium and low tiers keep it too, on the frames that
+   * show one of the game's meshes marked `afterBreak`, and their water is drawn as it was (only the high tier's water reads it). Read once, when the
    * renderer is made.
    */
   readonly keepsFrame?: boolean;

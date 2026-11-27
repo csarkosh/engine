@@ -20,7 +20,8 @@ describe("the post chain's targets on Babylon Lite", () => {
     // pixel, the surface's size, resolved into the canvas.
     expect(renderer).toContain('createRenderTarget({ lbl: "scene-color", format: engine.format, dFormat: "depth24plus-stencil8", samples: FRAME_SAMPLES, size: engine, keep: true });');
     // Resolved into the canvas, unless the look draws a line (`lineOnly.ts`): then into the target the line's pass reads.
-    expect(renderer).toContain('addTask(scene, createRenderTask({ name: "scene", rt: samples, rst: line === null ? engine.scRT : line.resolved, clr: true }, engine, scene));');
+    expect(renderer).toContain('const sceneTask = createRenderTask({ name: "scene", rt: samples, rst: line === null ? engine.scRT : line.resolved, clr: true }, engine, scene);');
+    expect(renderer).toContain("addTask(scene, sceneTask);");
     expect(renderer).toContain("line = lineOnTier(chained, look.finish) ? createLiteLineOnly(");
     expect(renderer).toContain("createEngine(canvas, { msaaSamples: chained ? 1 : FRAME_SAMPLES,");
   });

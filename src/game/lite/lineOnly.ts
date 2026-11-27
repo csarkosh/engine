@@ -17,10 +17,15 @@
  * while the frame's size does** (`keep`): the group is made again only when they are not the ones it was made for
  * (`chainTargetsStand`), which is a resize; a recording of the frame's passes that is no resize makes nothing.
  *
+ * **Where the tier keeps the frame** (`RenderSide.keepsFrame`: the renderer breaks the scene's pass, `enableRenderTaskBreak`, and hands the break here as
+ * `kept`, a function, since the break is made after this pass) and the look draws the line on what shows through the surfaces the game marks (`GameLook.finish.lineThrough`), the pass also reads the depth the
+ * first half left and runs the same rule as the chain's far softening (`finishLineThroughCore.wgsl`): `lineKept` says whether this frame broke, written when
+ * the pass is recorded, the scene's pass having been recorded before it (`RenderTaskBreak.breaks` has moved). Otherwise nothing of it is in the pass.
+ *
  * The task is added straight after the scene's pass by the renderer, before anything else that draws to the canvas.
  */
-import { createCustomTask, createRenderTarget, getFrameEncoder, getGpuDevice, getProjectionMatrix, getRenderTargetAttachments, type BankedFreeCamera, type EngineContext, type RenderTarget, type RenderTargetAttachments, type SceneContext, type Task } from "@babylonjs/lite";
-import { finishDrawsLine, finishLineBandUniform, finishLineFarUniform, finishLineUniform, type LookFinish } from "../gameLook.js";
+import { createCustomTask, createRenderTarget, getFrameEncoder, getGpuDevice, getProjectionMatrix, getRenderTargetAttachments, type BankedFreeCamera, type EngineContext, type RenderTarget, type RenderTargetAttachments, type RenderTaskBreak, type SceneContext, type Task } from "@babylonjs/lite";
+import { finishDrawsLine, finishDrawsLineThrough, finishLineBandUniform, finishLineFarUniform, finishLineUniform, type LookFinish } from "../gameLook.js";
 import { chainTargetsStand } from "./postChain.js";
 import { askRenderPipeline } from "./pipelineAsk.js";
 import { POST_VERTEX_WGSL, lineOnlyWgsl, passLayout, writePass } from "./postWgsl.js";
@@ -35,8 +40,8 @@ export function lineOnTier(chained: boolean, finish: LookFinish): boolean {
 }
 
 /** The pass's uniforms: the line's colour and strength, where it begins and is full, the projection's two depth terms (`depthTerms`: its elements 10 and 14), and how the line thins with distance. */
-export function lineOnlyUniforms(finish: LookFinish, depthTerms: readonly [number, number] = [0, 0]): { finishLine: number[]; finishLineBand: number[]; depthTerms: number[]; finishLineFar: number[] } {
-  return { finishLine: finishLineUniform(finish), finishLineBand: finishLineBandUniform(finish), depthTerms: [depthTerms[0], depthTerms[1]], finishLineFar: finishLineFarUniform(finish) };
+export function lineOnlyUniforms(finish: LookFinish, depthTerms: readonly [number, number] = [0, 0], through = false): { finishLine: number[]; finishLineBand: number[]; depthTerms: number[]; finishLineFar: number[]; lineKept?: number[] } {
+  return { finishLine: finishLineUniform(finish), finishLineBand: finishLineBandUniform(finish), depthTerms: [depthTerms[0], depthTerms[1]], finishLineFar: finishLineFarUniform(finish), ...(through ? { lineKept: [0] } : {}) };
 }
 
 export type LiteLineOnly = {
@@ -53,18 +58,22 @@ export type LiteLineOnly = {
  * The line's pass for a scene whose own pass draws into `samples`. Asks for its pipeline at once; the caller adds the
  * scene's pass (resolving into `resolved`), then `task`.
  */
-export function createLiteLineOnly(engine: EngineContext, scene: SceneContext, options: { samples: RenderTarget; sampleCount: number; camera: () => BankedFreeCamera; finish: LookFinish }): LiteLineOnly {
+export function createLiteLineOnly(engine: EngineContext, scene: SceneContext, options: { samples: RenderTarget; sampleCount: number; camera: () => BankedFreeCamera; finish: LookFinish; kept?: () => RenderTaskBreak | null }): LiteLineOnly {
   const { samples, camera, finish } = options;
+  // The line on what shows through marked surfaces, where the frame is kept to read it from: the renderer says so by giving the break, which it makes
+  // after this pass, since the scene's pass resolves into the target made here (`kept()` is read when a frame is drawn, not before).
+  const through = options.kept !== undefined && finishDrawsLineThrough(finish, true);
+  const keptNow = (): RenderTaskBreak | null => options.kept?.() ?? null;
   const device = getGpuDevice(engine);
   // The scene's resolve: the canvas's format and the frame's size, kept while it stands, as the scene's samples are.
   const resolved = createRenderTarget({ lbl: "scene-resolved", format: engine.format, samples: 1, size: engine, keep: true });
   /** The pass's record, its depth terms written in place each frame: a frame makes no array. */
-  const record = lineOnlyUniforms(finish);
+  const record = lineOnlyUniforms(finish, [0, 0], through);
   const layout = passLayout(record);
   const data = new Float32Array(layout.bytes / 4);
   const buffer = device.createBuffer({ label: "line only", size: layout.bytes, usage: UNIFORM | COPY_DST });
   let sent = new Float32Array(data.length).fill(Number.NaN);
-  const module = device.createShaderModule({ label: "post line only", code: `${layout.struct}\n${POST_VERTEX_WGSL}\n${lineOnlyWgsl(options.sampleCount)}` });
+  const module = device.createShaderModule({ label: "post line only", code: `${layout.struct}\n${POST_VERTEX_WGSL}\n${lineOnlyWgsl(options.sampleCount, through)}` });
   let pipeline: GPURenderPipeline | null = null;
   const ready: Promise<void> = askRenderPipeline(device, {
     label: "post line only",
@@ -81,17 +90,24 @@ export function createLiteLineOnly(engine: EngineContext, scene: SceneContext, o
   /** The scene's depth and resolve the group was made for. */
   let madeFor: { depth: GPUTexture; resolve: GPUTextureView } | null = null;
   let group: GPUBindGroup | null = null;
+  /** The first half's depth the group reads (`through`): made again by the break when the frame's size changes, and the group with it. */
+  let madeKept: GPUTextureView | null = null;
+  /** The breaks the frame count had at the last frame drawn, to tell whether this frame broke. */
+  let breaksSeen = 0;
   let disposed = false;
 
   /** The group for the scene's targets as they now stand; nothing where they are the ones it was made for. */
   function build(): void {
     const own = getRenderTargetAttachments(samples, samplesNow);
     const colour = getRenderTargetAttachments(resolved, resolvedNow).colorView;
-    if (chainTargetsStand(madeFor, own.depthTexture, colour)) return;
+    const keptDepth = through ? keptNow()?.depthTexture?.view ?? null : null;
+    if (chainTargetsStand(madeFor, own.depthTexture, colour) && madeKept === keptDepth) return;
     madeFor = null;
+    madeKept = null;
     group = null;
-    if (pipeline === null || own.depthTexture === null || colour === null) return;
+    if (pipeline === null || own.depthTexture === null || colour === null || (through && keptDepth === null)) return;
     madeFor = { depth: own.depthTexture, resolve: colour };
+    madeKept = keptDepth;
     // The depth of a depth-and-stencil texture is read through a view of that aspect alone.
     group = device.createBindGroup({
       layout: (pipeline as GPURenderPipeline).getBindGroupLayout(0),
@@ -99,6 +115,7 @@ export function createLiteLineOnly(engine: EngineContext, scene: SceneContext, o
         { binding: 0, resource: { buffer, size: layout.bytes } },
         { binding: 1, resource: colour },
         { binding: 2, resource: own.depthTexture.createView({ aspect: "depth-only" }) },
+        ...(keptDepth === null ? [] : [{ binding: 3, resource: keptDepth }]),
       ],
     });
   }
@@ -119,6 +136,12 @@ export function createLiteLineOnly(engine: EngineContext, scene: SceneContext, o
       const projection = getProjectionMatrix(camera(), width > 0 && height > 0 ? width / height : 1);
       record.depthTerms[0] = projection[10] as number;
       record.depthTerms[1] = projection[14] as number;
+      // Whether this frame broke is known now, the scene's pass having been recorded into the frame's encoder before this task.
+      const kept = keptNow();
+      if (through && kept !== null && record.lineKept !== undefined) {
+        record.lineKept[0] = kept.breaks !== breaksSeen ? 1 : 0;
+        breaksSeen = kept.breaks;
+      }
       writePass(data, 0, layout, record);
       for (let i = 0; i < data.length; i++) {
         if (data[i] !== sent[i]) {
@@ -136,6 +159,7 @@ export function createLiteLineOnly(engine: EngineContext, scene: SceneContext, o
     },
     dispose() {
       madeFor = null;
+      madeKept = null;
       group = null;
     },
   });
@@ -148,6 +172,7 @@ export function createLiteLineOnly(engine: EngineContext, scene: SceneContext, o
       if (disposed) return;
       disposed = true;
       madeFor = null;
+      madeKept = null;
       group = null;
       buffer.destroy();
     },
