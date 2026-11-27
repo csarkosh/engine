@@ -746,6 +746,7 @@ describe("layer boundaries", () => {
       at("game", "sky.worker.ts"),
       at("game", "skyWorker.ts"),
       at("game", "worldPrep.ts"),
+      at("game", "patchWork.ts"),
       at("game", "preparedScene.ts"),
       at("game", "lakeSurfaceGrid.ts"),
       at("game", "waterPlantField.ts"),
