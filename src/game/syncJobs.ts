@@ -215,9 +215,19 @@ function closeSlice(held: [(() => number) | null, number, number]): void {
   [gateClock, gateEnd, gateUnits] = held;
 }
 
+/**
+ * What a slice yields when it has nothing to do until a later frame (a job waiting on a worker's reply): a number,
+ * so a `Slices` yields it as it yields what the next slice expects to take, and one no such figure can equal. The
+ * scheduler resumes a job or idle work that yielded it at most once in a frame, counts it in `SyncJobsLast.waits`
+ * and not as a slice, and takes no share of the frame or first-slice allowance for it; the next frame resumes the
+ * job again, as one whose slice fits. `finish` cannot run such a slice to its end and throws.
+ */
+export const SLICE_WAITS = Number.POSITIVE_INFINITY;
+
 /** A rebuild in slices: each `next()` runs one slice, and the call that
  * returns `done` has applied the result. A slice may yield what it expects
- * the next to take (ms); nothing yielded means a small one. Idle work's
+ * the next to take (ms); nothing yielded means a small one, and `SLICE_WAITS`
+ * means nothing to do until a later frame. Idle work's
  * slices may say so too, and one that would not fit in what is left of a
  * frame's share waits for the next, unless nothing has run yet this frame. */
 export type Slices<T = void> = Generator<number | void, T, void>;
@@ -272,6 +282,7 @@ export function finish<T>(slices: Slices<T>): T {
   for (;;) {
     const step = slices.next();
     if (step.done === true) return step.value;
+    if (step.value === SLICE_WAITS) throw new Error("a slice that waits cannot be run to its end");
   }
 }
 
@@ -352,6 +363,8 @@ export type SyncJobsLast = {
   /** The slices of a patient job run for the floor a frame has no other of (0 or 1). */
   readonly floor: number;
   readonly idle: number;
+  /** The slices of jobs and of idle work that yielded `SLICE_WAITS` this frame: each is no slice of `slices`, `late`, `overdue` or `idle`, and each job or idle work is resumed once. */
+  readonly waits: number;
   /** The milliseconds the slices took, how many of those a late or overdue run took, and the milliseconds by the jobs' names. */
   readonly ms: number;
   readonly lateMs: number;
@@ -449,6 +462,8 @@ export type SyncJobs = {
 type Job = {
   owner: object; slices: Slices; begun: number; begunAt: number; next: number; patient: boolean; name: string; starved: number;
   ran: boolean; waiting: Slices | null; waitingPatient: boolean; waitingName: string;
+  /** Whether its slice yielded `SLICE_WAITS` in this frame, so that no loop of the share resumes it again. */
+  waited: boolean;
   /** The read-out's (`watch`): the clock since which the owner's picture has owed a rebuild, and since which it will
    * owe one once this job is shown (the first request held behind it); NaN for none, and while not watching. */
   owedSince: number; nextOwedSince: number;
@@ -466,7 +481,7 @@ const LEARN_RATE = 0.25;
 export function createSyncJobs(clock: () => number): SyncJobs {
   const queue: Job[] = [];
   /** Idle work, one per owner, and whose turn it is. */
-  const idle: { owner: object; slices: Slices; next: number }[] = [];
+  const idle: { owner: object; slices: Slices; next: number; waited: boolean }[] = [];
   let idleTurn = 0;
   let frame = 0;
   let startedAt = Number.NaN;
@@ -474,7 +489,7 @@ export function createSyncJobs(clock: () => number): SyncJobs {
   let viewAt = Number.NaN;
   let viewRead = false;
   const last = {
-    slices: 0, late: 0, lateJobs: 0, overdue: 0, overdueJobs: 0, completed: 0, held: 0, floor: 0, idle: 0, ms: 0, lateMs: 0,
+    slices: 0, late: 0, lateJobs: 0, overdue: 0, overdueJobs: 0, completed: 0, held: 0, floor: 0, idle: 0, waits: 0, ms: 0, lateMs: 0,
     overdueMs: 0, overdueOwners: {} as Record<string, number>,
     atOnce: {} as Record<string, number>, atOnceMs: {} as Record<string, number>, owedMs: {} as Record<string, number>,
     crossings: [] as CrossingJudgement[], crossingCount: 0,
@@ -550,12 +565,14 @@ export function createSyncJobs(clock: () => number): SyncJobs {
   /** A new job of `owner`'s, begun in this frame at `begunAt` on the clock. */
   function createJob(owner: object, slices: Slices, begunAt: number, patient: boolean, name: string): Job {
     return {
-      owner, slices, begun: frame, begunAt, next: 0, patient, name, starved: 0, ran: false, waiting: null, waitingPatient: false, waitingName: "",
+      owner, slices, begun: frame, begunAt, next: 0, patient, name, starved: 0, ran: false, waiting: null, waitingPatient: false, waitingName: "", waited: false,
       owedSince: Number.NaN, nextOwedSince: Number.NaN,
     };
   }
 
-  /** One slice of `job`; true when it has applied. A slice that throws takes
+  /** One slice of `job`; true when it has applied. A slice that yields `SLICE_WAITS` is counted in `last.waits` and
+   * not as a slice, charges its time to the job's name, and leaves `job.waited` set for the rest of the frame, its
+   * next slice expected to fit. A slice that throws takes
    * its job out of the queue before the error goes on. A job that leaves the
    * queue either way begins the request held behind it, as of the reading
    * this slice began at: the owner is never left with nothing pending. */
@@ -568,7 +585,8 @@ export function createSyncJobs(clock: () => number): SyncJobs {
     try {
       const step = job.slices.next();
       done = step.done;
-      job.next = step.done !== true && typeof step.value === "number" ? step.value : 0;
+      job.waited = step.done !== true && step.value === SLICE_WAITS;
+      job.next = step.done !== true && !job.waited && typeof step.value === "number" ? step.value : 0;
     } finally {
       closeSlice(held);
       if (done !== false) {
@@ -583,6 +601,12 @@ export function createSyncJobs(clock: () => number): SyncJobs {
         job.owedSince = Number.NaN;
         job.nextOwedSince = Number.NaN;
       }
+    }
+    if (job.waited) {
+      // Nothing was done: its time is charged to its name, but it is no slice, and it was no announced apply step.
+      if (charging !== null) charging.announced = false;
+      last.waits++;
+      return false;
     }
     last.slices++;
     if (job.patient) patientRan = true;
@@ -638,7 +662,7 @@ export function createSyncJobs(clock: () => number): SyncJobs {
     idle(owner, slices) {
       const at = idle.findIndex((work) => work.owner === owner);
       if (at >= 0) idle.splice(at, 1)[0]?.slices.return(undefined);
-      if (slices !== null) idle.push({ owner, slices, next: 0 });
+      if (slices !== null) idle.push({ owner, slices, next: 0, waited: false });
     },
     started: () => startedAt,
     viewedAt() {
@@ -702,6 +726,7 @@ export function createSyncJobs(clock: () => number): SyncJobs {
       last.floor = 0;
       patientRan = false;
       last.idle = 0;
+      last.waits = 0;
       last.ms = 0;
       last.lateMs = 0;
       last.overdueMs = 0;
@@ -735,8 +760,11 @@ export function createSyncJobs(clock: () => number): SyncJobs {
         const owed = start - job.owedSince;
         if (owed > (last.owedMs[job.name] ?? 0)) last.owedMs[job.name] = owed;
       }
+      // No job has waited yet this frame, and no idle work.
+      for (let i = 0; i < idle.length; i++) (idle[i] as { waited: boolean }).waited = false;
       for (let i = 0; i < queue.length; i++) {
         const job = queue[i] as Job;
+        job.waited = false;
         if (isLate(job, start)) last.lateJobs++;
         if (isOverdue(job, start)) last.overdueJobs++;
       }
@@ -761,6 +789,10 @@ export function createSyncJobs(clock: () => number): SyncJobs {
             break;
           }
           const done = slice(job, true, true);
+          if (job.waited) {
+            i++;
+            break;
+          }
           last.overdue++;
           if (done) break;
         }
@@ -783,6 +815,10 @@ export function createSyncJobs(clock: () => number): SyncJobs {
             break;
           }
           const done = slice(job, true);
+          if (job.waited) {
+            i++;
+            break;
+          }
           last.late++;
           if (done) break;
         }
@@ -797,7 +833,7 @@ export function createSyncJobs(clock: () => number): SyncJobs {
         const spent = tick() - start;
         if (spent >= SYNC_BUDGET_MS) break;
         const job = queue[i] as Job;
-        if (isOverdue(job, start) || (last.slices > ran && spent + expected(job) > SYNC_BUDGET_MS)) {
+        if (job.waited || isOverdue(job, start) || (last.slices > ran && spent + expected(job) > SYNC_BUDGET_MS)) {
           i++;
           continue;
         }
@@ -808,7 +844,7 @@ export function createSyncJobs(clock: () => number): SyncJobs {
       if (!patientRan) {
         for (let i = 0; i < queue.length; i++) {
           const job = queue[i] as Job;
-          if (!job.patient) continue;
+          if (!job.patient || job.waited) continue;
           const spent = tick() - start;
           const fits = spent < SYNC_PATIENT_MAX_MS && (last.slices === 0 || spent + expected(job) <= SYNC_PATIENT_MAX_MS);
           if (fits || job.starved >= SYNC_PATIENT_WAIT_FRAMES) {
@@ -830,7 +866,13 @@ export function createSyncJobs(clock: () => number): SyncJobs {
         const spent = tick() - start;
         if (spent >= SYNC_BUDGET_MS) break;
         idleTurn %= idle.length;
-        const work = idle[idleTurn] as { owner: object; slices: Slices; next: number };
+        const work = idle[idleTurn] as { owner: object; slices: Slices; next: number; waited: boolean };
+        // Idle work that waited is left for the next frame, and does not end the frame's idle work while another can run.
+        if (work.waited) {
+          if (++skipped >= idle.length) break;
+          idleTurn++;
+          continue;
+        }
         if (last.slices + last.idle > 0 && spent + work.next > SYNC_BUDGET_MS) {
           waiting ??= work.slices;
           if (++skipped >= idle.length) break;
@@ -844,13 +886,15 @@ export function createSyncJobs(clock: () => number): SyncJobs {
         try {
           const step = work.slices.next();
           done = step.done === true;
-          work.next = !done && typeof step.value === "number" ? step.value : 0;
+          work.waited = !done && step.value === SLICE_WAITS;
+          work.next = !done && !work.waited && typeof step.value === "number" ? step.value : 0;
         } finally {
           closeSlice(held);
           if (done) idle.splice(idleTurn, 1);
           else idleTurn++;
         }
-        last.idle++;
+        if (work.waited) last.waits++;
+        else last.idle++;
       }
       // The first that waited is first next frame.
       for (let i = 0; waiting !== null && i < idle.length; i++) {

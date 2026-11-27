@@ -3,7 +3,7 @@ import { runBySlices } from "../../testing/sliceRun.js";
 import {
   SLICE_READ_UNITS, SLICE_TARGET_MS, SYNC_BUDGET_MS, SYNC_PATIENT_MAX_MS, SYNC_PATIENT_WAIT_FRAMES, SYNC_LATE_BUDGET_MS, SYNC_LATE_FRAMES_MAX, SYNC_LATE_MS_MAX, SYNC_OVERDUE_MS,
   SYNC_OVERDUE_BUDGET_MS,
-  createCrossing, createSyncJobs, crossingAt, finish, nextCrossing, sliceDue, sortSlices, syncJobsRecord, turn,
+  SLICE_WAITS, createCrossing, createSyncJobs, crossingAt, finish, nextCrossing, sliceDue, sortSlices, syncJobsRecord, turn,
   type Slices, type SyncJobs,
 } from "../../src/game/syncJobs.js";
 
@@ -1769,5 +1769,121 @@ describe("the read-out of what is built at once and how crossings were judged", 
     expect(off.jobs.last.crossingCount).toBe(0);
     expect(off.jobs.last.crossings).toEqual([]);
     expect(off.jobs.watching).toBe(false);
+  });
+});
+
+describe("a slice that waits", () => {
+  /** A scheduler whose clock advances 0.01 ms on every reading, and `skip` to move it on by hand. */
+  function ticking() {
+    let now = 0;
+    const jobs = createSyncJobs(() => (now += 0.01));
+    return { jobs, skip: (ms: number) => { now += ms; } };
+  }
+
+  /** A slice that yields `SLICE_WAITS` for ever, counting its resumes. */
+  function waiter(count: { n: number }): Slices {
+    return (function* () {
+      for (;;) {
+        count.n++;
+        yield SLICE_WAITS;
+      }
+    })();
+  }
+
+  it("a job that yields SLICE_WAITS is resumed at most once in a frame's share", () => {
+    const { jobs } = ticking();
+    const count = { n: 0 };
+    jobs.begin({}, waiter(count));
+    jobs.run();
+    expect([count.n, jobs.last.waits, jobs.last.slices]).toEqual([1, 1, 0]);
+  });
+
+  it("resumes a late job that yields SLICE_WAITS once a frame, not once per loop", () => {
+    const { jobs, skip } = ticking();
+    const count = { n: 0 };
+    jobs.begin({}, waiter(count));
+    skip(200);
+    jobs.run();
+    expect([count.n, jobs.last.waits, jobs.last.slices, jobs.last.late, jobs.last.lateJobs]).toEqual([1, 1, 0, 0, 1]);
+  });
+
+  it("resumes an overdue job that yields SLICE_WAITS once a frame, not once per loop", () => {
+    const { jobs, skip } = ticking();
+    const count = { n: 0 };
+    jobs.begin({}, waiter(count));
+    skip(2000);
+    jobs.run();
+    expect([count.n, jobs.last.waits, jobs.last.slices, jobs.last.overdue, jobs.last.overdueJobs]).toEqual([1, 1, 0, 0, 1]);
+  });
+
+  it("resumes a patient job that yields SLICE_WAITS once a frame, floor included", () => {
+    const { jobs } = ticking();
+    const count = { n: 0 };
+    jobs.begin({}, waiter(count), true);
+    jobs.run();
+    expect([count.n, jobs.last.waits, jobs.last.slices, jobs.last.floor]).toEqual([1, 1, 0, 0]);
+  });
+
+  it("a waiting slice does not take the frame's first-slice allowance", () => {
+    const { jobs } = ticking();
+    const count = { n: 0 };
+    let slicesB = 0;
+    jobs.begin({}, waiter(count));
+    jobs.begin({}, (function* () {
+      slicesB++;
+      yield 20;
+      slicesB++;
+      yield 20;
+    })());
+    jobs.run();
+    expect([count.n, slicesB, jobs.last.slices, jobs.last.waits]).toEqual([1, 1, 1, 1]);
+  });
+
+  it("a waiting job is tried again next frame", () => {
+    const { jobs } = ticking();
+    let ready = false;
+    let waits = 0;
+    jobs.begin({}, (function* () {
+      for (;;) {
+        if (!ready) {
+          waits++;
+          yield SLICE_WAITS;
+        } else return;
+      }
+    })());
+    jobs.run();
+    expect([waits, jobs.last.waits, jobs.last.slices]).toEqual([1, 1, 0]);
+    ready = true;
+    jobs.run();
+    expect([jobs.last.slices, jobs.last.waits, jobs.last.completed, jobs.pending({})]).toEqual([1, 0, 1, false]);
+  });
+
+  it("idle work that yields SLICE_WAITS is resumed once a frame", () => {
+    const { jobs } = ticking();
+    const count = { n: 0 };
+    jobs.idle({}, waiter(count));
+    jobs.run();
+    expect([count.n, jobs.last.idle, jobs.last.waits]).toEqual([1, 0, 1]);
+    jobs.run();
+    expect([count.n, jobs.last.idle, jobs.last.waits]).toEqual([2, 0, 1]);
+  });
+
+  it("finish throws on a slice that waits", () => {
+    expect(() => finish(waiter({ n: 0 }))).toThrow(/waits/);
+  });
+
+  it("keeps counting owedMs for a job that is waiting", () => {
+    let now = 0;
+    const jobs = createSyncJobs(() => (now += 0.01));
+    jobs.watch(true);
+    now = 10;
+    jobs.begin({}, waiter({ n: 0 }), false, "forest");
+    const owed: number[] = [];
+    for (let f = 0; f < 3; f++) {
+      now += 6;
+      jobs.run();
+      owed.push(Math.round(jobs.last.owedMs.forest as number));
+    }
+    expect(owed).toEqual([6, 12, 18]);
   });
 });
