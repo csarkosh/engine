@@ -25,6 +25,7 @@ import { worldInputs } from "./game/worldInputs.js";
 import { sceneLine, startWorldPrep, worldPrepLine, type WorldPrep, type WorldPrepOutcome } from "./game/worldPrep.js";
 import { createWorldAhead, type WorldMadeFrom } from "./game/worldAhead.js";
 import { createPatchWork, type PatchWork } from "./game/patchWork.js";
+import { createWorldLink, type WorldLink } from "./game/worldLink.js";
 import { loadNet, timedProgress, type TimedProgress } from "./game/loadTimes.js";
 import { ENGINE_WORKER_SCRIPTS } from "./game/engineWorkerScripts.js";
 import { warmWorkerScripts } from "./game/workerScripts.js";
@@ -1130,9 +1131,10 @@ export function startShell<
       sampled = null;
       return scene;
     };
-    /** The session's client of the world's worker for its rock faces (`patchWork.ts`), from the build until `launch`
-     * has returned: a start that throws in between ends it here; after, the session's own dispose does. */
-    let unlaunched: PatchWork | null = null;
+    /** The session's link to the world's worker (`worldLink.ts`), from the build until `launch` has returned: a start
+     * that throws in between ends the worker here; after, the session's client of the link (for its rock faces,
+     * `patchWork.ts`) releases its hold on dispose, which ends it. */
+    let unlaunched: WorldLink | null = null;
     // Each probe step is measured on the session's own renderer, which makes its
     // engine from the step's own canvas and lets both go with the step
     // (`runLiteProbeStep`): the page makes no engine for it. A step whose
@@ -1226,8 +1228,9 @@ export function startShell<
         // else the session's own. None to be had (it failed, ran out of time, or was never started) is no client,
         // and the rock faces are built on this thread.
         const worker = (again !== null && sampled !== null ? again.handOver() : null) ?? prep.handOver();
-        const patchWork = worker === null ? null : createPatchWork(worker, madeFrom);
-        unlaunched = patchWork;
+        const link = worker === null ? null : createWorldLink(worker);
+        const patchWork = link === null ? null : createPatchWork(link, madeFrom);
+        unlaunched = link;
         launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled, patchWork);
         unlaunched = null;
         lap("build");

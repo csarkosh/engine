@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { FacePatch } from "../../src/game/facePatches.js";
 import { createPatchWork } from "../../src/game/patchWork.js";
+import { createWorldLink } from "../../src/game/worldLink.js";
 import type { PatchCellAsk, WorldPatchesRequest, WorldPrepReply } from "../../src/game/worldWork.js";
 
 type FakeWorker = {
@@ -39,14 +40,15 @@ const input = { seed: 7, variant: "v" };
 
 function make() {
   const worker = fakeWorker();
-  const work = createPatchWork(worker as unknown as Worker, input);
+  const link = createWorldLink(worker as unknown as Worker);
+  const work = createPatchWork(link, input);
   const id = (worker.posted[0]?.id as number | undefined) ?? -1;
   const reply = (r: Record<string, unknown>, withId?: number): void => {
     const lastId = worker.posted.length > 0 ? (worker.posted[worker.posted.length - 1] as WorldPatchesRequest).id : id;
     worker.onmessage?.({ data: { id: withId ?? lastId, ...r } as unknown as WorldPrepReply });
   };
   const patch = (set: number, index: number, p: FacePatch | null, ms = 1): void => reply({ kind: "patch", set, index, patch: p, ms });
-  return { worker, work, reply, patch };
+  return { worker, link, work, reply, patch };
 }
 
 describe("createPatchWork", () => {
@@ -191,6 +193,27 @@ describe("createPatchWork", () => {
     }
   });
 
+  it("a failed reply of another client's id leaves this client working", () => {
+    const { worker, work, reply, patch } = make();
+    work.ask([cell(1)], [1]);
+    reply({ kind: "failed", message: "boom" }, 999);
+    expect(work.failed).toBe(false);
+    patch(1, 0, patchOf(1));
+    expect(work.take(1)).toEqual(patchOf(1));
+    work.ask([cell(2)], [2]);
+    expect(worker.posted).toHaveLength(2);
+  });
+
+  it("the link failing fails the client", () => {
+    const { worker, link, work } = make();
+    work.ask([cell(1)], [1]);
+    link.dispose();
+    expect(work.failed).toBe(true);
+    expect(work.record().failed).toBe(true);
+    work.ask([cell(2)], [2]);
+    expect(worker.posted).toHaveLength(1);
+  });
+
   it("clear forgets and posts an empty set; a reply of the set before is never taken", () => {
     const { worker, work, patch } = make();
     work.ask([cell(1), cell(2)], [1, 2]);
@@ -203,7 +226,7 @@ describe("createPatchWork", () => {
     expect(work.failed).toBe(false);
   });
 
-  it("dispose ends the worker once, fails, and takes the listeners off", () => {
+  it("dispose ends the worker once when it holds the only hold, fails, and takes the listeners off", () => {
     const { worker, work } = make();
     work.ask([cell(1)], [1]);
     work.dispose();
@@ -215,6 +238,21 @@ describe("createPatchWork", () => {
     expect(worker.onmessageerror).toBeNull();
     work.ask([cell(2)], [2]);
     expect(worker.posted).toHaveLength(1);
+  });
+
+  it("dispose does not end the worker while another hold is out, and stops hearing its own replies", () => {
+    const { worker, link, work, patch } = make();
+    const other = link.hold();
+    work.ask([cell(1)], [1]);
+    work.dispose();
+    work.dispose();
+    expect(worker.terminated).toBe(0);
+    expect(work.failed).toBe(true);
+    patch(1, 0, patchOf(1));
+    expect(work.take(1)).toBeUndefined();
+    expect(link.failed).toBe(false);
+    other();
+    expect(worker.terminated).toBe(1);
   });
 
   it("record counts", () => {

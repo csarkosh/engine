@@ -747,6 +747,7 @@ describe("layer boundaries", () => {
       at("game", "skyWorker.ts"),
       at("game", "worldPrep.ts"),
       at("game", "patchWork.ts"),
+      at("game", "worldLink.ts"),
       at("game", "preparedScene.ts"),
       at("game", "lakeSurfaceGrid.ts"),
       at("game", "waterPlantField.ts"),
@@ -1096,7 +1097,7 @@ describe("layer boundaries", () => {
     expect(main).toContain("        launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled, patchWork);");
     // The session's worker is the one that made the scene the build takes, else the prep's; a start that fails before
     // the session holds it ends it.
-    expect(main).toContain("        const worker = (again !== null && sampled !== null ? again.handOver() : null) ?? prep.handOver();\n        const patchWork = worker === null ? null : createPatchWork(worker, madeFrom);\n        unlaunched = patchWork;\n");
+    expect(main).toContain("        const worker = (again !== null && sampled !== null ? again.handOver() : null) ?? prep.handOver();\n        const link = worker === null ? null : createWorldLink(worker);\n        const patchWork = link === null ? null : createPatchWork(link, madeFrom);\n        unlaunched = link;\n");
     expect(main).toContain("        endPrep();\n        unlaunched?.dispose();\n        unlaunched = null;\n");
     expect(app).toContain("  engineFor(tier: QualityTier): EngineOnCanvas;");
     const swap = code("game/rendererSwap.ts");

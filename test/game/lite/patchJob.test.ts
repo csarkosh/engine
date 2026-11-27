@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { FacePatch } from "../../../src/game/facePatches.js";
 import { askThenPlace, placeAsked, type PatchPlacing } from "../../../src/game/lite/patchJob.js";
 import { createPatchWork, type PatchWork } from "../../../src/game/patchWork.js";
+import { createWorldLink } from "../../../src/game/worldLink.js";
 import { SLICE_TARGET_MS, SLICE_WAITS, SYNC_OVERDUE_BUDGET_MS, createSyncJobs, type Slices } from "../../../src/game/syncJobs.js";
 import type { PatchCellAsk, WorldPatchesRequest, WorldPrepReply } from "../../../src/game/worldWork.js";
 
@@ -324,7 +325,7 @@ describe("the rock faces' set asked of the worker, then placed", () => {
       },
       terminate() {},
     };
-    const work = createPatchWork(worker as unknown as Worker, { seed: 7, variant: "v" });
+    const work = createPatchWork(createWorldLink(worker as unknown as Worker), { seed: 7, variant: "v" });
     const deliver = (): void => {
       const request = posted[posted.length - 1] as WorldPatchesRequest;
       request.cells.forEach((c, index) => {
