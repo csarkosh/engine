@@ -1109,6 +1109,29 @@ describe("layer boundaries", () => {
   });
 
   /**
+   * What `patchJob.test.ts` cannot see of the rock faces' side of the world's worker, since `terrainMeshes.ts` needs a
+   * GPU: how its jobs are begun, when they ask, and what it ends of the client.
+   */
+  it("asks the world's worker for rock faces only as a job runs, stops it at a build at once, and never ends it", () => {
+    const meshes = stripComments(readFileSync(at("game", "lite", "terrainMeshes.ts"), "utf8"));
+    // The worker's job is not patient, and is begun only while the client has not failed; else the patient one.
+    expect(meshes).toContain('    if (patchWork !== null && !patchWork.failed) (jobs as SyncJobs).begin(patchOwner, rebuildAsked(patchWork, ci, cj), false, "facePatches");\n    else (jobs as SyncJobs).begin(patchOwner, rebuildPatches(ci, cj), true, "facePatches");');
+    // The job and the idle work ask as they first run (`askThenPlace`), and nothing else asks.
+    expect(meshes).toContain("  function* rebuildAsked(work: PatchWork, ci: number, cj: number): Slices {\n    const w = yield* askThenPlace(() => askPatches(work, want(ci, cj)), (set) => placing(work, set));");
+    expect(meshes).toContain("  function* buildAheadAsked(work: PatchWork, ci: number, cj: number): Slices {\n    yield* askThenPlace(() => askPatches(work, want(ci, cj)), (set) => placing(work, set));\n  }");
+    expect([...meshes.matchAll(/\baskPatches\(/g)].length).toBe(3);
+    expect([...meshes.matchAll(/\.ask\(/g)].length).toBe(1);
+    // A set built at once after the first update stops the worker; the first update's asks nothing of it.
+    expect(meshes).toContain("    const first = Number.isNaN(patchCrossing.originX);");
+    expect(meshes).toMatch(/ {4}jobs\?\.cancel\(patchOwner\);\s+if \(!first\) patchWork\?\.clear\(\);\n/);
+    // The meshes' end stops the worker and leaves the client, which is the session's, to the session.
+    const dispose = meshes.slice(meshes.indexOf("    dispose() {\n      if (disposed) return;"));
+    expect(dispose).toContain("      patchWork?.clear();");
+    expect([...meshes.matchAll(/\bpatchWork\?\.clear\(\);/g)].length).toBe(2);
+    expect(meshes).not.toMatch(/\bpatchWork\??\.dispose\(|\bwork\.dispose\(/);
+  });
+
+  /**
    * The hike's renderer is drawn with Babylon Lite, and nothing of it is
    * Babylon.js: not a module under `game/lite/`, and not anything one of
    * them loads. What it is made with beside Lite is the engine's own

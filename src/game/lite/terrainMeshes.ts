@@ -103,7 +103,7 @@ import { activeTerrainVariant } from "../../sim/terrain.js";
 import type { PatchCellAsk } from "../worldWork.js";
 import { DRAW_ORDER, DRAW_PLACES } from "./drawOrder.js";
 import type { FrameUploads } from "./frameUploads.js";
-import { placeAsked, type PatchPlacing } from "./patchJob.js";
+import { askThenPlace, type PatchPlacing } from "./patchJob.js";
 import {
   createMarkedRun, createPatchPool, firstDifference, patchIndexCapacity, patchIndexCount, patchVertexCount, writePatchTriangles,
   type DrawnPatch, type PatchSlot,
@@ -630,8 +630,8 @@ export function createTerrainMeshes(
   }
 
   /** Asks `work` for the cells of `w` to build that are not built yet, each under its key in `ready` as wanted with a
-   * patch (`readyKey`), which names the cell, its band and its stitch: one key, one geometry. */
-  function askPatches(work: PatchWork, w: Wanted): void {
+   * patch (`readyKey`), which names the cell, its band and its stitch: one key, one geometry. Returns `w`. */
+  function askPatches(work: PatchWork, w: Wanted): Wanted {
     const asks: PatchCellAsk[] = [];
     const keys: number[] = [];
     for (const i of w.changed) {
@@ -641,6 +641,7 @@ export function createTerrainMeshes(
       keys.push(readyKey(w, i, false));
     }
     work.ask(asks, keys);
+    return w;
   }
 
   /** What placing the cells of `w` that `work` sends takes (`patchJob.ts`). */
@@ -662,14 +663,11 @@ export function createTerrainMeshes(
 
   /**
    * The patches' rebuild for cell (ci, cj) with the world's worker: the set worked out and its cells not built yet
-   * asked of `work` as the job's first slice begins, never at the crossing, since a request held behind a job that
-   * has started would otherwise take the cells that job waits on; then each cell placed as it arrives, nearest first,
-   * and the set drawn in the last slice, as `rebuildPatches` draws it.
+   * asked of `work` as the job's first slice begins, never at the crossing (`askThenPlace`); then each cell placed
+   * as it arrives, nearest first, and the set drawn in the last slice, as `rebuildPatches` draws it.
    */
   function* rebuildAsked(work: PatchWork, ci: number, cj: number): Slices {
-    const w = want(ci, cj);
-    askPatches(work, w);
-    yield* placeAsked(placing(work, w));
+    const w = yield* askThenPlace(() => askPatches(work, want(ci, cj)), (set) => placing(work, set));
     if (disposed) return;
     yield FACE_PATCH_SHOW_MS;
     if (uploads !== undefined) yield* uploads.hold(showBytes(w, false));
@@ -680,9 +678,7 @@ export function createTerrainMeshes(
   /** Idle work with the world's worker: the cells the set for cell (ci, cj) will want, asked of `work` as its first
    * slice begins and placed as they arrive, nearest first. */
   function* buildAheadAsked(work: PatchWork, ci: number, cj: number): Slices {
-    const w = want(ci, cj);
-    askPatches(work, w);
-    yield* placeAsked(placing(work, w));
+    yield* askThenPlace(() => askPatches(work, want(ci, cj)), (set) => placing(work, set));
   }
 
   /** The idle work stopped: the next `aimPatches` sets it again. */

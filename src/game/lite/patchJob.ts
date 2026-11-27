@@ -1,7 +1,7 @@
 /**
  * The rock faces' cells placed as the world's worker sends them (`patchWork.ts`), apart from the meshes they are
- * placed in, which need a GPU: `terrainMeshes.ts` asks the worker for a set's cells and hands this what it takes to
- * place them, as functions.
+ * placed in, which need a GPU: `terrainMeshes.ts` hands this how to ask the worker for a set's cells and what it
+ * takes to place them, as functions, and the ask is made as the job first runs (`askThenPlace`).
  *
  * A worker's replies reach the page only between tasks of its event loop, never inside a slice, so one pass over the
  * set's cells, nearest first, finds everything that can be placed in a frame. A slice places what has arrived, each
@@ -74,4 +74,17 @@ export function* placeAsked(p: PatchPlacing): Slices {
     yield* p.makeHere(i);
     yield;
   }
+}
+
+/**
+ * A set asked of the worker, then placed: `ask` works out the set, asks the worker for its cells and returns it, and
+ * is called as the generator is first resumed, never as it is made; then the set's cells are placed (`placeAsked`,
+ * with what `placing` gives for the set), and the set is returned. So a job begun with it asks nothing until the
+ * scheduler runs its first slice: a request held behind a job that has started asks nothing until that job is shown,
+ * and would otherwise take from the worker the cells that job waits on, and a job replaced before it ran asks nothing.
+ */
+export function* askThenPlace<S>(ask: () => S, placing: (set: S) => PatchPlacing): Slices<S> {
+  const set = ask();
+  yield* placeAsked(placing(set));
+  return set;
 }

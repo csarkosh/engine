@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { FacePatch } from "../../../src/game/facePatches.js";
-import { placeAsked, type PatchPlacing } from "../../../src/game/lite/patchJob.js";
+import { askThenPlace, placeAsked, type PatchPlacing } from "../../../src/game/lite/patchJob.js";
+import { createPatchWork, type PatchWork } from "../../../src/game/patchWork.js";
 import { SLICE_TARGET_MS, SLICE_WAITS, SYNC_OVERDUE_BUDGET_MS, createSyncJobs, type Slices } from "../../../src/game/syncJobs.js";
+import type { PatchCellAsk, WorldPatchesRequest, WorldPrepReply } from "../../../src/game/worldWork.js";
 
 /** A patch of its own for cell `i`: the tests only follow which one goes where. */
 const patchOf = (i: number): FacePatch => ({ cell: i }) as unknown as FacePatch;
@@ -301,5 +303,107 @@ describe("the rock faces' cells placed as the worker sends them", () => {
     frame();
     expect([jobs.last.slices, jobs.last.waits]).toEqual([0, 1]);
     expect(f.entered).toEqual([]);
+  });
+});
+
+describe("the rock faces' set asked of the worker, then placed", () => {
+  /**
+   * The real client on a worker that only records: `log` has a line for each set posted (its cells' columns) and for
+   * each cell placed; `deliver` sends the newest set's cells back as patches.
+   */
+  function rig() {
+    const log: string[] = [];
+    const posted: WorldPatchesRequest[] = [];
+    const worker = {
+      onmessage: null as ((event: { data: WorldPrepReply }) => void) | null,
+      onerror: null,
+      onmessageerror: null,
+      postMessage(message: WorldPatchesRequest) {
+        posted.push(message);
+        log.push(`post ${message.cells.map((c) => c.ci).join(",")}`);
+      },
+      terminate() {},
+    };
+    const work = createPatchWork(worker as unknown as Worker, { seed: 7, variant: "v" });
+    const deliver = (): void => {
+      const request = posted[posted.length - 1] as WorldPatchesRequest;
+      request.cells.forEach((c, index) => {
+        worker.onmessage?.({ data: { id: request.id, kind: "patch", set: request.set, index, patch: patchOf(c.ci), ms: 1 } });
+      });
+    };
+    const ready = new Set<number>();
+    /** A set of the cells in columns `cis`, asked of `work` under their columns as keys, and placed by the rules of `placeAsked`. */
+    const set = (cis: number[]): Slices<number[]> => askThenPlace(
+      () => {
+        const cells: PatchCellAsk[] = cis.map((ci) => ({ ci, cj: 0, spacing: 1, stitch: {} as PatchCellAsk["stitch"] }));
+        work.ask(cells, cis);
+        return cis;
+      },
+      (asked): PatchPlacing => ({
+        changed: asked.map((_, i) => i),
+        isReady: (i) => ready.has(asked[i] as number),
+        key: (i) => asked[i] as number,
+        arrived: (key) => work.take(key),
+        failed: () => work.failed,
+        *hold() {},
+        enter(i) {
+          ready.add(asked[i] as number);
+          log.push(`enter ${asked[i] as number}`);
+        },
+        *makeHere() {},
+        disposed: () => false,
+      }),
+    );
+    /** `set(cis)` as a job: made here, so whatever it does as it is made is done as the job is begun. */
+    const job = (cis: number[]): Slices => {
+      const inner = set(cis);
+      return (function* () {
+        yield* inner;
+      })();
+    };
+    return { log, posted, work: work as PatchWork, deliver, set, job };
+  }
+
+  it("asks on the job's first slice, so a request held behind a started job asks only once that job is placed", () => {
+    const { jobs, frame } = scheduler();
+    const r = rig();
+    const owner = {};
+    jobs.begin(owner, r.job([1, 2]), false, "facePatches");
+    // Begun: nothing is asked until the job runs.
+    expect(r.log).toEqual([]);
+    frame();
+    expect(r.log).toEqual(["post 1,2"]);
+    expect(jobs.last.waits).toBe(1);
+    // A new request while A waits: held behind it, and it asks nothing.
+    jobs.begin(owner, r.job([3, 4]), false, "facePatches");
+    for (let f = 0; f < 3; f++) frame();
+    expect(jobs.last.waits).toBe(1);
+    expect(r.posted.map((p) => p.cells.map((c) => c.ci))).toEqual([[1, 2]]);
+    // A's cells come: A places them and ends, and only then does B begin and ask for its set.
+    r.deliver();
+    frame();
+    expect(r.log).toEqual(["post 1,2", "enter 1", "enter 2", "post 3,4"]);
+    r.deliver();
+    frame();
+    expect(r.log).toEqual(["post 1,2", "enter 1", "enter 2", "post 3,4", "enter 3", "enter 4"]);
+    expect(jobs.pending(owner)).toBe(false);
+  });
+
+  it("a job begun and replaced before it ever ran asks nothing", () => {
+    const { jobs, frame } = scheduler();
+    const r = rig();
+    const owner = {};
+    jobs.begin(owner, r.job([1, 2]), false, "facePatches");
+    jobs.begin(owner, r.job([3]), false, "facePatches");
+    frame();
+    expect(r.log).toEqual(["post 3"]);
+  });
+
+  it("returns the set it asked, once every cell is placed", () => {
+    const r = rig();
+    const job = r.set([5]);
+    expect(job.next()).toEqual({ done: false, value: SLICE_WAITS });
+    r.deliver();
+    expect(job.next()).toEqual({ done: true, value: [5] });
   });
 });
