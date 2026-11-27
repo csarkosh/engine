@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** The queries over a range, each a card on the page (`kpis` is the index card too). */
-export const QUERY_NAMES = ["funnel", "lobbies", "progress", "errors", "players", "paths", "kpis", "places"] as const;
+export const QUERY_NAMES = ["funnel", "lobbies", "progress", "errors", "players", "paths", "kpis", "places", "machines"] as const;
 /** The query over csarko.sh's analytics, not this game's telemetry, so without the shared exclusion (`places.sql`). */
 export const OTHER_SOURCE_QUERIES: readonly QueryName[] = ["places"];
 export type QueryName = (typeof QUERY_NAMES)[number];
