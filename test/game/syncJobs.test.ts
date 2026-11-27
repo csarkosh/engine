@@ -619,7 +619,7 @@ describe("crossingAt", () => {
   it("builds at once after a teleport, at speed, and without a scheduler", () => {
     const c = createCrossing();
     at(c, 10.5, 10.5);
-    // A jump of more than one cell.
+    // A teleport: 500 m in one frame.
     expect(at(c, 510.5, 10.5)).toBe("now");
     // The free camera's boost, 144 m/s: 2.4 m a frame, here a step of one
     // cell but more than half a cell since the last frame.
@@ -651,12 +651,49 @@ describe("crossingAt", () => {
     // The free camera's boost in a frame shorter than one of 60 a second is still a burst: 1.8 m in 12.5 ms.
     at(c, 15.5, 10.5);
     expect(at(c, 17.3, 10.5, true, 12.5)).toBe("now");
-    // A jump of more than a cell is a jump, however long the frame.
-    expect(at(c, 30.5, 10.5, true, 5000)).toBe("now");
+    // Several lines crossed over one slow frame is travel (13.2 m in 5 s), and a job like any other step.
+    expect(at(c, 30.5, 10.5, true, 5000)).toBe("later");
+    // A step no travel makes is a teleport, however long the frame.
+    expect(at(c, 60.5, 10.5, true, 5000)).toBe("now");
     // A frame shorter than one of 60 a second is not scaled up: the uncapped page's 2 ms frames.
     const fast = createCrossing();
     at(fast, 11.95, 10.5);
     expect(at(fast, 12.0, 10.5, true, 2)).toBe("later");
+  });
+
+  it("makes the step a slow frame's simulation makes up a job, at a drive, whatever the shell's cell", () => {
+    // 12 m/s. A frame of a second, of which the simulation makes up a quarter: 3 m, reckoned against that second.
+    for (const cell of [1, 2, 3, 16]) {
+      const c = createCrossing();
+      const on = (x: number, frameMs = 1000 / 60) => crossingAt(c, x, 0, Math.floor(x / cell) * cell, 0, cell, true, (clock += frameMs));
+      on(14.6);
+      on(14.8);
+      expect(on(17.8, 1000), `cell ${cell}`).toBe("later");
+      // And the frame after it, a sixtieth of a second and 0.2 m on, is no burst either.
+      expect(["none", "later"], `cell ${cell}`).toContain(on(18.0));
+    }
+    // 30 m/s, a quarter of a second made up in a frame of a quarter of a second: 7.5 m, under a teleport.
+    const fast = createCrossing();
+    const on16 = (x: number, frameMs = 1000 / 60) => crossingAt(fast, x, 0, Math.floor(x / 16) * 16, 0, 16, true, (clock += frameMs));
+    on16(10);
+    expect(on16(17.5, 250)).toBe("later");
+  });
+
+  it("reads the clock for a frame's views once, and again after the frame's share", () => {
+    let t = 100;
+    let reads = 0;
+    const jobs = createSyncJobs(() => {
+      reads++;
+      return t;
+    });
+    expect(jobs.viewedAt()).toBe(100);
+    t = 150;
+    expect(jobs.viewedAt()).toBe(100);
+    expect(reads).toBe(1);
+    jobs.run();
+    t = 200;
+    expect(jobs.viewedAt()).toBe(200);
+    expect(jobs.viewedAt()).toBe(200);
   });
 
   it("takes a first view's step as it is, having no frame before it", () => {
@@ -1092,7 +1129,7 @@ describe("the read-out of what is built at once and how crossings were judged", 
     expect(jobs.last.crossingCount).toBe(1);
     expect(jobs.last.crossings[0]).toMatchObject({ owner: "ring", kind: "now", rule: "first" });
     expect(Number.isNaN(jobs.last.crossings[0]?.step)).toBe(true);
-    // A jump of more than a cell.
+    // A teleport.
     view(10.6, 2);
     expect(view(110.5, 2)).toBe("now");
     // A step over half a cell in a sixtieth: the fast-step rule, judged at its own step.

@@ -186,7 +186,7 @@ describe("a shell's rebuilds on the renderer's scheduler", () => {
     expect(shown).toEqual([0.98, 1.02]);
   });
 
-  it("builds a jump of more than a cell and a fast view at once, and drops the rebuild they overtake", () => {
+  it("builds a view that moves faster than any travel at once, and drops the rebuild it overtakes", () => {
     const { jobs, frame } = scheduler();
     const s = shell({ jobs, slices: 40, ms: 0 });
     s.rebuilds.update(0.5, 0);
@@ -195,7 +195,7 @@ describe("a shell's rebuilds on the renderer's scheduler", () => {
     frame();
     expect(s.rebuilds.update(3.05, 0)).toBe("none");
     frame();
-    // More than a cell on from the origin last built for.
+    // 6.45 m in one frame of a sixtieth of a second: no travel is that fast.
     expect(s.rebuilds.update(9.5, 0)).toBe("now");
     expect(s.shown.at(-1)).toEqual({ x: 9.5, z: 0 });
     expect(s.rebuilds.pending()).toBe(false);
@@ -203,6 +203,27 @@ describe("a shell's rebuilds on the renderer's scheduler", () => {
     // Past a metre in one frame of a sixtieth of a second: the free camera's boost.
     expect(s.rebuilds.update(12.0, 0)).toBe("now");
     expect(s.shown.at(-1)).toEqual({ x: 12.0, z: 0 });
+  });
+
+  it("reckons the step a slow frame makes up against that slow frame, so a drive's crossing after it is a job", () => {
+    const { jobs, frame, time } = scheduler();
+    const s = shell({ jobs, slices: 4, ms: 0 });
+    s.rebuilds.update(0.5, 0);
+    frame();
+    // 12 m/s at 60 frames a second: 0.2 m a frame.
+    s.rebuilds.update(0.7, 0);
+    frame();
+    s.rebuilds.update(0.9, 0);
+    frame();
+    // This frame's draw takes 400 ms, after its share: the scheduler's clock as that share began does not hold it.
+    time.now += 400;
+    // The simulation makes up a quarter of a second: 3 m, across a line of the 3 m grid.
+    expect(s.rebuilds.update(3.9, 0)).toBe("later");
+    frame();
+    // And across two lines after the next slow frame: still travel, still a job.
+    time.now += 400;
+    expect(s.rebuilds.update(10.9, 0)).toBe("later");
+    expect(s.rebuilds.pending()).toBe(true);
   });
 
   it("aims its idle work once while the view holds its cell, and again when the view turns or a rebuild has shown", () => {
@@ -290,7 +311,7 @@ describe("a shell's at-once builds and verdicts in the scheduler's read-out", ()
     frame();
     expect(jobs.last.atOnce["stand-in"] ?? 0).toBe(0);
     expect(jobs.last.crossings[0]).toMatchObject({ owner: "stand-in", kind: "later", rule: "none" });
-    // A jump of more than a cell builds at once again.
+    // A teleport builds at once again.
     s.rebuilds.update(40, 1);
     frame();
     expect(jobs.last.atOnce).toMatchObject({ "stand-in": 1 });

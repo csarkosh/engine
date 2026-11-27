@@ -6,8 +6,8 @@
  * on the shell's own rebuild grid.
  *
  * A crossing at a walk begins a job, or takes the place of the shell's job
- * still pending, which keeps its deadline. The first build, a jump of more
- * than a cell and a view moving fast build at once, or are stepped by the
+ * still pending, which keeps its deadline. The first build, a teleport
+ * and a view moving fast build at once, or are stepped by the
  * loader of first builds while the intro's film covers the hike
  * (`firstBuilds.ts`). While the view holds its cell and nothing is pending,
  * the shell's idle work is aimed once at the next crossing on the view's
@@ -72,7 +72,7 @@ export function createRebuilds(options: RebuildOptions): Rebuilds {
     update(x, z) {
       if (turn(heading, x - crossing.lastX, z - crossing.lastZ)) aimed = false;
       options.origin(x, z, origin);
-      const kind = crossingAt(crossing, x, z, origin[0] as number, origin[1] as number, cell, jobs !== undefined, jobs?.started(), jobs, name);
+      const kind = crossingAt(crossing, x, z, origin[0] as number, origin[1] as number, cell, jobs !== undefined, jobs?.viewedAt(), jobs, name);
       if (kind === "none") {
         // While the loader steps this shell's build, nothing is prepared ahead of it.
         if (firstBuilds?.queued(owner) !== true) aim(x, z);

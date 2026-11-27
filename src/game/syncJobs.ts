@@ -40,7 +40,7 @@
  * `SYNC_OVERDUE_MS` ago is run to its end in one frame, as a first build is.
  *
  * Which crossings wait and which do not is each shell's `crossingAt`: the
- * first build, a jump of more than one cell (a teleport) and a view moving
+ * first build, a teleport (a step no travel makes in one frame) and a view moving
  * more than half a cell or a metre a frame (the free camera's boost) all
  * build at once, or are stepped by the loader of first builds
  * (`firstBuilds.ts`), so at those the picture is exactly what it was. A
@@ -287,9 +287,9 @@ export async function stepSlices<T>(
   }
 }
 
-/** The rule that decided a crossing (`crossingAt`): "first" the shell's first build, "jump" a move of more than one cell
- * since the last origin, "fast" a step over `min(cell / 2, SYNC_FAST_STEP_M)` a sixtieth of a second, "unscheduled" a
- * shell given no scheduler, and "none" no rule: the crossing waits as a job. */
+/** The rule that decided a crossing (`crossingAt`): "first" the shell's first build, "jump" a step of more than
+ * `SYNC_TELEPORT_M` in one frame (a teleport), "fast" a step over `min(cell / 2, SYNC_FAST_STEP_M)` a sixtieth of a
+ * second, "unscheduled" a shell given no scheduler, and "none" no rule: the crossing waits as a job. */
 export type CrossingRule = "first" | "jump" | "fast" | "unscheduled" | "none";
 
 /** One crossing as `crossingAt` judged it, for the read-out (`SyncJobs.watch`). */
@@ -366,6 +366,12 @@ export type SyncJobs = {
   /** The clock (ms) as the last `run` began, NaN before the first: a frame's
    * time for `crossingAt`, read without another reading of the clock. */
   started(): number;
+  /**
+   * The clock (ms) as this frame's first view was judged: read once, by the first shell to ask since the last `run`,
+   * and the same for every shell after it that frame. From one frame's to the next it is the time the view's step
+   * between them took, which is what `crossingAt` reckons the step against.
+   */
+  viewedAt(): number;
   /** Frames `run` has closed. */
   readonly frame: number;
   /** The last `run`'s record, for the tests and for the measurement mode's
@@ -407,6 +413,9 @@ export function createSyncJobs(clock: () => number): SyncJobs {
   let idleTurn = 0;
   let frame = 0;
   let startedAt = Number.NaN;
+  // The clock as this frame's first view was judged, and whether it has been read since the last share.
+  let viewAt = Number.NaN;
+  let viewRead = false;
   const last = {
     slices: 0, late: 0, lateJobs: 0, overdue: 0, overdueJobs: 0, completed: 0, floor: 0, idle: 0, ms: 0, lateMs: 0,
     overdueMs: 0, overdueOwners: {} as Record<string, number>,
@@ -530,6 +539,13 @@ export function createSyncJobs(clock: () => number): SyncJobs {
       if (slices !== null) idle.push({ owner, slices, next: 0 });
     },
     started: () => startedAt,
+    viewedAt() {
+      if (!viewRead) {
+        viewAt = clock();
+        viewRead = true;
+      }
+      return viewAt;
+    },
     watch(on) {
       watching = on;
     },
@@ -563,6 +579,7 @@ export function createSyncJobs(clock: () => number): SyncJobs {
       for (const name in last.longest) last.longest[name] = 0;
     },
     run() {
+      viewRead = false;
       last.slices = 0;
       last.late = 0;
       last.lateJobs = 0;
@@ -736,9 +753,14 @@ export function syncJobsRecord(last: SyncJobsLast): SyncJobsLast {
 }
 
 /** A view that moved more than this between two frames (m) — 60 m/s at 60
- * frames a second, past any speed on foot — builds at once whatever its
+ * frames a second, past any speed on foot or on wheels — builds at once whatever its
  * shell's cell: the free camera's boost moves 2.4 m a frame. */
 export const SYNC_FAST_STEP_M = 1;
+
+/** A view that moved more than this in one frame (m) was moved, not carried: a teleport, built at once however long
+ * the frame was. It is the most a view under the speed of `SYNC_FAST_STEP_M` moves in the longest stretch of
+ * simulation one frame steps (`game/loop.ts`: 15 ticks of a sixtieth of a second), so nothing that travels reaches it. */
+export const SYNC_TELEPORT_M = 15;
 
 /**
  * Where a view at (x, z), moving (hx, hz) a frame, next crosses a line of a
@@ -797,23 +819,35 @@ export const SYNC_FRAME_S = 1 / 60;
  * Classifies this frame's view (x, z), whose origin on the shell's rebuild
  * grid of `cell` metres is (ox, oz), and records both. "none" while the origin
  * holds. Otherwise "now" — build at once, as before there were jobs — for the
- * first build, for a jump of more than one cell on either axis since the last
- * origin (a teleport, a burst of speed), for a view that moved more than half a
- * cell since last frame (so the next crossing is at most a frame or two away)
- * or more than `SYNC_FAST_STEP_M`, and for a shell given no scheduler
- * (`deferrable` false). "later" for everything else: a one-cell step at a walk
- * or a run, which becomes a job.
+ * first build, for a step of more than `SYNC_TELEPORT_M` in one frame (a
+ * teleport), for a view that moved more than half a cell a frame (so the next
+ * crossing is at most a frame or two away) or more than `SYNC_FAST_STEP_M`,
+ * and for a shell given no scheduler (`deferrable` false). "later" for
+ * everything else, which becomes a job: a step at a walk, a run or a drive,
+ * across one line or, after a slow frame, across several.
  *
  * The step since last frame is read as it would be at 60 frames a second:
- * over a frame longer than `SYNC_FRAME_S` (by `now`, the scheduler's clock as
- * its last share began, `SyncJobs.started`; no clock, no scaling)
- * it is scaled to one, so it is the view's speed that says a burst, not a slow
- * frame. A sprint moves 0.12 m a frame at 60; after one frame of 150 ms (a
- * collection, a buffer's upload) it had moved 1.05 m, was taken for the free
- * camera's boost, and every shell crossing a line that frame rebuilt at once:
- * the face patches' set in one frame of 1.1 to 1.3 s on the rig that measured
- * it (2026-11-09), three times in six runs, each after a frame of 0.18 to
- * 0.26 s. A jump of more than a cell is a jump at any frame rate.
+ * over a frame longer than `SYNC_FRAME_S` it is scaled to one, so it is the
+ * view's speed that says a burst, not a slow frame. A sprint moves 0.12 m a
+ * frame at 60; after one frame of 150 ms (a collection, a buffer's upload) it
+ * had moved 1.05 m, was taken for the free camera's boost, and every shell
+ * crossing a line that frame rebuilt at once: the face patches' set in one
+ * frame of 1.1 to 1.3 s on the rig that measured it (2026-11-09), three times
+ * in six runs, each after a frame of 0.18 to 0.26 s.
+ *
+ * `now` is the clock as this frame's first view was judged
+ * (`SyncJobs.viewedAt`; no clock, no scaling), so the time a step is reckoned
+ * against is the time between the two views it lies between: the frame the
+ * step was made over. Reckoned against the frame before that one, as it was,
+ * the step a slow frame's simulation makes up (a quarter of a second of
+ * travel) read as a burst in the short frame before it: at 12 m/s, 3 m "in
+ * 19 ms", and the face patches' set built at once in a frame of 5 s, which
+ * made the next slow frame (the rig, 2026-11-26).
+ *
+ * A step of more than a cell since the last origin is not by itself a reason
+ * to build at once: a view that travels crosses several lines in one slow
+ * frame, and its build is the same build, as a job. Only a step no travel
+ * makes is a teleport.
  *
  * `record`, the scheduler, and `name`, the shell's, are for the read-out: while it is watching, each verdict is recorded
  * with the rule that decided it, the step, and the time it was judged against (`SyncJobs.judged`). They change no verdict.
@@ -839,7 +873,7 @@ export function crossingAt(
   c.lastZ = z;
   if (ox === c.originX && oz === c.originZ) return "none";
   const first = Number.isNaN(c.originX) || Number.isNaN(c.originZ);
-  const jump = Math.abs(ox - c.originX) > cell || Math.abs(oz - c.originZ) > cell;
+  const jump = step > SYNC_TELEPORT_M;
   c.originX = ox;
   c.originZ = oz;
   const rule: CrossingRule = !deferrable ? "unscheduled" : first ? "first" : jump ? "jump" : moved > Math.min(cell / 2, SYNC_FAST_STEP_M) ? "fast" : "none";

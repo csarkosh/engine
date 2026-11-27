@@ -47,7 +47,7 @@
  * patch was built last, two surfaces that share an edge are drawn in one
  * order.
  *
- * The first build, a jump of more than a cell and a view moving fast build
+ * The first build, a teleport and a view moving fast build
  * at once (`crossingAt`), or are stepped by the loader of first builds
  * while the intro's film covers the hike (`firstBuilds.ts`). Given no
  * scheduler, every crossing is worked whole in the call that finds it.
@@ -643,7 +643,7 @@ export function createTerrainMeshes(
     const ci = Math.floor(camX / PATCH_CELL);
     const cj = Math.floor(camZ / PATCH_CELL);
     const first = Number.isNaN(patchCrossing.originX);
-    const kind = crossingAt(patchCrossing, camX, camZ, ci * PATCH_CELL, cj * PATCH_CELL, PATCH_CELL, jobs !== undefined, jobs?.started(), jobs, "facePatches");
+    const kind = crossingAt(patchCrossing, camX, camZ, ci * PATCH_CELL, cj * PATCH_CELL, PATCH_CELL, jobs !== undefined, jobs?.viewedAt(), jobs, "facePatches");
     if (kind === "none") {
       // While the loader steps the first set, nothing is built ahead of it.
       if (firstBuilds?.queued(patchOwner) !== true) aimPatches(camX, camZ);
@@ -930,7 +930,7 @@ export function createTerrainMeshes(
       headingX = hx;
       headingZ = hz;
     }
-    const kind = crossingAt(ringCrossing, camX, camZ, snapOrigin(camX, base), snapOrigin(camZ, base), ringStep, jobs !== undefined, jobs?.started(), jobs, "clipmap");
+    const kind = crossingAt(ringCrossing, camX, camZ, snapOrigin(camX, base), snapOrigin(camZ, base), ringStep, jobs !== undefined, jobs?.viewedAt(), jobs, "clipmap");
     if (kind === "none") {
       // While the loader steps the rings' build, nothing else is begun and nothing prepared ahead of it.
       if (firstBuilds?.queued(ringOwner) === true) return;
