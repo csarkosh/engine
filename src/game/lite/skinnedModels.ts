@@ -22,6 +22,12 @@
  * moves: Lite keeps a mesh's draw arguments with its instances, so two
  * meshes of different geometry cannot share them.
  *
+ * **A clip table in fewer texels** (`clipLayout`): a bone's matrix is four texels of the table by default. A model whose bones are
+ * only a turn, a move and one size can have two (`"rigid"`), and any model three (`"rows"`: the matrix's first three rows, exact, since
+ * its fourth is 0,0,0,1). The shader rebuilds the same matrix where it reads a bone, so a table of two or three texels a bone is half or
+ * three quarters of the memory and draws what the whole one does, to within what a model's matrices differ from a rigid one by (the
+ * game measures that for each model before it chooses `"rigid"`). Unset, the table is today's.
+ *
  * The loader's own materials are kept, each dressed by its owner
  * (`dress`); its textures are claimed, since the loader leaves them
  * unowned. A model stands in the scene from when it lands, hidden while it
@@ -32,6 +38,7 @@ import {
   acquireTexture, addToScene, attachVat, bakeVatMany, disposeMeshGpu, getContainerMeshes, getGpuDevice, loadGltf, releaseTexture, removeFromScene, setMeshVisible,
   setThinInstanceCount, setThinInstances,
   type AssetContainer, type EngineContext, type Mesh, type PbrMaterialProps, type SceneContext, type SceneNode, type Texture2D, type VatHandle,
+  type VatLayout, type VatTableOptions,
 } from "@babylonjs/lite";
 import { glbEmissive } from "../glbParts.js";
 import { CLIP_FLOATS, SKIN_CLOCK_FOLD, type BakedClip } from "../skinInstances.js";
@@ -154,7 +161,17 @@ export type SkinnedModelOptions = {
   /** Dresses a primitive's material and places it among the draws, before it joins the scene; false for one that is not drawn. */
   dress(part: SkinnedPart, index: number): boolean;
   uploads?: FrameUploads;
+  /**
+   * How the model's clip table holds a bone: `"rigid"` (two texels; for a model whose bones are a turn, a move and one size),
+   * `"rows"` (three, exact) or `"matrix"` (four). Unset is the table as it has always been.
+   */
+  clipLayout?: VatLayout;
 };
+
+/** What the bake is told of the table: nothing where the layout is unset, so the bake is the one it has always been. */
+export function tableOptions(layout: VatLayout | undefined): VatTableOptions | undefined {
+  return layout === undefined ? undefined : { layout };
+}
 
 /** The textures a loader's material reads. */
 function texturesOf(material: PbrMaterialProps): Texture2D[] {
@@ -188,7 +205,7 @@ async function makeSkinnedModel(
     for (const mesh of meshes) disposeMeshGpu(mesh);
     throw new Error(`${url}: ${meshes.length} meshes and ${groups.length} clips, where a skinned model has both`);
   }
-  const baked = bakeVatMany(engine, meshes.map((mesh) => ({ mesh })), groups);
+  const baked = bakeVatMany(engine, meshes.map((mesh) => ({ mesh })), groups, tableOptions(options.clipLayout));
   const clips = new Map<string, BakedClip>();
   for (const [name, clip] of Object.entries(baked[0]?.clips ?? {})) {
     const group = groups.find((candidate) => candidate.name === name);
