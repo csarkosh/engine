@@ -23,7 +23,8 @@
  *
  * What budget no job needs goes to idle work (`idle`): work a shell can do
  * ahead of a crossing it expects, such as the terrain sampling the ground its
- * rings will move onto next. It runs only while no job is pending, is never
+ * rings will move onto next. It runs only while no job is pending but patient
+ * ones and ones that waited this frame (below), is never
  * late, and may be dropped between any two of its slices. The first slice of a
  * frame starts whatever it says it takes: slices are bounded, so that is at
  * most one slice past the budget, and idle work never waits for ever behind
@@ -68,12 +69,18 @@
  * A patient job (`begin`'s `patient`) is never late and never overdue: it is
  * the rebuild of a shell whose meshes draw the last set it applied, whole and
  * correct, until the next set is applied, so waiting costs detail and never
- * shows a hole — the face patches', whose crossing builds far more than six
- * frames' share. It runs after every other job, with the share they leave, and
+ * shows a hole — the face patches' built on the page's thread, whose crossing
+ * builds far more than six frames' share. It runs after every other job, with
+ * the share they leave, and
  * a frame whose share the other jobs took whole gives the first patient job one
  * slice all the same (`SYNC_PATIENT_MAX_MS`): a job that is never run is never
- * shown, and a job that has run one slice is no longer replaced. Idle work runs
- * while only patient jobs are pending, with what they leave.
+ * shown, and a job that has run one slice is no longer replaced.
+ *
+ * A slice that has nothing to do until a later frame yields `SLICE_WAITS` (the
+ * face patches' job waiting on the world's worker, which is not patient): its
+ * job is resumed at most once a frame and costs the frame no slice. Idle work
+ * runs while every job pending is patient or has waited this frame, with what
+ * they leave; a job that is not patient and has not waited stops it.
  *
  * Pure and Babylon-free: time is the clock handed in, so a test drives it.
  */
@@ -303,6 +310,8 @@ export const FIRST_BUILD_SLICE_MS = 8;
  * 400: a count of eight once let all seven rings run before the first paint.
  * Asked before every slice, `stopped` ends the run early with nothing: what
  * the slices build has gone (a renderer disposed while its world was made).
+ * A slice that waits (`SLICE_WAITS`) has no later frame to wait for here, and
+ * throws, as it does in `finish`.
  */
 export async function stepSlices<T>(
   slices: Slices<T>,
@@ -315,6 +324,7 @@ export async function stepSlices<T>(
     if (stopped()) return undefined;
     const step = slices.next();
     if (step.done === true) return step.value;
+    if (step.value === SLICE_WAITS) throw new Error("a slice that waits cannot be stepped to its end");
     if (now() - since >= sliceMs) {
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
       since = now();
@@ -415,7 +425,8 @@ export type SyncJobs = {
   /** Whether `owner` has a job begun and not yet applied, or a request waiting behind one. */
   pending(owner: object): boolean;
   /** Sets `owner`'s idle work, replacing any it has (null clears it): slices
-   * run only with the budget left while no job is pending. */
+   * run only with the budget left while no job is pending but patient ones
+   * and ones that waited this frame. */
   idle(owner: object, slices: Slices | null): void;
   /** This frame's share: the overdue jobs' slices until the overdue share has
    * gone, the late jobs' until the late share has, then the others' until the
@@ -548,6 +559,15 @@ export function createSyncJobs(clock: () => number): SyncJobs {
   /** Whether `job`, as a share begins at `now`, is overdue: begun `SYNC_OVERDUE_MS` ago, and not patient. A request
    * begun as the job ahead of it applies takes that slice's reading, so it is never overdue in the frame it begins. */
   const isOverdue = (job: Job, now: number): boolean => !job.patient && now - job.begunAt >= SYNC_OVERDUE_MS;
+
+  /** Whether idle work may run: every job pending is patient or has waited this frame. */
+  function idleMayRun(): boolean {
+    for (let i = 0; i < queue.length; i++) {
+      const job = queue[i] as Job;
+      if (!job.patient && !job.waited) return false;
+    }
+    return true;
+  }
 
   function remove(job: Job): void {
     const at = queue.indexOf(job);
@@ -856,13 +876,14 @@ export function createSyncJobs(clock: () => number): SyncJobs {
       }
       // Then idle work, with what is left, while nothing is pending: a slice
       // of each owner's in turn, so none waits on another's.
-      // Patient jobs pending do not stop it: they have had their slices.
+      // Patient jobs pending do not stop it: they have had their slices; nor
+      // do jobs that waited this frame, which have nothing to do until the next.
       // A slice said to be longer than what is left waits for the next
       // frame, where it is first, and the work behind it goes on; the frame's
       // idle work ends when every one left waits.
       let waiting: Slices | null = null;
       let skipped = 0;
-      while ((queue.length === 0 || (queue[0] as Job).patient) && idle.length > 0) {
+      while (idleMayRun() && idle.length > 0) {
         const spent = tick() - start;
         if (spent >= SYNC_BUDGET_MS) break;
         idleTurn %= idle.length;

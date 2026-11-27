@@ -3,7 +3,7 @@ import { runBySlices } from "../../testing/sliceRun.js";
 import {
   SLICE_READ_UNITS, SLICE_TARGET_MS, SYNC_BUDGET_MS, SYNC_PATIENT_MAX_MS, SYNC_PATIENT_WAIT_FRAMES, SYNC_LATE_BUDGET_MS, SYNC_LATE_FRAMES_MAX, SYNC_LATE_MS_MAX, SYNC_OVERDUE_MS,
   SYNC_OVERDUE_BUDGET_MS,
-  SLICE_WAITS, createCrossing, createSyncJobs, crossingAt, finish, nextCrossing, sliceDue, sortSlices, syncJobsRecord, turn,
+  SLICE_WAITS, createCrossing, createSyncJobs, crossingAt, finish, nextCrossing, sliceDue, sortSlices, stepSlices, syncJobsRecord, turn,
   type Slices, type SyncJobs,
 } from "../../src/game/syncJobs.js";
 
@@ -1874,6 +1874,82 @@ describe("a slice that waits", () => {
 
   it("finish throws on a slice that waits", () => {
     expect(() => finish(waiter({ n: 0 }))).toThrow(/waits/);
+  });
+
+  it("stepSlices throws on a slice that waits", async () => {
+    const count = { n: 0 };
+    await expect(stepSlices(waiter(count), 8)).rejects.toThrow(/waits/);
+    expect(count.n).toBe(1);
+  });
+
+  /** Idle work of slices of 1 ms on `t`, counting them. */
+  function idleWork(t: { advance(ms: number): void }, count: { n: number }): Slices {
+    return (function* () {
+      for (;;) {
+        t.advance(1);
+        count.n++;
+        yield;
+      }
+    })();
+  }
+
+  it("runs idle work in a frame whose only job that is not patient waited", () => {
+    const t = testClock();
+    const jobs = createSyncJobs(t.clock);
+    const ran = { n: 0 };
+    jobs.idle({}, idleWork(t, ran));
+    jobs.begin({}, waiter({ n: 0 }));
+    jobs.run();
+    // The job waited and took nothing: the whole share is the idle work's.
+    expect([jobs.last.waits, jobs.last.slices, jobs.last.idle, ran.n]).toEqual([1, 0, 4, 4]);
+    jobs.run();
+    expect([jobs.last.waits, jobs.last.idle, ran.n]).toEqual([1, 4, 8]);
+  });
+
+  it("runs no idle work while a job that is not patient and did not wait is pending, with share left", () => {
+    const t = testClock();
+    const jobs = createSyncJobs(t.clock);
+    const ran = { n: 0 };
+    jobs.idle({}, idleWork(t, ran));
+    // A slice of 1 ms that says the next takes 5: it does not fit in the 3 ms left, and the job stays pending.
+    jobs.begin({}, (function* () {
+      t.advance(1);
+      yield 5;
+      t.advance(5);
+    })());
+    jobs.run();
+    expect([jobs.last.slices, jobs.last.waits, jobs.last.idle, ran.n]).toEqual([1, 0, 0, 0]);
+    // Its long slice first, which ends it, then idle work with nothing left: none; the frame after, the idle work's.
+    jobs.run();
+    expect([jobs.last.slices, jobs.last.completed, jobs.last.idle]).toEqual([1, 1, 0]);
+    jobs.run();
+    expect([jobs.last.idle, ran.n]).toEqual([4, 4]);
+  });
+
+  it("runs idle work beside a job that waits and a patient job as it does beside the patient job alone", () => {
+    /** A patient job whose slices take 2 ms and say the next takes 3, and idle work; with `wait`, a job that waits besides. */
+    const frameOf = (wait: boolean): number[] => {
+      const t = testClock();
+      const jobs = createSyncJobs(t.clock);
+      const ran = { n: 0 };
+      jobs.idle({}, idleWork(t, ran));
+      if (wait) jobs.begin({}, waiter({ n: 0 }));
+      jobs.begin({}, (function* () {
+        for (;;) {
+          t.advance(2);
+          yield 3;
+        }
+      })(), true);
+      const seen: number[] = [];
+      for (let f = 0; f < 3; f++) {
+        jobs.run();
+        seen.push(jobs.last.slices, jobs.last.idle, jobs.last.floor);
+      }
+      return [...seen, ran.n];
+    };
+    // Its slice, then idle work with the 2 ms left, each frame.
+    expect(frameOf(false)).toEqual([1, 2, 0, 1, 2, 0, 1, 2, 0, 6]);
+    expect(frameOf(true)).toEqual(frameOf(false));
   });
 
   it("keeps counting owedMs for a job that is waiting", () => {
