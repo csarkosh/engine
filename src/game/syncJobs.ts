@@ -43,16 +43,24 @@
  * first build, a teleport (a step no travel makes in one frame) and a view moving
  * more than half a cell or a metre a frame (the free camera's boost) all
  * build at once, or are stepped by the loader of first builds
- * (`firstBuilds.ts`), so at those the picture is exactly what it was. A
- * crossing that finds the shell's last job still pending — the view has moved
- * past a further line before that job applied, as a walk along a diagonal
- * does whenever it crosses an x line and a z line a few frames apart —
- * replaces it with the rebuild for the new view, which keeps the old job's
- * deadline, in frames and in time: the view it was begun for is never drawn.
- * What the old job had made that the new needs is not made again, as each
- * shell's own record says (a ring's samples, the cells a lookup holds, the
- * face patches built ahead), so a replacement costs a job's array building and
- * not its sampling.
+ * (`firstBuilds.ts`), so at those the picture is exactly what it was.
+ *
+ * **A job that has started is finished and shown; the newest request waits
+ * behind it.** A crossing that finds the shell's last job still pending — the
+ * view has moved past a further line before that job applied, as a walk along
+ * a diagonal does whenever it crosses an x line and a z line a few frames
+ * apart, and a drive does at every line — asks for the rebuild for the new
+ * view. While that job has run no slice, the new rebuild takes its place,
+ * which loses nothing and keeps the old job's deadline, in frames and in
+ * time: the view it was begun for is never drawn. Once it has run one, it goes
+ * on to its end and is shown, and the new rebuild waits behind it, in the
+ * place of any that waited before it (ended with `return`), so only the
+ * newest is ever run; as the job applies, the request waiting is begun as a
+ * job of its own, with that frame and that slice's reading as its deadline.
+ * Replaced whenever asked, a fast view's jobs were replaced again and again
+ * until they were a second old, then run whole, several shells in one frame:
+ * at 20 to 30 m/s those runs were most of the time in every frame over a
+ * tenth of a second, and the work thrown away grew with the speed.
  *
  * A patient job (`begin`'s `patient`) is never late and never overdue: it is
  * the rebuild of a shell whose meshes draw the last set it applied, whole and
@@ -60,9 +68,9 @@
  * shows a hole — the face patches', whose crossing builds far more than six
  * frames' share. It runs after every other job, with the share they leave, and
  * a frame whose share the other jobs took whole gives the first patient job one
- * slice all the same (`SYNC_PATIENT_MAX_MS`): a walk replaces the job at every
- * crossing, and a job that is never run is never shown. Idle work runs while
- * only patient jobs are pending, with what they leave.
+ * slice all the same (`SYNC_PATIENT_MAX_MS`): a job that is never run is never
+ * shown, and a job that has run one slice is no longer replaced. Idle work runs
+ * while only patient jobs are pending, with what they leave.
  *
  * Pure and Babylon-free: time is the clock handed in, so a test drives it.
  */
@@ -114,11 +122,14 @@ export const SYNC_LATE_BUDGET_MS = 8;
  * share: the hard bound for what the share cannot meet. A tab hidden for a
  * minute stops its frames while its clock runs on, so every pending job is
  * overdue at once on its next frame, and the next frame runs them all to
- * their end, as a first build does; a job starved by others, or replaced by
- * crossing after crossing and never shown, is overdue a second after the
- * first crossing that began it. A second is ten times the soft bound and
- * three to four of a walk's crossings (a ring lattice step of 4 m is 0.76 s
- * at 5.25 m/s), so no walk meets it unless the device cannot keep up.
+ * their end, as a first build does; a job starved by others, and replaced
+ * crossing after crossing because it never ran a slice, is overdue a second
+ * after the first crossing that began it. A job that has started is not
+ * replaced (`SyncJobs.begin`), so a view that crosses lines faster than its
+ * jobs end no longer makes them overdue by asking again. A second is ten
+ * times the soft bound and three to four of a walk's crossings (a ring
+ * lattice step of 4 m is 0.76 s at 5.25 m/s), so no walk meets it unless the
+ * device cannot keep up.
  */
 export const SYNC_OVERDUE_MS = 1000;
 
@@ -127,8 +138,8 @@ export const SYNC_OVERDUE_MS = 1000;
  * A patient job runs after every other, with what they leave, and the late jobs of a walk on a slow device leave
  * nothing for frames at a stretch; so a frame in which no patient job ran gives the first of them one slice, past
  * the ordinary budget and inside this, where its next slice fits in what is left (a first slice of a frame
- * starts whatever it says). A walk's every crossing replaces the face patches' job, and a job that is never run is
- * never shown: one slice a frame, 1.5 ms of a phone's 12 to spare, keeps it moving.
+ * starts whatever it says). A job that is never run is never shown, and one never started is replaced at a walk's every
+ * crossing: one slice a frame, 1.5 ms of a phone's 12 to spare, starts it and keeps it moving.
  */
 export const SYNC_PATIENT_MAX_MS = SYNC_LATE_BUDGET_MS + 1.5;
 
@@ -319,6 +330,12 @@ export type SyncJobsLast = {
   readonly overdueJobs: number;
   /** The jobs completed, and the idle slices run. */
   readonly completed: number;
+  /**
+   * The requests this frame held behind a job of their owner's that had started (`begin`), each to begin as that job is
+   * shown; one that replaced a request already waiting is counted too. Counted as the shells ask, before the share, and
+   * moved here as the share begins, as the crossings are.
+   */
+  readonly held: number;
   /** The slices of a patient job run for the floor a frame has no other of (0 or 1). */
   readonly floor: number;
   readonly idle: number;
@@ -347,15 +364,21 @@ export type SyncJobsLast = {
 
 export type SyncJobs = {
   /** Queues `slices` as `owner`'s job, begun this frame. An owner has at most
-   * one job: one it already has is dropped unfinished, and the new one takes
-   * its place in the queue and its deadline. A `patient` job is never late:
-   * it queues behind every other and is never run to its end at once. */
+   * one job. One it already has that has run no slice is dropped unfinished,
+   * and the new one takes its place in the queue and its deadline. One that
+   * has run a slice goes on to its end and is shown, and the new slices wait
+   * behind it, in the place of any already waiting (dropped): as it applies,
+   * or as a slice of it throws, they are begun as a job of their own, in that
+   * frame and at that slice's reading of the clock, queued as a new job is. A
+   * fast view's jobs, replaced whenever it asked, were replaced until a second
+   * old and then run whole in one frame. A `patient` job is never late: it
+   * queues behind every other and is never run to its end at once. */
   begin(owner: object, slices: Slices, patient?: boolean, name?: string): void;
-  /** Drops `owner`'s pending job unfinished; its meshes keep what they drew.
-   * A job dropped here or by `begin` is ended with `return`, so its `finally`
-   * blocks run. */
+  /** Drops `owner`'s pending job unfinished, and the request waiting behind
+   * it; its meshes keep what they drew. Slices dropped here or by `begin` are
+   * ended with `return`, so their `finally` blocks run. */
   cancel(owner: object): void;
-  /** Whether `owner` has a job begun and not yet applied. */
+  /** Whether `owner` has a job begun and not yet applied, or a request waiting behind one. */
   pending(owner: object): boolean;
   /** Sets `owner`'s idle work, replacing any it has (null clears it): slices
    * run only with the budget left while no job is pending. */
@@ -396,15 +419,22 @@ export type SyncJobs = {
 
 /** A queued job: its slices, the frame whose crossing began it and the
  * clock then, what its next slice is expected to take (ms), and whether it
- * is never late. */
-type Job = { owner: object; slices: Slices; begun: number; begunAt: number; next: number; patient: boolean; name: string; starved: number };
+ * is never late; whether it has run a slice, and the owner's newest request
+ * held behind it once it has (`waiting`, with its own `patient` and name),
+ * begun as a job of its own as this one ends. */
+type Job = {
+  owner: object; slices: Slices; begun: number; begunAt: number; next: number; patient: boolean; name: string; starved: number;
+  ran: boolean; waiting: Slices | null; waitingPatient: boolean; waitingName: string;
+};
 
 /** The weight of the newest apply slice in an owner's learned cost. */
 const LEARN_RATE = 0.25;
 
 /**
  * The scheduler. `clock` is read as a job begins, once as `run` starts and
- * once before each slice; the renderer passes `performance.now`.
+ * once before each slice (a request that waited behind a job, begun as that
+ * job applies, takes the reading its last slice began at); the renderer
+ * passes `performance.now`.
  */
 export function createSyncJobs(clock: () => number): SyncJobs {
   const queue: Job[] = [];
@@ -417,7 +447,7 @@ export function createSyncJobs(clock: () => number): SyncJobs {
   let viewAt = Number.NaN;
   let viewRead = false;
   const last = {
-    slices: 0, late: 0, lateJobs: 0, overdue: 0, overdueJobs: 0, completed: 0, floor: 0, idle: 0, ms: 0, lateMs: 0,
+    slices: 0, late: 0, lateJobs: 0, overdue: 0, overdueJobs: 0, completed: 0, held: 0, floor: 0, idle: 0, ms: 0, lateMs: 0,
     overdueMs: 0, overdueOwners: {} as Record<string, number>,
     atOnce: {} as Record<string, number>, atOnceMs: {} as Record<string, number>,
     crossings: [] as CrossingJudgement[], crossingCount: 0,
@@ -430,6 +460,8 @@ export function createSyncJobs(clock: () => number): SyncJobs {
   const madeAtOnceMs: Record<string, number> = {};
   let judgements: CrossingJudgement[] = [];
   let judgedCount = 0;
+  /** The requests held behind a started job since the last share: the next record's `held`. */
+  let heldNow = 0;
   /** The slice the clock's next reading is charged to: the one that just ran
    * (its name, whether it ran late, and whether it said what it would take),
    * or none. The clock is read once as a frame's share starts, once before
@@ -484,19 +516,34 @@ export function createSyncJobs(clock: () => number): SyncJobs {
     else queue.splice(at, 0, job);
   }
 
+  /** A new job of `owner`'s, begun in this frame at `begunAt` on the clock. */
+  function createJob(owner: object, slices: Slices, begunAt: number, patient: boolean, name: string): Job {
+    return { owner, slices, begun: frame, begunAt, next: 0, patient, name, starved: 0, ran: false, waiting: null, waitingPatient: false, waitingName: "" };
+  }
+
   /** One slice of `job`; true when it has applied. A slice that throws takes
-   * its job out of the queue before the error goes on. */
+   * its job out of the queue before the error goes on. A job that leaves the
+   * queue either way begins the request held behind it, as of the reading
+   * this slice began at: the owner is never left with nothing pending. */
   function slice(job: Job, late = false, overdue = false): boolean {
     let done: boolean | undefined;
     charging = { name: job.name, late, announced: job.next > 0, overdue };
+    const sliceAt = at;
     const held = openSlice(clock, at);
+    job.ran = true;
     try {
       const step = job.slices.next();
       done = step.done;
       job.next = step.done !== true && typeof step.value === "number" ? step.value : 0;
     } finally {
       closeSlice(held);
-      if (done !== false) remove(job);
+      if (done !== false) {
+        remove(job);
+        if (job.waiting !== null) {
+          enqueue(createJob(job.owner, job.waiting, sliceAt, job.waitingPatient, job.waitingName));
+          job.waiting = null;
+        }
+      }
     }
     last.slices++;
     if (job.patient) patientRan = true;
@@ -509,12 +556,22 @@ export function createSyncJobs(clock: () => number): SyncJobs {
     begin(owner, slices, patient = false, name = "other") {
       const held = queue.find((job) => job.owner === owner);
       if (held === undefined) {
-        enqueue({ owner, slices, begun: frame, begunAt: clock(), next: 0, patient, name, starved: 0 });
+        enqueue(createJob(owner, slices, clock(), patient, name));
+        return;
+      }
+      if (held.ran) {
+        // Started: it goes on to be shown, and this request waits behind it, in the place of any that waited (ended with
+        // `return`, so whatever it holds is handed back): the newest wins.
+        held.waiting?.return(undefined);
+        held.waiting = slices;
+        held.waitingPatient = patient;
+        held.waitingName = name;
+        heldNow++;
         return;
       }
       held.name = name;
-      // Dropped with `return`, so whatever it holds is handed back. The
-      // replacement keeps the first crossing's frame and time.
+      // Not started, so nothing is lost: dropped with `return`, so whatever it
+      // holds is handed back. The replacement keeps the first crossing's frame and time.
       held.slices.return(undefined);
       held.slices = slices;
       held.next = 0;
@@ -529,6 +586,8 @@ export function createSyncJobs(clock: () => number): SyncJobs {
       if (held === undefined) return;
       remove(held);
       held.slices.return(undefined);
+      held.waiting?.return(undefined);
+      held.waiting = null;
     },
     pending(owner) {
       return queue.some((job) => job.owner === owner);
@@ -586,6 +645,9 @@ export function createSyncJobs(clock: () => number): SyncJobs {
       last.overdue = 0;
       last.overdueJobs = 0;
       last.completed = 0;
+      // The requests held since the last share are this frame's, as its crossings are.
+      last.held = heldNow;
+      heldNow = 0;
       last.floor = 0;
       patientRan = false;
       last.idle = 0;

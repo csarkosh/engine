@@ -5,8 +5,12 @@
  * `clutterMeshes.ts`, `bladeMeshes.ts`, `duffMeshes.ts`): by `crossingAt`,
  * on the shell's own rebuild grid.
  *
- * A crossing at a walk begins a job, or takes the place of the shell's job
- * still pending, which keeps its deadline. The first build, a teleport
+ * A crossing at a walk begins a job. One that finds the shell's job still
+ * pending takes its place, keeping its deadline, while it has run no slice;
+ * once it has, that job is finished and shown, and the newest crossing's
+ * rebuild waits to begin after it (`SyncJobs.begin`): a fast view's jobs,
+ * replaced at every crossing, were a second old before they were shown, and
+ * then run whole in one frame. The first build, a teleport
  * and a view moving fast build at once, or are stepped by the
  * loader of first builds while the intro's film covers the hike
  * (`firstBuilds.ts`). While the view holds its cell and nothing is pending,
@@ -38,7 +42,7 @@ export type RebuildOptions = {
 };
 
 export type Rebuilds = {
-  /** This frame's view: begins, replaces or runs the rebuild its crossing asks for, and says which. */
+  /** This frame's view: begins (in the place of one not started, or behind one started) or runs the rebuild its crossing asks for, and says which. */
   update(x: number, z: number): CrossingKind;
   /** Whether a rebuild is begun and not yet shown, the scheduler's or the loader's. */
   pending(): boolean;

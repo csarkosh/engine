@@ -71,11 +71,55 @@ describe("the scheduler", () => {
     expect(lateAt(16.6)).toEqual({ at: 9, late: [0, 0, 0, 0, 0, 0, 64, 64, 64, 16] });
   });
 
-  it("keeps a replaced job's wait counted from its first crossing's time", () => {
-    // Replaced at frame 2 (66.6 ms): late at frame 4, 133.2 ms after the
-    // first crossing, with the new job's 400 slices to make; counted from the
-    // second crossing it would be late at frame 6.
-    expect(lateAt(33.3, 2)).toEqual({ at: 9, late: [0, 0, 0, 0, 64, 64, 64, 64, 64, 16] });
+  it("keeps a replaced job's wait counted from its first crossing's time, while it has not started", () => {
+    let now = 0;
+    const jobs = createSyncJobs(() => now);
+    const clock = { advance: (ms: number) => { now += ms; } };
+    const owner = {};
+    const first = { at: null as number | null }, second = { at: null as number | null };
+    jobs.begin(owner, job(clock, 400, 0.125, first, () => jobs.frame));
+    // A second crossing 66.6 ms on, before any frame has run the first job: it takes its place, with nothing lost.
+    now = 66.6;
+    jobs.begin(owner, job(clock, 400, 0.125, second, () => jobs.frame));
+    const late: number[] = [];
+    for (let f = 0; f < 12 && second.at === null; f++) {
+      now = 66.6 + f * 33.3;
+      jobs.run();
+      late.push(jobs.last.late);
+    }
+    // Late at frame 2, 133.2 ms after the first crossing, with the new job's
+    // 400 slices to make; counted from the second crossing it would be late at
+    // frame 4. The first job never ran, and nothing was held.
+    expect({ at: second.at, late }).toEqual({ at: 7, late: [0, 0, 64, 64, 64, 64, 64, 16] });
+    expect(first.at).toBeNull();
+  });
+
+  it("finishes a started job its owner asks for again, and begins the newest request after it with a fresh deadline", () => {
+    // Asked again at frame 2, after its first slices: shown when it would have been had nothing been asked.
+    expect(lateAt(33.3, 2)).toEqual(lateAt(33.3));
+    expect(lateAt(33.3, 2)).toEqual({ at: 8, late: [0, 0, 0, 0, 64, 64, 64, 64, 16] });
+    const t = testClock();
+    const jobs = createSyncJobs(t.clock);
+    const first = { at: null as number | null }, second = { at: null as number | null };
+    const owner = {};
+    // 40 slices of 1 ms: four a frame, eight late.
+    jobs.begin(owner, job(t, 40, 1, first, () => jobs.frame));
+    jobs.run();
+    jobs.run();
+    jobs.begin(owner, job(t, 40, 1, second, () => jobs.frame));
+    const late: number[] = [];
+    const held: number[] = [];
+    for (let f = 2; f < 20 && second.at === null; f++) {
+      jobs.run();
+      late.push(jobs.last.late);
+      held.push(jobs.last.held);
+    }
+    // The first is late at frame 6 and shown at 7; the second, begun as it was shown, is late six frames after that,
+    // not after the first crossing or its own: at frame 13, and shown at 15.
+    expect([first.at, second.at]).toEqual([7, 15]);
+    expect(late).toEqual([0, 0, 0, 0, 8, 8, 0, 0, 0, 0, 0, 8, 8, 4]);
+    expect(held).toEqual([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(jobs.pending(owner)).toBe(false);
   });
 
   it("runs every pending job to its end at once when the clock jumps, as a first build does", () => {
@@ -168,8 +212,11 @@ describe("the scheduler", () => {
     })();
     const first = {}, second = {};
     // `second` is begun patient at frame 0, and again as an ordinary job at frame 4, behind `first`, which is begun then: but its crossing is the older.
+    // A patient job ahead of it takes every frame's share until then, so `second` has not started and is replaced in place.
+    jobs.begin({}, job(t, 400, 1, { at: null }, () => jobs.frame), true);
     jobs.begin(second, named("second"), true);
     for (let f = 0; f < 4; f++) jobs.run();
+    expect(ran).toEqual([]);
     jobs.begin(first, named("first"));
     jobs.begin(second, named("second"));
     // Frames 4 and 5: `first` is queued first and takes the ordinary share, `second` the rest if any.
@@ -201,23 +248,47 @@ describe("the scheduler", () => {
     expect(jobs.pending(owner)).toBe(false);
   });
 
-  it("makes a job replaced again and again overdue a second after the first crossing", () => {
+  it("makes a job replaced again and again before it has started overdue a second after the first crossing", () => {
     const t = testClock();
     const jobs = createSyncJobs(t.clock);
     const owner = {};
-    const done = { at: null as number | null };
-    // A crossing every 250 ms of the clock, each beginning a job the share cannot finish.
+    const done = [0, 1, 2, 3].map(() => ({ at: null as number | null }));
+    // A crossing every 250 ms of the clock, before any frame has run the job: each takes the last one's place.
+    jobs.begin(owner, job(t, 1000, 1, done[0] as { at: number | null }, () => jobs.frame));
+    for (let i = 1; i < 4; i++) {
+      t.advance(250);
+      jobs.begin(owner, job(t, 1000, 1, done[i] as { at: number | null }, () => jobs.frame));
+    }
+    // Begun at 0, replaced at 250, 500 and 750 ms, overdue when a frame starts a second on: the newest, run whole.
+    t.advance(250);
+    jobs.run();
+    expect([jobs.last.overdueJobs, jobs.last.overdue, jobs.last.held]).toEqual([1, 1000, 0]);
+    expect(done.map((d) => d.at)).toEqual([null, null, null, 0]);
+  });
+
+  it("makes a started job asked for again and again overdue only by its own age, and begins the newest request fresh", () => {
+    const t = testClock();
+    const jobs = createSyncJobs(t.clock);
+    const owner = {};
+    const done = [0, 1, 2, 3, 4].map(() => ({ at: null as number | null }));
+    // A crossing every 250 ms of the clock, each asking for a job the share cannot finish.
     let overdueAt = -1;
-    jobs.begin(owner, job(t, 1000, 1, done, () => jobs.frame));
+    jobs.begin(owner, job(t, 1000, 1, done[0] as { at: number | null }, () => jobs.frame));
     for (let f = 0; f < 12 && overdueAt < 0; f++) {
       t.advance(250);
-      jobs.begin(owner, job(t, 1000, 1, done, () => jobs.frame));
+      jobs.begin(owner, job(t, 1000, 1, done[f + 1] as { at: number | null }, () => jobs.frame));
       jobs.run();
       if (jobs.last.overdueJobs > 0) overdueAt = f;
     }
-    // Begun at 0, replaced at 250, 500 and 750 ms (the share's own time counted), overdue when a frame starts a second on.
+    // The first request was replaced before frame 0 ran it; its replacement started there and is itself 1000 ms of
+    // work, so it is overdue a second after the first crossing all the same, and shown. Those asked for while it ran
+    // waited, the newest in the place of the one before it; the newest is begun as it is shown, and is not overdue.
     expect(overdueAt).toBe(3);
-    expect(done.at).toBe(jobs.frame - 1);
+    expect(done.map((d) => d.at)).toEqual([null, jobs.frame - 1, null, null, null]);
+    expect(jobs.pending(owner)).toBe(true);
+    t.advance(250);
+    jobs.run();
+    expect([jobs.last.overdueJobs, jobs.last.overdue]).toEqual([0, 0]);
   });
 
   it("keeps two crossings in one frame from making one long frame", () => {
@@ -251,18 +322,23 @@ describe("the scheduler", () => {
     expect([dropped.at, other.at]).toEqual([null, 0]);
   });
 
-  it("replaces a job its owner begins again, in its place in the queue and with its deadline", () => {
+  it("replaces a job its owner begins again before it has started, in its place in the queue and with its deadline", () => {
     const t = testClock();
     const jobs = createSyncJobs(t.clock);
     const first = { at: null as number | null }, second = { at: null as number | null }, other = { at: null as number | null };
+    const blocked = { at: null as number | null };
     const owner = {}, bystander = {};
+    // Ahead of them, two slices of 4 ms: the whole share of frames 0 and 1.
+    jobs.begin({}, job(t, 2, 4, blocked, () => jobs.frame));
     // 40 slices of 1 ms: ten frames' budget.
     jobs.begin(owner, job(t, 40, 1, first, () => jobs.frame));
     jobs.begin(bystander, job(t, 2, 1, other, () => jobs.frame));
     jobs.run();
     jobs.run();
-    // A further crossing, two frames on: the new rebuild is late six frames
-    // after the first one began, and still ahead of the bystander.
+    expect([blocked.at, jobs.last.slices]).toEqual([1, 1]);
+    // A further crossing, two frames on, before the job has run a slice: the
+    // new rebuild is late six frames after the first one began, and still
+    // ahead of the bystander.
     jobs.begin(owner, job(t, 40, 1, second, () => jobs.frame));
     const late: number[] = [];
     for (let f = 2; f <= 9; f++) {
@@ -349,7 +425,10 @@ describe("the scheduler", () => {
     const first = { at: null as number | null }, second = { at: null as number | null }, other = { at: null as number | null };
     const patches = {}, rings = {};
     jobs.begin(patches, job(t, 40, 1, first, () => jobs.frame), true);
+    // A slice of 10 ms ahead of it takes frame 0 past where the patient one's floor fits: it has not started.
+    jobs.begin({}, job(t, 1, 10, { at: null }, () => jobs.frame));
     jobs.run();
+    expect([jobs.last.slices, jobs.last.floor]).toEqual([1, 0]);
     jobs.begin(rings, job(t, 8, 1, other, () => jobs.frame));
     jobs.begin(patches, job(t, 40, 1, second, () => jobs.frame), true);
     for (let f = 1; f < 14; f++) {
@@ -564,6 +643,155 @@ describe("the scheduler", () => {
       return "built";
     })());
     expect([result, slices]).toEqual(["built", 5]);
+  });
+});
+
+describe("an owner's request while its job runs", () => {
+  /** `slices` as a request whose ending with `return` is counted in `ended`: one never started has no `finally` to run. */
+  function counted(slices: Slices, ended: { n: number }): Slices {
+    const end = slices.return.bind(slices);
+    slices.return = (value) => {
+      ended.n++;
+      return end(value);
+    };
+    return slices;
+  }
+
+  it("runs only the newest of several requests made while a job runs, and ends the others with return", () => {
+    const t = testClock();
+    const jobs = createSyncJobs(t.clock);
+    const owner = {};
+    const ran: number[] = [];
+    let runningEnded = false;
+    const ended = { n: 0 };
+    const request = (id: number): Slices => (function* () {
+      ran.push(id);
+      for (let i = 0; i < 8; i++) {
+        t.advance(1);
+        yield;
+      }
+    })();
+    jobs.begin(owner, (function* () {
+      try {
+        for (let i = 0; i < 12; i++) {
+          t.advance(1);
+          yield;
+        }
+        ran.push(0);
+      } finally {
+        runningEnded = true;
+      }
+    })());
+    jobs.run();
+    // Three requests while it runs: each waits in the place of the one before, which is ended.
+    for (let id = 1; id <= 3; id++) jobs.begin(owner, counted(request(id), ended));
+    expect([ended.n, runningEnded]).toEqual([2, false]);
+    for (let f = 0; f < 10 && jobs.pending(owner); f++) jobs.run();
+    // The running one shown (its last slice, then its `finally`), then the newest; the two between never ran.
+    expect(ran).toEqual([0, 3]);
+    expect([ended.n, runningEnded, jobs.pending(owner)]).toEqual([2, true, false]);
+  });
+
+  it("drops the job and the request waiting behind it when its owner cancels", () => {
+    const t = testClock();
+    const jobs = createSyncJobs(t.clock);
+    const owner = {};
+    let runningEnded = false;
+    const ended = { n: 0 };
+    const shown = { at: null as number | null }, waiting = { at: null as number | null };
+    jobs.begin(owner, (function* () {
+      try {
+        for (let i = 0; i < 12; i++) {
+          t.advance(1);
+          yield;
+        }
+        shown.at = jobs.frame;
+      } finally {
+        runningEnded = true;
+      }
+    })());
+    jobs.run();
+    jobs.begin(owner, counted(job(t, 4, 1, waiting, () => jobs.frame), ended));
+    expect(jobs.pending(owner)).toBe(true);
+    jobs.cancel(owner);
+    expect([jobs.pending(owner), runningEnded, ended.n]).toEqual([false, true, 1]);
+    for (let f = 0; f < 10; f++) jobs.run();
+    expect([shown.at, waiting.at, jobs.last.slices]).toEqual([null, null, 0]);
+  });
+
+  it("shows something about every ten frames, and runs nothing overdue, for a view that asks again every second frame", () => {
+    const t = testClock();
+    const jobs = createSyncJobs(t.clock);
+    const owner = {};
+    const shownAt: number[] = [];
+    const overdue: number[] = [];
+    let held = 0;
+    // A drive: a crossing every second frame for ten seconds at 60 frames a second, each asking for a rebuild of 40
+    // slices of 1 ms, ten frames of the ordinary share (eight with the late share it is given).
+    for (let f = 0; f < 600; f++) {
+      t.advance(1000 / 60);
+      if (f % 2 === 0) jobs.begin(owner, (function* () {
+        for (let i = 0; i < 40; i++) {
+          t.advance(1);
+          if (i < 39) yield;
+        }
+        shownAt.push(jobs.frame);
+      })());
+      jobs.run();
+      overdue.push(jobs.last.overdue);
+      held += jobs.last.held;
+    }
+    expect(overdue.every((n) => n === 0)).toBe(true);
+    // Four slices a frame, late 100 ms (six frames) after it began and then eight: a rebuild shown every seventh frame,
+    // the next begun as it is shown, from the first crossing to the last.
+    const gaps = shownAt.slice(1).map((at, i) => at - (shownAt[i] as number));
+    expect(shownAt[0]).toBe(7);
+    expect(gaps.every((gap) => gap === 7)).toBe(true);
+    expect(shownAt.length).toBe(85);
+    // Each request that found its job started waited behind it: all but the first, and one every fourteen frames that
+    // found the job begun as the last was shown not yet started, and took its place.
+    expect(held).toBe(257);
+  });
+
+  it("begins the request waiting behind a job whose slice throws, so its owner is not left with nothing pending", () => {
+    const t = testClock();
+    const jobs = createSyncJobs(t.clock);
+    const owner = {};
+    const done = { at: null as number | null };
+    jobs.begin(owner, (function* () {
+      t.advance(4);
+      yield;
+      throw new Error("broken slice");
+    })());
+    jobs.run();
+    jobs.begin(owner, job(t, 2, 1, done, () => jobs.frame));
+    expect(() => jobs.run()).toThrow("broken slice");
+    expect(jobs.pending(owner)).toBe(true);
+    // The frame whose share threw was not closed, so the request is begun and shown in frame 1.
+    jobs.run();
+    expect([done.at, jobs.pending(owner)]).toEqual([1, false]);
+  });
+
+  it("counts the requests held behind a started job in the record of the frame whose share follows, and resets each frame", () => {
+    const t = testClock();
+    const jobs = createSyncJobs(t.clock);
+    const owner = {}, other = {};
+    // A new job, and one that replaces it before it starts: neither is held.
+    jobs.begin(owner, job(t, 12, 1, { at: null }, () => jobs.frame));
+    jobs.begin(owner, job(t, 12, 1, { at: null }, () => jobs.frame));
+    jobs.begin(other, job(t, 12, 1, { at: null }, () => jobs.frame), true);
+    jobs.run();
+    expect(jobs.last.held).toBe(0);
+    // Both have started: two requests held behind the one, one behind the other.
+    jobs.begin(owner, job(t, 4, 1, { at: null }, () => jobs.frame));
+    jobs.begin(owner, job(t, 4, 1, { at: null }, () => jobs.frame));
+    jobs.begin(other, job(t, 4, 1, { at: null }, () => jobs.frame), true);
+    jobs.run();
+    expect(jobs.last.held).toBe(3);
+    expect(syncJobsRecord(jobs.last).held).toBe(3);
+    jobs.run();
+    expect(jobs.last.held).toBe(0);
+    expect(syncJobsRecord(jobs.last).held).toBe(0);
   });
 });
 

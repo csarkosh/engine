@@ -160,7 +160,7 @@ describe("a shell's rebuilds on the renderer's scheduler", () => {
     expect(Math.max(...late)).toBe(4);
   });
 
-  it("replaces a rebuild still pending with the one for the newer view, and never shows the stale one", () => {
+  it("replaces a rebuild still pending and not started with the one for the newer view, and never shows the stale one", () => {
     const { jobs, frame, time } = scheduler();
     const shown: number[] = [];
     const rebuilds = createRebuilds({
@@ -178,12 +178,53 @@ describe("a shell's rebuilds on the renderer's scheduler", () => {
     });
     rebuilds.update(0.98, 0.98);
     frame();
+    // Another shell's job ahead of it takes the whole of the next frame's share, so the first crossing's rebuild has not started.
+    jobs.begin({}, (function* () {
+      time.now += 4;
+    })());
     // A walk along a diagonal: an x line, then a z line a frame later, before the first crossing's rebuild has shown.
     expect(rebuilds.update(1.0, 0.99)).toBe("later");
     frame();
     expect(rebuilds.update(1.02, 1.0)).toBe("later");
-    for (let f = 0; f < SYNC_LATE_FRAMES_MAX + 2; f++) frame();
+    frame();
+    // It took the first one's place: nothing was held behind it.
+    expect(jobs.last.held).toBe(0);
+    for (let f = 0; f < SYNC_LATE_FRAMES_MAX + 1; f++) frame();
     expect(shown).toEqual([0.98, 1.02]);
+  });
+
+  it("shows a rebuild that has started, then the newest view's, and never begins one asked for between", () => {
+    const { jobs, frame, time } = scheduler();
+    const begun: number[][] = [];
+    const shown: number[][] = [];
+    const rebuilds = createRebuilds({
+      name: "stand-in",
+      cell: 1,
+      origin: cellOrigin(1),
+      *rebuild(x, z): Slices {
+        begun.push([x, z]);
+        // Eight slices of 3 ms: two a frame's share.
+        for (let i = 0; i < 8; i++) {
+          time.now += 3;
+          yield;
+        }
+        shown.push([x, z]);
+      },
+      jobs,
+    });
+    rebuilds.update(0.98, 0.98);
+    frame();
+    // A walk that crosses a line, then two more while that rebuild runs: an x line, a z line, an x line back.
+    expect(rebuilds.update(1.0, 0.99)).toBe("later");
+    frame();
+    expect(rebuilds.update(1.02, 1.0)).toBe("later");
+    frame();
+    expect(rebuilds.update(0.99, 1.01)).toBe("later");
+    expect(rebuilds.pending()).toBe(true);
+    for (let f = 0; f < 2 * SYNC_LATE_FRAMES_MAX && rebuilds.pending(); f++) frame();
+    expect(shown).toEqual([[0.98, 0.98], [1.0, 0.99], [0.99, 1.01]]);
+    expect(begun).toEqual(shown);
+    expect(rebuilds.pending()).toBe(false);
   });
 
   it("builds a view that moves faster than any travel at once, and drops the rebuild it overtakes", () => {
