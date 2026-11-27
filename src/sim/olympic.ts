@@ -41,6 +41,7 @@ import {
   registerTerrainVariant, type LakeSource, type TerrainSample, type TerrainVariant, type WaterBodySource,
 } from "./terrain.js";
 import type { FeatureMask } from "./features.js";
+import { beachTunables } from "./beach.js";
 
 // ---- Tunables ---------------------------------------------------------------
 export const SEA_LEVEL = 0;
@@ -1090,7 +1091,7 @@ export type CoastOverlay = {
   featureMask?(seed: number, x: number, z: number, h: number): FeatureMask;
 } & Pick<
   TerrainVariant,
-  "trailDistance" | "trailGraph" | "sceneryLandmarks" | "landmarkMask" | "prepare" | "install" | "isPrepared" | "shoreStrip" | "clearing" | "wildlifeGround" | "clutterStands"
+  "trailDistance" | "trailGraph" | "sceneryLandmarks" | "landmarkMask" | "prepare" | "install" | "isPrepared" | "shoreStrip" | "clearing" | "wildlifeGround" | "clutterStands" | "beach"
 >;
 
 /** The place laid over the coast in this thread, once the coast is registered with one. */
@@ -1104,7 +1105,7 @@ let overlay: CoastOverlay | null = null;
 export function registerOlympic(place: CoastOverlay | null): void {
   registerTerrainVariant({
     name: "olympic",
-    tunables: place === null ? COAST_TUNABLES : { ...COAST_TUNABLES, ...place.tunables },
+    tunables: place === null ? COAST_TUNABLES : { ...COAST_TUNABLES, ...place.tunables, ...(place.beach === undefined ? {} : beachTunables(place.beach)) },
     waterLevel: SEA_LEVEL,
     waterBodies: waterBodiesHook,
     coveMask: coveMaskHook,
@@ -1123,6 +1124,7 @@ export function registerOlympic(place: CoastOverlay | null): void {
     clearing: place?.clearing,
     wildlifeGround: place?.wildlifeGround,
     clutterStands: place?.clutterStands,
+    beach: place?.beach,
     sample: olympicSample,
   });
   overlay = place;

@@ -66,6 +66,18 @@ heights of the sun: the grade wears the two the sun stands between, mixed, at ev
 It is a `Partial<GameLook>` (`src/game/gameLook.ts`): what a game leaves out is the engine's own, so a
 game that gives none renders as the engine always has.
 
+A game's place (`CoastOverlay`, `src/sim/olympic.ts`, handed to `registerOlympic`) can give a `beach`, which lays things on its sand from the
+models the engine already ships, and draws them from the ground clutter's own models, so nothing is downloaded: `beach: {}` turns on heaps of kelp
+and eelgrass along the high-tide lines (wandering 10 to 20 cm of height, in clumps with gaps), cobbles and pebble patches (5 to 30 cm, half-sunk, where
+the paint lays its pebbles and at the storm line), small driftwood (0.3 to 1.2 m, along the same lines) and dune grass (from the storm line to the soil,
+sparse at the line and thicker inland). Each is a density from 0 to 1 that the place may give (`{ wrack, cobbles, driftwood, duneGrass }`; left out, 1; 0, none).
+The tide lines stand at 0.9 m (`WRACK_LINE_HEIGHT`), 0.45 m (`OLD_WRACK_LINE_HEIGHT`) and 1.7 m (`STORM_LINE_HEIGHT`) above the still sea (`src/sim/tideLines.ts`).
+They are placed by the simulation, so two players compute the same pieces, from random streams of their own; they are solid to nothing, and the place's
+densities are part of its level id. A place that gives no `beach` is exactly the world it was: the same clutter, the same streams, the same level id. They are
+kept off ground the place has made by the same hooks as the clutter: its `featureMask` (`loose` for the heaps, the cobbles and the driftwood, `clutter` for the
+grass), its shore strip, and its `clutterStands` (asked as the litter, a rock, driftwood and grass: `BEACH_STANDS_AS`). The pieces are five draws on every tier (the low tier
+draws at most half the density, and a smaller reach); the game registers nothing more.
+
 A game's server is a package of the engine's, released as a second tarball beside the engine's, so
 that running a server needs none of the engine's 116 MB of game files:
 

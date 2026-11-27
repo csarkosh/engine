@@ -46,9 +46,11 @@ import {
   setPbrMetallicReflectance,
   type EngineContext, type MaterialPlugin, type PluginUniformBlock, type Mesh, type PbrMaterialProps, type SceneContext,
 } from "@babylonjs/lite";
+import { activeTerrainVariant } from "../../sim/terrain.js";
 import { CLUTTER_CLASS_COUNT, CLUTTER_DRIFTLOG, CLUTTER_GRASS_CELL, CLUTTER_HIGHPLANT, CLUTTER_SHRUB, CLUTTER_WETPLANT } from "../../sim/clutter.js";
 import { modelUrl } from "../assetUrls.js";
 import { clutterFadeEdges, coverWiden } from "../clutterField.js";
+import { createBeachMeshes, type BeachMeshes } from "./beachMeshes.js";
 import {
   CLUTTER_MODEL_IDS, CUT_CLASSES, DRIFTLOG_BLEACH, FAR_LOD, FOLIAGE_BY_CLASS, NEAR_LOD, SHRUB_F0, SHRUB_ROUGHNESS, WET_CAP_BY_CLASS, clutterLodNames,
   clutterNearLodName, cutModel, seatDriftLogs,
@@ -154,6 +156,8 @@ export function createClutterMeshes(engine: EngineContext, scene: SceneContext, 
   /** The meshes that draw each bucket of the lists, once the models have landed. */
   const drawnBy = new Map<ClutterBucket, ListMesh[]>();
   let lists: ClutterLists | null = null;
+  /** What lies on the beach, where the place has one (`sim/beach.ts`): drawn from this shell's own models. */
+  let beach: BeachMeshes | null = null;
   /** Each material's place among the draws. */
   const orders = createDrawOrders(DRAW_ORDER.clutter);
   let disposed = false;
@@ -393,6 +397,19 @@ export function createClutterMeshes(engine: EngineContext, scene: SceneContext, 
     adopt(rows);
     // An eye that arrived while the models loaded is honoured now.
     maybeBuild();
+    // The beach's heaps, cobbles, driftwood and tufts, only where the place gave a beach: from the files this shell has read.
+    if (activeTerrainVariant().beach !== undefined) {
+      const made = await createBeachMeshes(engine, scene, seed, {
+        reach: radiusScale, low: !nearBlades, eye: options.eye, frame: options.frame, wet: options.wet, air: options.air, shared: options.shared,
+        model: (id, lods) => model(id, lods), jobs: options.jobs, firstBuilds: options.firstBuilds, uploads: options.uploads,
+      });
+      if (disposed) {
+        made.dispose();
+        return;
+      }
+      beach = made;
+      if (!Number.isNaN(camX)) beach.update(camX, camZ);
+    }
   }
 
   const ready = load().catch((error: unknown) => {
@@ -407,6 +424,7 @@ export function createClutterMeshes(engine: EngineContext, scene: SceneContext, 
       camX = x;
       camZ = z;
       maybeBuild();
+      beach?.update(x, z);
     },
     cull(pose) {
       if (disposed || lists === null || holding) return;
@@ -417,8 +435,9 @@ export function createClutterMeshes(engine: EngineContext, scene: SceneContext, 
     },
     ready,
     drawn() {
-      let shown = 0;
-      let instances = 0;
+      const onBeach = beach?.drawn() ?? { meshes: 0, instances: 0 };
+      let shown = onBeach.meshes;
+      let instances = onBeach.instances;
       for (const targets of drawnBy.values()) {
         for (const target of targets) {
           if (target.count === 0) continue;
@@ -432,6 +451,8 @@ export function createClutterMeshes(engine: EngineContext, scene: SceneContext, 
       if (disposed) return;
       disposed = true;
       rebuilds.dispose();
+      beach?.dispose();
+      beach = null;
       loads.abort();
       for (const mesh of meshes) {
         removeFromScene(scene, mesh);

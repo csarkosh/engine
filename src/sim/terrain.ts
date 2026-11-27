@@ -14,6 +14,7 @@ import type { TrailGraph } from "./trail.js";
 import type { Landmark, LandmarkMask } from "./landmarks.js";
 import type { FeatureMask, Lobe } from "./features.js";
 import type { LakeShape } from "./lakeShape.js";
+import type { BeachOptions } from "./beach.js";
 
 export type TerrainSample = {
   /** Height in metres. */
@@ -123,6 +124,13 @@ export type TerrainVariant = {
    * declares what shapes it in its tunables.
    */
   clutterStands?(seed: number, cls: number, x: number, z: number): boolean;
+  /**
+   * What lies on the beach, from the models the engine ships: the wrack at the tide lines, cobbles, small
+   * driftwood and dune grass (`beach.ts`), a density each, 0 for none. Absent, nothing of the kind is placed
+   * or drawn and the world is what it was. A place that sets it adds its densities to its tunables, which are
+   * part of the level id (`beachTunables`).
+   */
+  beach?: BeachOptions;
   sample(worldSeed: number, x: number, z: number): TerrainSample;
 };
 
