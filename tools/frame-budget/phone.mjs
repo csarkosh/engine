@@ -226,7 +226,7 @@ async function measureView(session, options, stills, view, still, rowsFile, abou
       const row = rowOf(w, { ...r, readyS, jobs: jobsOf(r.readings) }, { ...about, view: view.name, walking: view.walk === true, phone: phoneState() });
       appendFileSync(rowsFile, JSON.stringify(row) + "\n");
       rows.push(row);
-      const jobs = row.jobs === null ? "" : `  jobs ${row.jobs.ms} ms (${row.jobs.lateMs} late in ${row.jobs.lateFrames} frames, ${row.jobs.overdueJobs} run to their end)`;
+      const jobs = row.jobs === null ? "" : `  jobs ${row.jobs.ms} ms (${row.jobs.lateMs} late in ${row.jobs.lateFrames} frames, ${row.jobs.overdueJobs} overdue)`;
       console.log(`  ${view.name} w${w}: mean ${row.mean} ms  p95 ${row.p95}  max ${row.max}  (${row.fps} fps, ${row.over20} over 20 ms, ${row.stalls} stalls)${jobs}  canvas ${r.canvasStart.join("x")}  ready ${readyS}s`);
     }
     if (options.profile) {

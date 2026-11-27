@@ -37,7 +37,10 @@
  * where a crossing's work fits in six frames of the ordinary share no job is
  * ever late. The hard bound stays for what the soft one cannot meet, a clock
  * that jumped (a tab hidden for a minute) or a job starved: one begun
- * `SYNC_OVERDUE_MS` ago is run to its end in one frame, as a first build is.
+ * `SYNC_OVERDUE_MS` ago is overdue, and goes before the late ones with the
+ * frame's largest share, `SYNC_OVERDUE_BUDGET_MS`, by the same rule; what is
+ * left of it goes on next frame, again at that share, and no other share of
+ * the frame gives it more.
  *
  * Which crossings wait and which do not is each shell's `crossingAt`: the
  * first build, a teleport (a step no travel makes in one frame) and a view moving
@@ -118,13 +121,13 @@ export const SYNC_LATE_MS_MAX = 100;
 export const SYNC_LATE_BUDGET_MS = 8;
 
 /**
- * The age (ms) at which a job is run to its end in one frame whatever the
- * share: the hard bound for what the share cannot meet. A tab hidden for a
- * minute stops its frames while its clock runs on, so every pending job is
- * overdue at once on its next frame, and the next frame runs them all to
- * their end, as a first build does; a job starved by others, and replaced
- * crossing after crossing because it never ran a slice, is overdue a second
- * after the first crossing that began it. A job that has started is not
+ * The age (ms) at which a job is overdue and given the overdue share
+ * (`SYNC_OVERDUE_BUDGET_MS`), ahead of the late ones: the hard bound for what
+ * the late share cannot meet. A tab hidden for a minute stops its frames while
+ * its clock runs on, so every pending job is overdue at once on its next
+ * frame; a job starved by others, and replaced crossing after crossing
+ * because it never ran a slice, is overdue a second after the first crossing
+ * that began it. A job that has started is not
  * replaced (`SyncJobs.begin`), so a view that crosses lines faster than its
  * jobs end no longer makes them overdue by asking again. A second is ten
  * times the soft bound and three to four of a walk's crossings (a ring
@@ -132,6 +135,16 @@ export const SYNC_LATE_BUDGET_MS = 8;
  * device cannot keep up.
  */
 export const SYNC_OVERDUE_MS = 1000;
+
+/**
+ * The most a frame's `run` spends on overdue jobs (ms), half as much again as
+ * the late share: a job a second old has the frame's largest share, not the
+ * frame. A frame that returns from a hidden tab finds every job overdue and
+ * works them off over the next frames at this share, oldest first, where it
+ * ran them all whole in one long frame; a device that cannot keep up shows a
+ * later picture, not a stopped one.
+ */
+export const SYNC_OVERDUE_BUDGET_MS = 12;
 
 /**
  * The most a frame has spent (ms) when a patient job's one slice a frame may still start: the late share and a slice.
@@ -325,7 +338,7 @@ export type SyncJobsLast = {
   /** How many of them ran as a late job's, past the ordinary budget, and how many jobs were late as the share began. */
   readonly late: number;
   readonly lateJobs: number;
-  /** How many ran as an overdue job's, to its end, and how many jobs that was. */
+  /** How many ran as an overdue job's, under the overdue share, and how many jobs were overdue as the share began. */
   readonly overdue: number;
   readonly overdueJobs: number;
   /** The jobs completed, and the idle slices run. */
@@ -342,7 +355,7 @@ export type SyncJobsLast = {
   /** The milliseconds the slices took, how many of those a late or overdue run took, and the milliseconds by the jobs' names. */
   readonly ms: number;
   readonly lateMs: number;
-  /** How many of those milliseconds an overdue run took (a job run to its end in one frame), in all and by owner. A late run's are in `lateMs` too. */
+  /** How many of those milliseconds the overdue share took, in all and by owner. They are in `lateMs` too. */
   readonly overdueMs: number;
   readonly overdueOwners: Readonly<Record<string, number>>;
   /**
@@ -379,8 +392,8 @@ export type SyncJobs = {
    * or as a slice of it throws, they are begun as a job of their own, in that
    * frame and at that slice's reading of the clock, queued as a new job is. A
    * fast view's jobs, replaced whenever it asked, were replaced until a second
-   * old and then run whole in one frame. A `patient` job is never late: it
-   * queues behind every other and is never run to its end at once. */
+   * old and then overdue. A `patient` job is never late or overdue: it queues
+   * behind every other and has only the share they leave, and the floor. */
   begin(owner: object, slices: Slices, patient?: boolean, name?: string): void;
   /** Drops `owner`'s pending job unfinished, and the request waiting behind
    * it; its meshes keep what they drew. Slices dropped here or by `begin` are
@@ -391,8 +404,9 @@ export type SyncJobs = {
   /** Sets `owner`'s idle work, replacing any it has (null clears it): slices
    * run only with the budget left while no job is pending. */
   idle(owner: object, slices: Slices | null): void;
-  /** This frame's share: the overdue jobs to their end, the late jobs' slices
-   * until the late share has gone, then the others' until the budget is spent. Call once a frame, after every shell's update. */
+  /** This frame's share: the overdue jobs' slices until the overdue share has
+   * gone, the late jobs' until the late share has, then the others' until the
+   * budget is spent. Call once a frame, after every shell's update. */
   run(): void;
   /** The clock (ms) as the last `run` began, NaN before the first: a frame's
    * time for `crossingAt`, read without another reading of the clock. */
@@ -515,6 +529,10 @@ export function createSyncJobs(clock: () => number): SyncJobs {
   /** Whether `job`, as a share begins at `now`, is late: begun too many frames or too long ago, and not patient. */
   const isLate = (job: Job, now: number): boolean =>
     !job.patient && (frame - job.begun >= SYNC_LATE_FRAMES_MAX || now - job.begunAt >= SYNC_LATE_MS_MAX);
+
+  /** Whether `job`, as a share begins at `now`, is overdue: begun `SYNC_OVERDUE_MS` ago, and not patient. A request
+   * begun as the job ahead of it applies takes that slice's reading, so it is never overdue in the frame it begins. */
+  const isOverdue = (job: Job, now: number): boolean => !job.patient && now - job.begunAt >= SYNC_OVERDUE_MS;
 
   function remove(job: Job): void {
     const at = queue.indexOf(job);
@@ -717,39 +735,50 @@ export function createSyncJobs(clock: () => number): SyncJobs {
         const owed = start - job.owedSince;
         if (owed > (last.owedMs[job.name] ?? 0)) last.owedMs[job.name] = owed;
       }
-      for (let i = 0; i < queue.length; i++) if (isLate(queue[i] as Job, start)) last.lateJobs++;
-      // A job begun `SYNC_OVERDUE_MS` ago goes to its end: the hard bound, for
-      // a clock that jumped or a job starved. Its last slice takes it out of
-      // the queue, so the next job moves up into its index. Indexed rather than
+      for (let i = 0; i < queue.length; i++) {
+        const job = queue[i] as Job;
+        if (isLate(job, start)) last.lateJobs++;
+        if (isOverdue(job, start)) last.overdueJobs++;
+      }
+      // The overdue jobs first, oldest first, until the overdue share has
+      // gone: the hard bound, for a clock that jumped or a job starved. An
+      // overdue job whose next slice would not fit in what is left waits for
+      // the next frame (unless nothing has run yet this frame), and the
+      // overdue jobs behind it go on. A job's last slice takes it out of the
+      // queue, so the next job moves up into its index. Indexed rather than
       // iterated over a copy: this runs every frame, and allocates nothing.
       for (let i = 0; i < queue.length;) {
         const job = queue[i] as Job;
-        if (job.patient || start - job.begunAt < SYNC_OVERDUE_MS) {
+        if (!isOverdue(job, start)) {
           i++;
           continue;
         }
-        last.overdueJobs++;
         // Each slice after a reading, so each is charged its own time.
         for (;;) {
-          tick();
+          const spent = tick() - start;
+          if (spent >= SYNC_OVERDUE_BUDGET_MS || (last.slices > 0 && spent + expected(job) > SYNC_OVERDUE_BUDGET_MS)) {
+            i++;
+            break;
+          }
           const done = slice(job, true, true);
           last.overdue++;
           if (done) break;
         }
       }
       // Then the late jobs, oldest first, whose slices go before every
-      // other's: until the late share has gone. A late job whose next slice
-      // would not fit in what is left waits for the next frame (unless nothing
-      // has run yet this frame), and the late jobs behind it go on.
-      for (let i = 0, ran = last.slices; i < queue.length;) {
+      // other's: until the late share has gone. The overdue ones have had
+      // theirs. A late job whose next slice would not fit in what is left
+      // waits for the next frame (unless nothing has run yet this frame, an
+      // overdue job's slices included), and the late jobs behind it go on.
+      for (let i = 0; i < queue.length;) {
         const job = queue[i] as Job;
-        if (!isLate(job, start)) {
+        if (!isLate(job, start) || isOverdue(job, start)) {
           i++;
           continue;
         }
         for (;;) {
           const spent = tick() - start;
-          if (spent >= SYNC_LATE_BUDGET_MS || (last.slices > ran && spent + expected(job) > SYNC_LATE_BUDGET_MS)) {
+          if (spent >= SYNC_LATE_BUDGET_MS || (last.slices > 0 && spent + expected(job) > SYNC_LATE_BUDGET_MS)) {
             i++;
             break;
           }
@@ -761,12 +790,14 @@ export function createSyncJobs(clock: () => number): SyncJobs {
       // Then slices, oldest job first and the patient ones last, while the
       // frame's share lasts. A job whose
       // next slice would not fit in what is left waits for the next frame
-      // (unless nothing has run yet this frame), and the jobs behind it go on.
+      // (unless nothing has run yet in this loop), and the jobs behind it go on.
+      // An overdue job has had its share: one whose next slice did not fit in
+      // it waits for a frame it is first in, not for this loop's first slice.
       for (let i = 0, ran = last.slices; i < queue.length;) {
         const spent = tick() - start;
         if (spent >= SYNC_BUDGET_MS) break;
         const job = queue[i] as Job;
-        if (last.slices > ran && spent + expected(job) > SYNC_BUDGET_MS) {
+        if (isOverdue(job, start) || (last.slices > ran && spent + expected(job) > SYNC_BUDGET_MS)) {
           i++;
           continue;
         }

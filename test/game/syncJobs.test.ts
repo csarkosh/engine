@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { runBySlices } from "../../testing/sliceRun.js";
 import {
   SLICE_READ_UNITS, SLICE_TARGET_MS, SYNC_BUDGET_MS, SYNC_PATIENT_MAX_MS, SYNC_PATIENT_WAIT_FRAMES, SYNC_LATE_BUDGET_MS, SYNC_LATE_FRAMES_MAX, SYNC_LATE_MS_MAX, SYNC_OVERDUE_MS,
+  SYNC_OVERDUE_BUDGET_MS,
   createCrossing, createSyncJobs, crossingAt, finish, nextCrossing, sliceDue, sortSlices, syncJobsRecord, turn,
   type Slices, type SyncJobs,
 } from "../../src/game/syncJobs.js";
@@ -32,7 +33,7 @@ function job(clock: { advance(ms: number): void }, slices: number, ms: number, d
 
 describe("the scheduler", () => {
   it("names its budget and its lateness bounds", () => {
-    expect([SYNC_BUDGET_MS, SYNC_LATE_FRAMES_MAX, SYNC_LATE_MS_MAX, SYNC_LATE_BUDGET_MS, SYNC_OVERDUE_MS, SYNC_PATIENT_MAX_MS]).toEqual([4, 6, 100, 8, 1000, 9.5]);
+    expect([SYNC_BUDGET_MS, SYNC_LATE_FRAMES_MAX, SYNC_LATE_MS_MAX, SYNC_LATE_BUDGET_MS, SYNC_OVERDUE_MS, SYNC_OVERDUE_BUDGET_MS, SYNC_PATIENT_MAX_MS]).toEqual([4, 6, 100, 8, 1000, 12, 9.5]);
     expect([SLICE_TARGET_MS, SLICE_READ_UNITS]).toEqual([1.5, 8]);
   });
 
@@ -122,7 +123,7 @@ describe("the scheduler", () => {
     expect(jobs.pending(owner)).toBe(false);
   });
 
-  it("runs every pending job to its end at once when the clock jumps, as a first build does", () => {
+  it("gives every pending job the overdue share when the clock jumps, oldest first, over the frames after", () => {
     let now = 0;
     const jobs = createSyncJobs(() => now);
     const clock = { advance: (ms: number) => { now += ms; } };
@@ -131,12 +132,16 @@ describe("the scheduler", () => {
     jobs.begin({}, job(clock, 100, 0.125, b, () => jobs.frame));
     jobs.run();
     // A tab hidden for a minute: the next frame's clock is 60 s on, so both are
-    // overdue. The first job's other 68 slices and the second's 100, all at
-    // once, none of them under the late share.
+    // overdue. The overdue share is 96 of these slices: the first job's other
+    // 68, then 28 of the second's, none of them under the late share.
     now += 60_000;
     jobs.run();
-    expect([a.at, b.at, jobs.last.overdue, jobs.last.overdueJobs, jobs.last.late]).toEqual([1, 1, 168, 2, 0]);
-    expect(jobs.last.lateMs).toBe(jobs.last.ms);
+    expect([a.at, b.at, jobs.last.overdue, jobs.last.overdueJobs, jobs.last.late]).toEqual([1, null, 96, 2, 0]);
+    expect([jobs.last.ms, jobs.last.lateMs]).toEqual([12, 12]);
+    // The second's other 72 the frame after.
+    jobs.run();
+    expect([a.at, b.at, jobs.last.overdue, jobs.last.overdueJobs, jobs.last.late]).toEqual([1, 2, 72, 1, 0]);
+    expect([jobs.last.ms, jobs.last.lateMs]).toEqual([9, 9]);
   });
 
   it("spends a frame's budget and at most one slice past it, oldest job first", () => {
@@ -231,20 +236,29 @@ describe("the scheduler", () => {
     expect(ran).toEqual(["second"]);
   });
 
-  it("runs a job to its end when it is overdue, whatever the share", () => {
+  it("gives a job the overdue share a frame when it is overdue, and no more, until it ends", () => {
     const t = testClock();
     const jobs = createSyncJobs(t.clock);
     const done = { at: null as number | null };
     const owner = {};
     jobs.begin(owner, job(t, 400, 1, done, () => jobs.frame));
     jobs.run();
-    // A frame whose clock is a second on: the whole of what is left, in one go.
+    // A frame whose clock is a second on: twelve of the 396 slices left, and the rest over the frames after.
     t.advance(SYNC_OVERDUE_MS);
     const before = t.clock();
     jobs.run();
-    expect(done.at).toBe(1);
-    expect([jobs.last.overdueJobs, jobs.last.overdue]).toEqual([1, 396]);
-    expect(t.clock() - before).toBe(396);
+    expect(done.at).toBeNull();
+    expect([jobs.last.overdueJobs, jobs.last.overdue]).toEqual([1, 12]);
+    expect(t.clock() - before).toBe(12);
+    expect(jobs.pending(owner)).toBe(true);
+    const overdue: number[] = [];
+    while (done.at === null && overdue.length < 100) {
+      jobs.run();
+      overdue.push(jobs.last.overdue);
+    }
+    // 396 is 33 shares of 12: shown in frame 33.
+    expect(done.at).toBe(33);
+    expect(overdue).toEqual(Array.from({ length: 32 }, () => 12));
     expect(jobs.pending(owner)).toBe(false);
   });
 
@@ -259,11 +273,15 @@ describe("the scheduler", () => {
       t.advance(250);
       jobs.begin(owner, job(t, 1000, 1, done[i] as { at: number | null }, () => jobs.frame));
     }
-    // Begun at 0, replaced at 250, 500 and 750 ms, overdue when a frame starts a second on: the newest, run whole.
+    // Begun at 0, replaced at 250, 500 and 750 ms, overdue when a frame starts a second on: the newest, at the overdue share.
     t.advance(250);
     jobs.run();
-    expect([jobs.last.overdueJobs, jobs.last.overdue, jobs.last.held]).toEqual([1, 1000, 0]);
-    expect(done.map((d) => d.at)).toEqual([null, null, null, 0]);
+    expect([jobs.last.overdueJobs, jobs.last.overdue, jobs.last.held]).toEqual([1, 12, 0]);
+    expect(done.map((d) => d.at)).toEqual([null, null, null, null]);
+    // Its 1000 slices are 83 shares of 12 and 4: shown in frame 83.
+    for (let f = 1; f < 100 && (done[3] as { at: number | null }).at === null; f++) jobs.run();
+    expect(done.map((d) => d.at)).toEqual([null, null, null, 83]);
+    expect([jobs.last.overdueJobs, jobs.last.overdue]).toEqual([1, 4]);
   });
 
   it("makes a started job asked for again and again overdue only by its own age, and begins the newest request fresh", () => {
@@ -281,10 +299,19 @@ describe("the scheduler", () => {
       if (jobs.last.overdueJobs > 0) overdueAt = f;
     }
     // The first request was replaced before frame 0 ran it; its replacement started there and is itself 1000 ms of
-    // work, so it is overdue a second after the first crossing all the same, and shown. Those asked for while it ran
-    // waited, the newest in the place of the one before it; the newest is begun as it is shown, and is not overdue.
+    // work, so it is overdue a second after the first crossing all the same, and given the overdue share. Those asked
+    // for while it ran waited, the newest in the place of the one before it.
     expect(overdueAt).toBe(3);
-    expect(done.map((d) => d.at)).toEqual([null, jobs.frame - 1, null, null, null]);
+    expect([jobs.last.overdueJobs, jobs.last.overdue]).toEqual([1, 12]);
+    expect(done.map((d) => d.at)).toEqual([null, null, null, null, null]);
+    // Three late shares of 8 and one of 12 leave 964 slices: 80 shares more and 4, shown in frame 84. The newest is
+    // begun as it is shown, and is not overdue.
+    for (let f = 4; f < 200 && (done[1] as { at: number | null }).at === null; f++) {
+      t.advance(250);
+      jobs.run();
+    }
+    expect(done.map((d) => d.at)).toEqual([null, 84, null, null, null]);
+    expect([jobs.last.overdueJobs, jobs.last.overdue]).toEqual([1, 4]);
     expect(jobs.pending(owner)).toBe(true);
     t.advance(250);
     jobs.run();
@@ -643,6 +670,155 @@ describe("the scheduler", () => {
       return "built";
     })());
     expect([result, slices]).toEqual(["built", 5]);
+  });
+});
+
+describe("an overdue job's share", () => {
+  /** A job named `name` whose slices take, one after another, the milliseconds of `slices` and say what the next takes
+   * (`said`, the same length less one; 0 says nothing); `done` is the frame its last ran in. */
+  function told(t: { advance(ms: number): void }, slices: number[], said: number[], done: { at: number | null }, frame: () => number): Slices {
+    return (function* () {
+      for (let i = 0; i < slices.length; i++) {
+        t.advance(slices[i] as number);
+        if (i < slices.length - 1) yield said[i] as number;
+      }
+      done.at = frame();
+    })();
+  }
+
+  it("runs the slices that fit in the overdue share each frame, and no frame spends more than the share and a slice", () => {
+    const t = testClock();
+    const jobs = createSyncJobs(t.clock);
+    const done = { at: null as number | null };
+    jobs.begin({}, job(t, 100, 1, done, () => jobs.frame));
+    t.advance(SYNC_OVERDUE_MS);
+    const overdue: number[] = [];
+    const ms: number[] = [];
+    while (done.at === null && overdue.length < 20) {
+      jobs.run();
+      overdue.push(jobs.last.overdue);
+      ms.push(jobs.last.ms);
+    }
+    // 100 slices of 1 ms: eight shares of 12 and the last 4, shown in frame 8.
+    expect(done.at).toBe(8);
+    expect(overdue).toEqual([12, 12, 12, 12, 12, 12, 12, 12, 4]);
+    expect(ms).toEqual([12, 12, 12, 12, 12, 12, 12, 12, 4]);
+    expect(Math.max(...ms)).toBeLessThanOrEqual(SYNC_OVERDUE_BUDGET_MS + 1);
+  });
+
+  it("works off a hidden tab's jobs at the overdue share, oldest first, over the frames after", () => {
+    const t = testClock();
+    const jobs = createSyncJobs(t.clock);
+    const done = ["a", "b", "c"].map(() => ({ at: null as number | null }));
+    // Three jobs of 20 slices of 1 ms; frame 0 runs four of the first.
+    for (const [i, name] of ["a", "b", "c"].entries()) jobs.begin({}, job(t, 20, 1, done[i] as { at: number | null }, () => jobs.frame), false, name);
+    jobs.run();
+    // A minute hidden: all three overdue at once.
+    t.advance(60_000);
+    const frames: number[][] = [];
+    while (done.some((d) => d.at === null) && frames.length < 10) {
+      const before = t.clock();
+      jobs.run();
+      const by = jobs.last.overdueOwners;
+      frames.push([t.clock() - before, jobs.last.overdue, jobs.last.overdueJobs, by.a ?? 0, by.b ?? 0, by.c ?? 0, jobs.last.late]);
+    }
+    // Each frame the share and no more, by the queue's order: a's 16, b's 20, c's 20.
+    expect(frames).toEqual([
+      [12, 12, 3, 12, 0, 0, 0],
+      [12, 12, 3, 4, 8, 0, 0],
+      [12, 12, 2, 0, 12, 0, 0],
+      [12, 12, 1, 0, 0, 12, 0],
+      [8, 8, 1, 0, 0, 8, 0],
+    ]);
+    expect(done.map((d) => d.at)).toEqual([2, 3, 5]);
+  });
+
+  it("starts an overdue slice said to be long when it is the frame's first, and holds it when another overdue job's ran first", () => {
+    const t = testClock();
+    const jobs = createSyncJobs(t.clock);
+    const ahead = { at: null as number | null }, long = { at: null as number | null };
+    // Frame 0: the first job's first slice takes nothing and says its next takes 5 ms, which does not fit, so it waits;
+    // the second's takes 1 ms and says its next takes 20.
+    jobs.begin({}, told(t, [0, 2], [5], ahead, () => jobs.frame), false, "ahead");
+    jobs.begin({}, told(t, [1, 20], [20], long, () => jobs.frame), false, "long");
+    jobs.run();
+    expect([jobs.last.slices, jobs.last.ms]).toEqual([2, 1]);
+    t.advance(SYNC_OVERDUE_MS);
+    // Frame 1: the first's slice, 2 ms, which ends it; 2 + 20 is past the share, and no later share of the frame takes
+    // it up, not even the ordinary one, which has 2 ms left and has run nothing yet.
+    jobs.run();
+    expect([ahead.at, long.at, jobs.last.overdue, jobs.last.slices, jobs.last.ms]).toEqual([1, null, 1, 1, 2]);
+    // Frame 2: first in the frame, it starts whatever it says.
+    jobs.run();
+    expect([long.at, jobs.last.overdue, jobs.last.ms]).toEqual([2, 1, 20]);
+  });
+
+  it("gives an overdue job nothing past its share, and a late job behind it only what the late share has left", () => {
+    const t = testClock();
+    const jobs = createSyncJobs(t.clock);
+    const ahead = { at: null as number | null }, long = { at: null as number | null }, late = { at: null as number | null };
+    // Two overdue jobs as in the test above, and behind them one begun 999 ms before the overdue frame: late, not overdue.
+    jobs.begin({}, told(t, [0, 5], [5], ahead, () => jobs.frame), false, "ahead");
+    jobs.begin({}, told(t, [1, 20], [20], long, () => jobs.frame), false, "long");
+    jobs.run();
+    jobs.begin({}, job(t, 20, 1, late, () => jobs.frame), false, "late");
+    t.advance(SYNC_OVERDUE_MS - 1);
+    jobs.run();
+    // The overdue share ends at 5 ms with the long slice held; the late job has the late share's other 3, the long
+    // slice nothing, and the ordinary share is past.
+    expect([jobs.last.overdueJobs, jobs.last.lateJobs, jobs.last.overdue, jobs.last.late, jobs.last.ms]).toEqual([2, 3, 1, 3, 8]);
+    expect([jobs.last.owners.ahead, jobs.last.owners.long, jobs.last.owners.late]).toEqual([5, 0, 3]);
+    expect([ahead.at, long.at, late.at]).toEqual([1, null, null]);
+
+    // An overdue share that runs past the late one: the late job behind it gets nothing.
+    const u = testClock();
+    const busy = createSyncJobs(u.clock);
+    busy.begin({}, job(u, 40, 1, { at: null }, () => busy.frame), false, "overdue");
+    u.advance(SYNC_OVERDUE_MS - SYNC_LATE_MS_MAX);
+    busy.begin({}, job(u, 20, 1, { at: null }, () => busy.frame), false, "late");
+    u.advance(SYNC_LATE_MS_MAX);
+    busy.run();
+    expect([busy.last.overdueJobs, busy.last.lateJobs, busy.last.overdue, busy.last.late, busy.last.ms]).toEqual([1, 2, 12, 0, 12]);
+    expect(busy.last.owners.late).toBeUndefined();
+  });
+
+  it("keeps a patient job a minute old to its floor slice", () => {
+    const t = testClock();
+    const jobs = createSyncJobs(t.clock);
+    const patient = { at: null as number | null };
+    jobs.begin({}, job(t, 100, 1, patient, () => jobs.frame), true, "patches");
+    t.advance(60_000);
+    const busy = {};
+    jobs.begin(busy, job(t, 400, 1, { at: null }, () => jobs.frame), false, "rings");
+    const frames: number[][] = [];
+    for (let f = 0; f < 3; f++) {
+      jobs.run();
+      frames.push([jobs.last.overdueJobs, jobs.last.overdue, jobs.last.lateJobs, jobs.last.floor, jobs.last.owners.patches ?? 0, jobs.last.owners.rings ?? 0]);
+    }
+    // Never overdue or late: the ordinary share goes to the job ahead, and the patient one has the floor's one slice.
+    expect(frames).toEqual([
+      [0, 0, 0, 1, 1, 4],
+      [0, 0, 0, 1, 1, 4],
+      [0, 0, 0, 1, 1, 4],
+    ]);
+  });
+
+  it("begins a request held behind an overdue job as of the slice that shows it, so it is not overdue in that frame", () => {
+    const t = testClock();
+    const jobs = createSyncJobs(t.clock);
+    const owner = {};
+    const first = { at: null as number | null }, held = { at: null as number | null };
+    jobs.begin(owner, job(t, 12, 1, first, () => jobs.frame), false, "forest");
+    jobs.run();
+    jobs.begin(owner, job(t, 30, 1, held, () => jobs.frame), false, "forest");
+    t.advance(2 * SYNC_OVERDUE_MS);
+    jobs.run();
+    // The first job's other 8 slices under the overdue share, which show it; the request held is begun at the last
+    // one's reading, after the share began, and is neither overdue nor late: the ordinary share is past, so it waits.
+    expect([first.at, held.at, jobs.last.overdueJobs, jobs.last.overdue, jobs.last.late, jobs.last.slices]).toEqual([1, null, 1, 8, 0, 8]);
+    expect(jobs.pending(owner)).toBe(true);
+    jobs.run();
+    expect([jobs.last.overdueJobs, jobs.last.lateJobs, jobs.last.overdue, jobs.last.slices]).toEqual([0, 0, 0, 4]);
   });
 });
 
@@ -1325,24 +1501,32 @@ describe("the read-out of what is built at once and how crossings were judged", 
     expect(syncJobsRecord(jobs.last).atOnceMs).toEqual({});
   });
 
-  it("tells a job run to its end because it was overdue from the same frame's ordinary slices", () => {
+  it("tells an overdue job's share from the same frame's ordinary slices", () => {
     const { jobs, advance } = watched();
     const done = { at: null as number | null };
     jobs.begin({}, job({ advance }, 30, 1, done, () => jobs.frame), false, "forest");
     advance(SYNC_OVERDUE_MS);
     jobs.begin({}, job({ advance }, 2, 0.25, { at: null }, () => jobs.frame), false, "props");
     jobs.run();
-    expect(done.at).toBe(0);
+    expect(done.at).toBeNull();
     expect(jobs.last.overdueJobs).toBe(1);
-    expect(jobs.last.overdueMs).toBeCloseTo(30, 9);
-    expect(jobs.last.overdueOwners.forest).toBeCloseTo(30, 9);
+    expect(jobs.last.overdueMs).toBeCloseTo(12, 9);
+    expect(jobs.last.overdueOwners.forest).toBeCloseTo(12, 9);
     expect(jobs.last.overdueOwners.props).toBeUndefined();
-    // The overdue run took the frame's share: it is all of what the frame spent, and counted as late's too.
+    // The overdue share took the frame's: it is all of what the frame spent, and counted as late's too. The ordinary
+    // share, already past, gave the job behind it nothing.
     expect(jobs.last.ms).toBeCloseTo(jobs.last.overdueMs, 9);
     expect(jobs.last.lateMs).toBeCloseTo(jobs.last.overdueMs, 9);
+    expect(jobs.last.owners.props).toBeUndefined();
+    // Twelve more, then the last six, which show it; then a frame with nothing overdue.
+    jobs.run();
+    expect([done.at, jobs.last.overdueMs, jobs.last.overdueOwners.forest]).toEqual([null, 12, 12]);
+    jobs.run();
+    expect([done.at, jobs.last.overdueMs, jobs.last.overdueOwners.forest, jobs.last.owners.props]).toEqual([2, 6, 6, undefined]);
     jobs.run();
     expect(jobs.last.overdueMs).toBe(0);
     expect(jobs.last.overdueOwners.forest).toBe(0);
+    expect(jobs.last.owners.props).toBe(0.5);
   });
 
   it("records each verdict with the rule that decided it, the step and the time it judged", () => {

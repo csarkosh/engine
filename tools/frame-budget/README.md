@@ -413,10 +413,11 @@ What a phone run is, against the Mac's and the rig's:
   the measurement mode is still asked for, so the page exposes `window.__syncJobs()`, the
   streaming jobs' milliseconds a frame by owner, which each window sums into its row's `jobs`: the
   slices and idle slices run, the jobs late as a frame began (`lateJobs`) and the slices run under
-  the late share (`late`), the jobs run to their end by the hard bound (`overdueJobs`, the slices
-  `overdue`, the frames `overdueFrames`), the longest single slice by owner (`longest`, counted from
+  the late share (`late`), the jobs overdue by the hard bound as a frame began, a second old
+  (`overdueJobs`), the slices run under the overdue share (`overdue`) and the frames that ran one
+  (`overdueFrames`), the longest single slice by owner (`longest`, counted from
   the window's own start) and the apply cost the scheduler has learned on the phone (`learned`).
-  Each reading also carries, for the frame it is read in, the milliseconds of overdue runs apart
+  Each reading also carries, for the frame it is read in, the milliseconds of the overdue share apart
   (`overdueMs`, `overdueOwners`), the builds made at once outside every budget by owner (`atOnce`
   counts, `atOnceMs` milliseconds; an owner that built none is left out), how long each owner's
   picture has owed a rebuild as the frame's share began (`owedMs`, the time since the oldest request

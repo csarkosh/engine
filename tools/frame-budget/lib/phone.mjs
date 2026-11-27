@@ -145,7 +145,7 @@ export function rowOf(window, sample, about) {
 /**
  * A window's jobs, summed over its frames' `jobs` readings (`window.__syncJobs()` in the measurement mode); null when no
  * frame carried one. The milliseconds and the slices are sums over the frames; `lateJobs` and `overdueJobs` count a job
- * once a frame it was late in or run to its end in; `longest` is the longest single slice by owner, the last reading's
+ * once a frame it was late or overdue in; `longest` is the longest single slice by owner, the last reading's
  * (the window began by resetting it), and `learned` the last reading's apply cost by owner.
  */
 export function jobsOf(frames) {
