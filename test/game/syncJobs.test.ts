@@ -1830,13 +1830,17 @@ describe("a slice that waits", () => {
     let slicesB = 0;
     jobs.begin({}, waiter(count));
     jobs.begin({}, (function* () {
-      slicesB++;
-      yield 20;
-      slicesB++;
-      yield 20;
+      for (;;) {
+        slicesB++;
+        yield 20;
+      }
     })());
+    // Frame 1: A waits and B runs a slice, which announces that its next takes 20 ms.
     jobs.run();
     expect([count.n, slicesB, jobs.last.slices, jobs.last.waits]).toEqual([1, 1, 1, 1]);
+    // Frame 2: that slice fits nowhere in the 4 ms share, so it runs only as the frame's first real slice, which A's wait must not have used.
+    jobs.run();
+    expect([count.n, slicesB, jobs.last.slices, jobs.last.waits]).toEqual([2, 2, 1, 1]);
   });
 
   it("a waiting job is tried again next frame", () => {
