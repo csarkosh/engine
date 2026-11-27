@@ -1138,7 +1138,7 @@ describe("layer boundaries", () => {
     expect(bad).toEqual([]);
     // Lite itself is loaded only by the modules that draw: the plugins, the pose and the light name its types alone.
     expect(lite.sort()).toEqual([
-      "game/lite/bladeMeshes.ts", "game/lite/brushMeshes.ts", "game/lite/cliffMeshes.ts", "game/lite/clutterMeshes.ts",
+      "game/lite/beachMeshes.ts", "game/lite/bladeMeshes.ts", "game/lite/brushMeshes.ts", "game/lite/cliffMeshes.ts", "game/lite/clutterMeshes.ts",
       "game/lite/dragonflyMeshes.ts", "game/lite/duffMeshes.ts", "game/lite/forestMeshes.ts", "game/lite/forestModels.ts",
       "game/lite/gpuTimeReadout.ts", "game/lite/groundTextures.ts", "game/lite/impostorBake.ts", "game/lite/lakeMeshes.ts", "game/lite/lakeMirror.ts",
       "game/lite/lakePanorama.ts", "game/lite/lineOnly.ts", "game/lite/lipMeshes.ts", "game/lite/listMeshes.ts", "game/lite/midgeMeshes.ts", "game/lite/mistMeshes.ts",

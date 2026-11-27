@@ -69,12 +69,12 @@ const SNOW_CLING_BAND = 0.3;
 /** Wavelength of the snow line's perturbation, in metres. */
 const SNOW_LINE_WAVELENGTH = 190;
 /** Wavelength of the forest-floor to grass variation, in metres. */
-const GROUND_WAVELENGTH = 34;
+export const GROUND_WAVELENGTH = 34;
 
 // Distinct constants so the two noise fields cannot correlate, which would show
 // as vegetation patches lining up with the snow line.
 const SNOW_SALT = 0x5e7a;
-const GROUND_SALT = 0x9a13;
+export const GROUND_SALT = 0x9a13;
 
 const FOREST_FLOOR: Rgb = { r: 0.11, g: 0.09, b: 0.06 };
 const GRASS: Rgb = { r: 0.09, g: 0.15, b: 0.06 };
@@ -112,7 +112,7 @@ export const DUFF_FLOOR_MAX = 0.75;
  * Safe to key on altitude alone: nothing inland of the blend window sits below
  * +12 m, so these bands can only paint the shore. */
 export const SAND_TOP = 4;
-const COAST_FADE_END = 9;
+export const COAST_FADE_END = 9;
 
 const SEABED: Rgb = { r: 0.1, g: 0.09, b: 0.075 };
 const SEABED_ROCK: Rgb = { r: 0.14, g: 0.14, b: 0.13 };
