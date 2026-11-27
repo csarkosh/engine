@@ -715,6 +715,13 @@ export type CoveredGround = {
   readonly reach: number;
   readonly fine: number;
   readonly cell: number;
+  /**
+   * The metres from a point to ground a game draws itself, where the covering surface has no triangle (it is no more
+   * than the true distance: `PavedGround`, `facePatches.ts`), and the margin round it the covering surface leaves bare:
+   * a triangle of a ring is left out only where its whole cell lies farther than `pavedMargin` from it. Both or neither.
+   */
+  readonly paved?: (x: number, z: number) => number;
+  readonly pavedMargin?: number;
 };
 
 /** The spacing (m) of the covering surface's points past `CoveredGround.fine`:
@@ -773,6 +780,16 @@ function* writeRingIndicesSlices(
           if (sb && sc) {
             keepAbc = !steep(a);
             keepBdc = !steep(d);
+            // Nothing covers the cell where it lies near ground the game paves: a point of it is at most half its
+            // diagonal from its centre, so the distance at the centre less that is a floor for the whole cell.
+            if ((!keepAbc || !keepBdc) && covered.paved !== undefined) {
+              const half = ring.spacing / 2;
+              const reachOf = covered.paved(ring.originX + ix * ring.spacing + half, ring.originZ + iz * ring.spacing + half) - half * Math.SQRT2;
+              if (reachOf <= (covered.pavedMargin ?? 0)) {
+                keepAbc = true;
+                keepBdc = true;
+              }
+            }
           }
         }
       }

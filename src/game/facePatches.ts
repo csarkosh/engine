@@ -47,6 +47,21 @@ import { waterGroundAt } from "./waterGround.js";
 export const FACE_PATCH_Z_OFFSET = -1;
 export const FACE_PATCH_Z_UNITS = -120;
 
+/**
+ * The ground a game paves, as a patch is told of it: the metres from (x, z) to that ground, nothing or less on it
+ * (the place's `pavedGround`, `sim/terrain.ts`, with the seed given). It must change no faster than one metre a metre,
+ * so a point's distance is never more than its true distance to the ground; a smaller number is always safe.
+ */
+export type PavedGround = (x: number, z: number) => number;
+
+/**
+ * The distance (m) from paved ground within which a patch has no relief. A patch makes no triangle with a vertex on
+ * paved ground; a vertex of a triangle that is made lies at most one grid diagonal of the widest spacing (2 m, 2.83 m)
+ * from one that is not, so under this margin (3 m) the edge a patch ends in is flat on the ground. The relief then
+ * rises by the taper (`PATCH_TAPER`) as it does from a cell outside the patched set.
+ */
+export const PATCH_PAVED_MARGIN = 3;
+
 /** The units of work (`sliceDue`) a vertex's paint and surface count: about four terrain samples. */
 const VERTEX_UNITS = 4;
 
@@ -184,6 +199,22 @@ function taperInto(ci: number, cj: number, open: number, x: number, z: number): 
 }
 
 /**
+ * The relief's share toward paved ground at a point `dist` metres from it, its gradient into taperDx/taperDz given
+ * the distance's own (`gx`, `gz`): 0 within PATCH_PAVED_MARGIN, a quintic step to 1 over the PATCH_TAPER beyond.
+ */
+function pavedShareInto(dist: number, gx: number, gz: number): number {
+  const t = (dist - PATCH_PAVED_MARGIN) / PATCH_TAPER;
+  if (t >= 1) return 1;
+  if (t <= 0) return 0;
+  const slope = stepTd(t) / PATCH_TAPER;
+  pavedDx = slope * gx;
+  pavedDz = slope * gz;
+  return stepT(t);
+}
+let pavedDx = 0;
+let pavedDz = 0;
+
+/**
  * The relief's share at (x, z), a point of cell (ci, cj), toward the
  * neighbours `open` flags: a quintic step of the distance from the point to
  * the nearest of their squares, 0 on it and 1 from PATCH_TAPER in. Every
@@ -234,7 +265,7 @@ function surfaceInto(
   seed: number, s: TerrainSample, x: number, z: number, ci: number, cj: number, open: number,
   ring: readonly TerrainSample[] | null, ri: number, rside: number,
   rock: number, loud: number, rockGm: number,
-  pos: Float64Array, nrm: Float64Array, at: number,
+  pos: Float64Array, nrm: Float64Array, at: number, paved: PavedGround | null = null, pavedAt = Infinity,
 ): void {
   const g2 = s.dx * s.dx + s.dz * s.dz;
   const mask = faceMask(Math.sqrt(g2));
@@ -243,7 +274,20 @@ function surfaceInto(
   // loudness: the ground the player stands on reads the same
   // (`sim/rockSurface.ts`, `rockRiseAt`).
   const rockMask = rock * (1 - faceMask(rockGm)) * loud;
-  const taper = mask === 0 && rockMask === 0 ? 0 : taperInto(ci, cj, open, x, z);
+  let taper = mask === 0 && rockMask === 0 ? 0 : taperInto(ci, cj, open, x, z);
+  if (taper > 0 && paved !== null && pavedAt < PATCH_PAVED_MARGIN + PATCH_TAPER) {
+    // Toward paved ground the relief fades as it does toward a cell outside the set: the distance's gradient by
+    // differences, since the game gives the distance alone.
+    const e = PATCH_CURVE_STEP;
+    const gx = (paved(x + e, z) - paved(x - e, z)) / (2 * e);
+    const gz = (paved(x, z + e) - paved(x, z - e)) / (2 * e);
+    pavedDx = 0;
+    pavedDz = 0;
+    const share = pavedShareInto(pavedAt, gx, gz);
+    taperDx = taperDx * share + taper * pavedDx;
+    taperDz = taperDz * share + taper * pavedDz;
+    taper *= share;
+  }
   const m = mask * taper;
   const mg = rockMask * taper;
   let kx = 0;
@@ -323,16 +367,23 @@ function surfaceInto(
  * scheduler's slice has used its time, to go on from the same point, so the
  * arrays are the ones a build at once makes, sample for sample in the same
  * order. A cell is 17 to 33 samples a side, 15 to 54 ms on a phone.
+ *
+ * Given `paved`, the ground a game draws itself, no triangle with a vertex on it (a distance of nothing or less) is
+ * made, the relief fades to nothing toward it (`PATCH_PAVED_MARGIN`), and a cell whose every triangle is left out has
+ * no patch. `indices` then holds only the triangles made, fewer than the band's pattern (`patchIndices`). Without it
+ * the patch is what it always was, bit for bit.
  */
 export function facePatchGeometry(
   seed: number, ci: number, cj: number, spacing: number, stitch: PatchStitch, trail: TrailGraph | null = null,
+  paved: PavedGround | null = null,
 ): FacePatch | null {
-  return finish(facePatchGeometrySlices(seed, ci, cj, spacing, stitch, trail));
+  return finish(facePatchGeometrySlices(seed, ci, cj, spacing, stitch, trail, paved));
 }
 
 /** `facePatchGeometry` in slices, ended by the scheduler's clock (`sliceDue`); returns the patch, or null. */
 export function* facePatchGeometrySlices(
   seed: number, ci: number, cj: number, spacing: number, stitch: PatchStitch, trail: TrailGraph | null = null,
+  paved: PavedGround | null = null,
 ): Slices<FacePatch | null> {
   const n = Math.round(PATCH_CELL / spacing);
   const side = n + 1;
@@ -340,6 +391,7 @@ export function* facePatchGeometrySlices(
   const x0 = ci * PATCH_CELL;
   const z0 = cj * PATCH_CELL;
   const samples: TerrainSample[] = new Array<TerrainSample>(count);
+  const pavedAt = paved === null ? null : new Float64Array(count);
   let steep = false;
   let rocky = false;
   for (let iz = 0; iz < side; iz++) {
@@ -347,6 +399,7 @@ export function* facePatchGeometrySlices(
     for (let ix = 0; ix < side; ix++) {
       const s = elevationSampleAt(seed, x0 + ix * spacing, z);
       samples[iz * side + ix] = s;
+      if (paved !== null && pavedAt !== null) pavedAt[iz * side + ix] = paved(x0 + ix * spacing, z);
       const g = Math.sqrt(s.dx * s.dx + s.dz * s.dz);
       if (!steep && faceMask(g) > 0) steep = true;
       if (!rocky && rockOfSlope(g) >= GROUND_ROCK_MIN) rocky = true;
@@ -354,7 +407,9 @@ export function* facePatchGeometrySlices(
     }
   }
   if (!steep && !rocky) return null;
-
+  // The grid's triangles that stand clear of paved ground; null if none does.
+  const indices = patchIndices(n, pavedAt);
+  if (indices.length === 0) return null;
 
   // At the curvature's own step the grid holds each point's neighbours for
   // its bend: the samples again, with a ring one step outside the cell.
@@ -406,7 +461,7 @@ export function* facePatchGeometrySlices(
       const loud = rock > 0 ? loudnessAt(seed, x, z) : 0;
       surfaceInto(
         seed, s, x, z, ci, cj, stitch.open, ring, (iz + 1) * rside + ix + 1, rside, rock, loud, rockGm,
-        pos, nrm, at * 3,
+        pos, nrm, at * 3, paved, pavedAt === null ? Infinity : (pavedAt[at] as number),
       );
       for (let c = 0; c < 3; c++) {
         positions[at * 3 + c] = pos[at * 3 + c] as number;
@@ -438,7 +493,16 @@ export function* facePatchGeometrySlices(
   if (stitch.south) stitchEdge(attrs, 0, 1, n);
   if (stitch.north) stitchEdge(attrs, n * side, 1, n);
 
-  const indices = new Uint16Array(n * n * 6);
+  return { positions, normals, colors, weights, weights2, cover, indices, vertexCount: count, triangleCount: indices.length / 3 };
+}
+
+/**
+ * The triangles of an `n` by `n` square grid (`n + 1` points a side, row by row), every one the band's pattern; given
+ * each point's distance from paved ground, only the triangles with no vertex on it (a distance above nothing).
+ */
+export function patchIndices(n: number, pavedAt: Float64Array | null = null): Uint16Array {
+  const side = n + 1;
+  const all = new Uint16Array(n * n * 6);
   let k = 0;
   for (let iz = 0; iz < n; iz++) {
     for (let ix = 0; ix < n; ix++) {
@@ -446,17 +510,22 @@ export function* facePatchGeometrySlices(
       const b = a + 1;
       const c = a + side;
       const d = c + 1;
+      const clear = (i: number): boolean => pavedAt === null || (pavedAt[i] as number) > 0;
       // The clipmap's winding (`ringGeometry`): Babylon is left-handed, and
       // the reverse order culls the patch away from above.
-      indices[k++] = a;
-      indices[k++] = b;
-      indices[k++] = c;
-      indices[k++] = b;
-      indices[k++] = d;
-      indices[k++] = c;
+      if (clear(a) && clear(b) && clear(c)) {
+        all[k++] = a;
+        all[k++] = b;
+        all[k++] = c;
+      }
+      if (clear(b) && clear(d) && clear(c)) {
+        all[k++] = b;
+        all[k++] = d;
+        all[k++] = c;
+      }
     }
   }
-  return { positions, normals, colors, weights, weights2, cover, indices, vertexCount: count, triangleCount: n * n * 2 };
+  return k === all.length ? all : all.slice(0, k);
 }
 
 /** `maskSlopeAt` at grid point (ix, iz) of a patch whose samples are
@@ -586,10 +655,12 @@ export function facePatchStitch(cells: readonly PatchCell[]): PatchStitch[] {
  * the coarser rings' lie on every band's grid, and ring 0's 1 m vertices,
  * in squares up to 90.5 m from the camera's cell's centre, are left out only
  * within `fine`, the far reach (80 m on low), where the patches are 1 m or
- * finer.
+ * finer. Where a game paves ground (`paved`), a patch has no triangle on it and none within a grid diagonal of it, so
+ * the rings keep every triangle that reaches within `PATCH_PAVED_MARGIN` of it (`CoveredGround.paved`).
  */
-export function facePatchCover(camX: number, camZ: number, reach: PatchReach): CoveredGround {
+export function facePatchCover(camX: number, camZ: number, reach: PatchReach, paved: PavedGround | null = null): CoveredGround {
   return {
+    ...(paved === null ? {} : { paved, pavedMargin: PATCH_PAVED_MARGIN }),
     x: (Math.floor(camX / PATCH_CELL) + 0.5) * PATCH_CELL,
     z: (Math.floor(camZ / PATCH_CELL) + 0.5) * PATCH_CELL,
     reach: reach.wide - PATCH_CELL * Math.SQRT2,

@@ -131,6 +131,15 @@ export type TerrainVariant = {
    * part of the level id (`beachTunables`).
    */
   beach?: BeachOptions;
+  /**
+   * The ground the game draws itself: the metres from a place to it, nothing or less on it. The terrain's patches of
+   * finer rock (`game/facePatches.ts`) make no triangle on it, nor leave their relief standing near it, so the
+   * game's own surface there is not drawn over by the engine's. It is ground the game keeps level, so the patches
+   * add nothing there. The value may be a lower bound of the distance but must not change faster than one metre a
+   * metre. Absent, no ground is the game's and the patches are as they were. It is the renderer's alone: the
+   * simulation never reads it, and it is no part of the tunables or the level id.
+   */
+  pavedGround?(seed: number, x: number, z: number): number;
   sample(worldSeed: number, x: number, z: number): TerrainSample;
 };
 
