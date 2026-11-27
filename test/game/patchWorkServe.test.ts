@@ -7,7 +7,7 @@ import {
   facePatchGeometry, type FacePatch, type PatchStitch,
 } from "../../src/game/facePatches.js";
 import {
-  createPatchServer, patchTransfer, type PatchCellAsk, type WorldPatchesRequest, type WorldPrepReply,
+  createPatchServer, patchTransfer, prepareSceneReply, prepareWorld, type PatchCellAsk, type WorldPatchesRequest, type WorldPrepReply,
 } from "../../src/game/worldWork.js";
 
 /**
@@ -196,5 +196,28 @@ describe("the world's worker serving a set of rock-face cells", () => {
     const patches = posted.filter((p) => p.reply.kind === "patch").map((p) => p.reply as Extract<WorldPrepReply, { kind: "patch" }>);
     expect(patches.length).toBe(3);
     for (const p of patches) expect(p.ms).toBe(5);
+  });
+});
+
+describe("what the world's requests report", () => {
+  const game = { startOf: () => null, spawnCells: () => [] };
+  const kinds = (posted: WorldPrepReply[]): string[] => posted.map((r) => r.kind);
+
+  it("prepareWorld is true where it ends with done, false with one failed for a terrain the sim does not know", () => {
+    const ok: WorldPrepReply[] = [];
+    expect(prepareWorld({ id: 1, seed: SEED, variant: VARIANT, skip: { prepared: true, passHash: true } }, (r) => ok.push(r), game)).toBe(true);
+    expect(kinds(ok)).toEqual(["done"]);
+    const bad: WorldPrepReply[] = [];
+    expect(prepareWorld({ id: 2, seed: SEED, variant: "nowhere" }, (r) => bad.push(r), game)).toBe(false);
+    expect(kinds(bad)).toEqual(["failed"]);
+  });
+
+  it("prepareSceneReply is true where it ends with done, false with one failed for a terrain the sim does not know", () => {
+    const ok: WorldPrepReply[] = [];
+    expect(prepareSceneReply({ id: 1, kind: "scene", seed: SEED, variant: VARIANT, tier: "low" }, (r) => ok.push(r), game)).toBe(true);
+    expect(kinds(ok)).toEqual(["scene", "done"]);
+    const bad: WorldPrepReply[] = [];
+    expect(prepareSceneReply({ id: 2, kind: "scene", seed: SEED, variant: "nowhere", tier: "low" }, (r) => bad.push(r), game)).toBe(false);
+    expect(kinds(bad)).toEqual(["failed"]);
   });
 });

@@ -75,9 +75,10 @@ export type WorldWorkGame = {
  * spawn reads, then `done`; either of the first two left out where the
  * request says the page holds it. A terrain
  * the sim does not know, a computation that throws or a result that cannot be
- * posted ends the run with one `failed`, and nothing after it.
+ * posted ends the run with one `failed`, and nothing after it. Returns true
+ * where the run ended with `done`, false where it ended with `failed`.
  */
-export function prepareWorld(request: WorldPrepRequest, post: (reply: WorldPrepReply) => void, game: WorldWorkGame): void {
+export function prepareWorld(request: WorldPrepRequest, post: (reply: WorldPrepReply) => void, game: WorldWorkGame): boolean {
   const { id, seed, variant } = request;
   try {
     setActiveTerrainVariant(variant);
@@ -89,8 +90,10 @@ export function prepareWorld(request: WorldPrepRequest, post: (reply: WorldPrepR
     const chunks = game.spawnCells(seed, PLAYER_HALF).map(({ cx, cz }) => generateChunk(seed, cx, cz));
     if (chunks.length > 0) post({ id, kind: "chunks", seed, variant, chunks });
     post({ id, kind: "done" });
+    return true;
   } catch (error) {
     post({ id, kind: "failed", message: error instanceof Error ? error.message : String(error) });
+    return false;
   }
 }
 
@@ -98,18 +101,21 @@ export function prepareWorld(request: WorldPrepRequest, post: (reply: WorldPrepR
  * The scene request's results: the scene, posted with every one of its typed
  * arrays' buffers in the transfer list, then `done`. An unknown terrain, a
  * sampling that throws or a scene that cannot be posted is one `failed`, and
- * nothing after it.
+ * nothing after it. Returns true where it ended with `done`, false where it
+ * ended with `failed`.
  */
 export function prepareSceneReply(
   request: WorldSceneRequest, post: (reply: WorldPrepReply, transfer: ArrayBuffer[]) => void, game: WorldWorkGame,
-): void {
+): boolean {
   const { id } = request;
   try {
     const scene = prepareScene(request.seed, request.variant, request.tier, game.startOf);
     post({ id, kind: "scene", scene }, sceneTransfer(scene));
     post({ id, kind: "done" }, []);
+    return true;
   } catch (error) {
     post({ id, kind: "failed", message: error instanceof Error ? error.message : String(error) }, []);
+    return false;
   }
 }
 
@@ -207,7 +213,8 @@ export function createPatchServer(
  * worker's messages are taken (a message to itself over a `MessageChannel`,
  * which a timer, clamped, would not give), so a request that arrives while a
  * set is built is served before the next cell. The seed and variant of the last
- * world or scene request served are the world a set is built for. Only inside
+ * world or scene request served, where it ended with `done`, are the world a
+ * set is built for; after one that failed there is none. Only inside
  * a worker: under Node, where a test imports `prepareWorld`, and on a page,
  * there is no WorkerGlobalScope, and this does nothing.
  */
@@ -227,9 +234,10 @@ export function serveWorldWork(game: WorldWorkGame): void {
         next();
         return;
       }
-      if ("kind" in request) prepareSceneReply(request, (reply, transfer) => self.postMessage(reply, { transfer }), game);
-      else prepareWorld(request, (reply) => self.postMessage(reply), game);
-      made = { seed: request.seed, variant: request.variant };
+      const served = "kind" in request
+        ? prepareSceneReply(request, (reply, transfer) => self.postMessage(reply, { transfer }), game)
+        : prepareWorld(request, (reply) => self.postMessage(reply), game);
+      made = served ? { seed: request.seed, variant: request.variant } : null;
     };
   }
 }
