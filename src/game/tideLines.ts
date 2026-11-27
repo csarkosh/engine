@@ -3,8 +3,8 @@
  * `shaders/sand/tide.wgsl`): a dark ragged line where the sea left its wrack, a fainter one from an older tide, and the storm line above
  * which the sand is paler and coarser. Raggedness wanders each by 10 to 20 cm in height.
  *
- * They are the simulation's own (`sim/tideLines.ts`), where the beach's scattered objects are placed and its shape is made, so what lies
- * on the sand lies on the line the ground draws: one number each, named here as the paint names them.
+ * They are the simulation's own (`sim/tideLines.ts`): the beach's scattered objects are placed at these same heights and its shape is
+ * made from them, so what lies on the sand lies on the line the ground draws. One number each, named here as the paint names them.
  *
  * Loads nothing.
  */
