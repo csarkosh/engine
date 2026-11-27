@@ -10,7 +10,7 @@ surfaceAlbedo=baseColor*input.vTerrainColor.rgb;
   let gdx=dpdx(uvG);let gdy=dpdy(uvG);
   let uvD=uvXZ*terrainDetail.x;
   let ddx=dpdx(uvD);let ddy=dpdy(uvD);
-  var gh=Hex(vec2<f32>(0.0),vec2<f32>(0.0),vec2<f32>(0.0),vec3<f32>(0.0));
+  var gh=Hex(vec2<f32>(0.0),vec2<f32>(0.0),vec2<f32>(0.0),vec3<f32>(0.0));${sandSetup}
   if(input.vTerrainW.x>0.0){
     gh=hexSetup(uvG);
   }
@@ -55,8 +55,8 @@ surfaceAlbedo=baseColor*input.vTerrainColor.rgb;
     }
     rah1=textureSample(terrainRAH,terrainSmp,uvF,1).rgb;
     rah2=textureSample(terrainRAH,terrainSmp,P.xz*rt+rpY,2).rgb;
-    rah3=textureSample(terrainRAH,terrainSmp,uvS,3).rgb;
-    rah4=textureSample(terrainRAH,terrainSmp,uvP,4).rgb;
+    rah3=${rah3Read};
+    rah4=${rah4Read};
     let m=max(max(w0+rah0.b,w1+rah1.b),max(max(w2+rah2.b,w3+rah3.b),w4+rah4.b))-0.200;
     var b0=max(w0+rah0.b-m,0.0);var b1=max(w1+rah1.b-m,0.0);var b2=max(w2+rah2.b-m,0.0);
     var b3=max(w3+rah3.b-m,0.0);var b4=max(w4+rah4.b-m,0.0);
@@ -72,8 +72,8 @@ surfaceAlbedo=baseColor*input.vTerrainColor.rgb;
       t0=textureSampleGrad(terrainNormals,terrainSmp,uvG,0,gdx,gdy).rgb*2.0-1.0;
     }
     let t1=textureSample(terrainNormals,terrainSmp,uvF,1).rgb*2.0-1.0;
-    let t3=textureSample(terrainNormals,terrainSmp,uvS,3).rgb*2.0-1.0;
-    let t4=textureSample(terrainNormals,terrainSmp,uvP,4).rgb*2.0-1.0;
+    let t3=${t3Read}*2.0-1.0;
+    let t4=${t4Read}*2.0-1.0;
     let tx=textureSample(terrainNormals,terrainSmp,P.yz*rt+rpX,2).rgb*2.0-1.0;
     let ty=textureSample(terrainNormals,terrainSmp,P.xz*rt+rpY,2).rgb*2.0-1.0;
     let tz=textureSample(terrainNormals,terrainSmp,P.xy*rt+rpZ,2).rgb*2.0-1.0;
@@ -97,14 +97,14 @@ surfaceAlbedo=baseColor*input.vTerrainColor.rgb;
   let blended=
       grassAlbedo*w0
     +tex2(terrainFloor,uvF)*${floorMeanInv}*w1
-    +tex2(terrainSand,uvS)*${sandMeanInv}*w3
-    +tex2(terrainPebble,uvP)*${pebbleMeanInv}*w4
+    +${sandTex}*${sandMeanInv}*w3
+    +${pebbleTex}*${pebbleMeanInv}*w4
     +w2*${rockMeanInv}*(
       tex2(terrainRock,P.yz*rt+rpX)*bw.x
     +tex2(terrainRock,P.xz*rt+rpY)*bw.y
     +tex2(terrainRock,P.xy*rt+rpZ)*bw.z);
   let ao=rah0.g*w0+rah1.g*w1+rah2.g*w2+rah3.g*w3+rah4.g*w4;
-  surfaceAlbedo*=mix(vec3<f32>(1.0),blended,strength)*mix(1.0,ao/0.5,strength)*detailAo;
+  surfaceAlbedo*=mix(vec3<f32>(1.0),blended,strength)*mix(1.0,ao/0.5,strength)*detailAo;${sandShade}
   let macroN18=macroValueNoise(P.xz,MACRO_WAVE.x);
   let macroN6=macroValueNoise(P.xz,MACRO_WAVE.y);
   let macroRgb=macroTint(MACRO_WEIGHT.x*macroN18+MACRO_WEIGHT.y*macroN6,1.0-terrainN.y);
@@ -136,6 +136,6 @@ surfaceAlbedo=baseColor*input.vTerrainColor.rgb;
   }
   let rBase=terrainLayerRough.x*w0+terrainLayerRough.y*w1+terrainLayerRough.z*w2+terrainLayerRough.w*w3+terrainLayerRough2.x*w4;
   let rMap=rah0.r*w0+rah1.r*w1+rah2.r*w2+rah3.r*w3+rah4.r*w4;
-  terrainRough=clamp(max(rBase*mix(1.0,rMap/0.5,strength),smoothstep(80.0,400.0,dist)),0.0,1.0);
+  terrainRough=clamp(max(rBase*mix(1.0,rMap/0.5,strength),smoothstep(80.0,400.0,dist)),0.0,1.0);${sandRough}
   terrainF0=terrainLayerF0.x*w0+terrainLayerF0.y*w1+terrainLayerF0.z*w2+terrainLayerF0.w*w3+terrainLayerF02.x*w4;
 }

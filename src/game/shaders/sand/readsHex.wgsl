@@ -1,0 +1,6 @@
+sdFetch(terrainRAH,sdOn,sdhS,3,sdsx,sdsy,uvS)
+sdFetch(terrainRAH,sdOn,sdhP,4,sdpx,sdpy,uvP)
+sdFetch(terrainNormals,sdOn,sdhS,3,sdsx,sdsy,uvS)
+sdFetch(terrainNormals,sdOn,sdhP,4,sdpx,sdpy,uvP)
+sdFetch(terrainSand,sdOn,sdhS,0,sdsx,sdsy,uvS)
+sdFetch(terrainPebble,sdOn,sdhP,0,sdpx,sdpy,uvP)

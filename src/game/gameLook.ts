@@ -98,7 +98,41 @@ export type GameLook = {
   readonly grades: readonly LookGrade[];
   /** The ground under the grass (`LookSward`). */
   readonly sward: LookSward;
+  /**
+   * A deeper sand (`LookSand`): the terrain's sand and pebble layers drawn with their texture's repeat broken, colour that varies at three
+   * scales, tide lines, darker hollows, ripples at the waterline and a graded, ragged wet edge. Absent, the default: the terrain's shader text
+   * and uniforms are the engine's own and nothing is added to what a sand pixel costs.
+   */
+  readonly sand?: LookSand;
 };
+
+/**
+ * What a game asks of the beach, six numbers, each 0 for off and 1 for the full strength `SAND_DEFAULT` gives it (a number past 1 is
+ * stronger still). They are written into the terrain's shader text when the renderer is made, so a look is fixed for a session and a
+ * number at 0 leaves its code out of the shader. Every one is drawn only where the ground is sand or pebble.
+ */
+export type LookSand = {
+  /** Breaks the texture's repeat: sand and pebble are read with the hex tiling the grass has, for colour and normal. Any number above 0 is on (it is a switch); not drawn on the low tier. */
+  readonly repeat: number;
+  /** Colour variation from arithmetic noise in world space, at three scales: mottling at 0.5 m, damp patches at 5 m (slightly darker and less rough), broad drifts at 30 m (value, and a hue between warmer and greyer sand). Drawn at any distance. */
+  readonly variation: number;
+  /** Tide lines that follow the height above still sea level (`tideLines.ts`): a dark ragged wrack line, a fainter older one, and a storm line above which the sand is paler and coarser. */
+  readonly tide: number;
+  /** Cavity: the low parts of the grain and of the pebbles, read from the sand's own height map, are darkened (and the high parts lightened), which is the depth cue under an even sky. */
+  readonly hollows: number;
+  /** Fine ripples (crests 9 cm apart) along the shore from the waterline to half a metre above it, a tilt of the normal and darker troughs, faded out by 12 m from the eye. Not drawn on the low tier. */
+  readonly ripples: number;
+  /** The wet band's upper edge wanders with noise and fades from wet to damp to dry over a wider band, and the wettest part is glossier. */
+  readonly wetEdge: number;
+};
+
+/** Every part of the deeper sand on, at the strength it was tuned at. A game spreads it: `sand: { ...SAND_DEFAULT, ripples: 0 }`. */
+export const SAND_DEFAULT: LookSand = { repeat: 1, variation: 1, tide: 1, hollows: 1, ripples: 1, wetEdge: 1 };
+
+/** Whether a look asks for any of the deeper sand. */
+export function lookHasSand(sand: LookSand | undefined): sand is LookSand {
+  return sand !== undefined && (sand.repeat > 0 || sand.variation > 0 || sand.tide > 0 || sand.hollows > 0 || sand.ripples > 0 || sand.wetEdge > 0);
+}
 
 /**
  * The ground under the grass. Inside the blade field's reach the terrain that carries a sward is pulled toward one colour, the shaded

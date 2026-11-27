@@ -42,6 +42,8 @@ import sunSource from "../shaders/terrain/sun.wgsl?raw";
 import wetLightsSource from "../shaders/terrain/wetLights.wgsl?raw";
 import splitSource from "../shaders/terrain/split.wgsl?raw";
 import { fill, wgsl } from "../shaders/shaderText.js";
+import type { LookSand } from "../gameLook.js";
+import { sandBlend, sandDefs, sandMainBegin, sandWet } from "./sandWgsl.js";
 import derivativeUniformitySource from "../shaders/diagnostic/derivativeUniformity.wgsl?raw";
 
 /**
@@ -71,13 +73,29 @@ const FAR_BAND_FULL = "24.0,30.0";
 
 const DEFS = wgsl(defsSource);
 
-const MAIN_BEGIN = wgsl(mainBeginSource);
+/** The fragment's definitions: the terrain's, then a look's sand's functions where it has any. */
+export function terrainDefs(sand?: LookSand): string {
+  return DEFS + sandDefs(sand);
+}
+
+/** The head of the fragment's main: the terrain's locals, then the sand's where a look has any. */
+export function terrainMainBegin(sand?: LookSand): string {
+  return wgsl(mainBeginSource) + sandMainBegin(sand);
+}
 
 /** One over a ground layer's mean colour, as the blend multiplies its texel by it: the layer's own colour made neutral (`LAYER_MEAN_RGB`). */
 const meanInv = (layer: Parameters<typeof layerMeanInverse>[0]): string => `vec3<f32>(${layerMeanInverse(layer).join(",")})`;
 
 // The blend. It starts from the material's colour times the vertex colour.
-const BLEND = fill(wgsl(blendSource), { grassMeanInv: meanInv("grass"), floorMeanInv: meanInv("floor"), sandMeanInv: meanInv("sand"), pebbleMeanInv: meanInv("pebble"), rockMeanInv: meanInv("rock") });
+// A look with no `sand` fills the sand's slots with what stood there before, so the text is the engine's own; `low`: the low tier.
+export function terrainBlend(sand?: LookSand, low = false): string {
+  const s = sandBlend(sand, low);
+  return fill(wgsl(blendSource), {
+    grassMeanInv: meanInv("grass"), floorMeanInv: meanInv("floor"), sandMeanInv: meanInv("sand"), pebbleMeanInv: meanInv("pebble"), rockMeanInv: meanInv("rock"),
+    sandSetup: s.sandSetup, rah3Read: s.rah3Read, rah4Read: s.rah4Read, t3Read: s.t3Read, t4Read: s.t4Read,
+    sandTex: s.sandTex, pebbleTex: s.pebbleTex, sandShade: s.sandShade, sandRough: s.sandRough,
+  });
+}
 
 // The road, its bands mirrored in `roadPaint.ts`. The centreline table is read at its texel.
 const ROAD = wgsl(roadSource);
@@ -194,9 +212,11 @@ const VERTEX_TYPES = ["f32", "vec2<f32>", "vec3<f32>", "vec4<f32>"] as const;
  * frame.
  */
 export function terrainPlugin(
-  values: TerrainMaterialUniforms, textures: TerrainTextures, farLow: boolean, paints: TerrainPaints, shared?: PluginUniformBlock,
+  values: TerrainMaterialUniforms, textures: TerrainTextures, farLow: boolean, paints: TerrainPaints, shared?: PluginUniformBlock, sand?: LookSand,
 ): MaterialPlugin {
-  const before = BLEND + (paints.road ? ROAD : "") + (paints.features ? FEATURE : "") + (paints.trail ? TRAIL : "") + FAR_LIGHT;
+  const defs = terrainDefs(sand);
+  const mainBegin = terrainMainBegin(sand);
+  const before = terrainBlend(sand, farLow) + (paints.road ? ROAD : "") + (paints.features ? FEATURE : "") + (paints.trail ? TRAIL : "") + FAR_LIGHT;
   const reads = (wgsl: string): string => (shared === undefined ? wgsl : frameReads(wgsl));
   const stride = TERRAIN_VERTEX_FLOATS * 4;
   return {
@@ -207,8 +227,8 @@ export function terrainPlugin(
     getCustomCode: (stage) =>
       stage === "fragment"
         ? {
-            CUSTOM_FRAGMENT_DEFINITIONS: reads(bind(DEFS.replace("FAR_BAND", farLow ? FAR_BAND_LOW : FAR_BAND_FULL))),
-            CUSTOM_FRAGMENT_MAIN_BEGIN: reads(MAIN_BEGIN),
+            CUSTOM_FRAGMENT_DEFINITIONS: reads(bind(defs.replace("FAR_BAND", farLow ? FAR_BAND_LOW : FAR_BAND_FULL))),
+            CUSTOM_FRAGMENT_MAIN_BEGIN: reads(mainBegin),
             CUSTOM_FRAGMENT_BEFORE_LIGHTS: reads(bind(before)),
             CUSTOM_FRAGMENT_LIGHT: reads(SUN),
           }
@@ -243,7 +263,10 @@ export function terrainPlugin(
 
 // The wet look as the terrain draws it (a tarn's own shore decides what is inside it), then the wet
 // look's roughness. After the terrain's statements at the point.
-const WET_LIGHTS_TERRAIN = wgsl(wetLightsSource);
+export function terrainWetLights(sand?: LookSand): string {
+  const w = sandWet(sand);
+  return fill(wgsl(wetLightsSource), { wetPre: w.wetPre, wetStillExpr: w.wetStillExpr, wetDampExpr: w.wetDampExpr, wetGlossExpr: w.wetGlossExpr });
+}
 
 /** The wet plugin's fields: one a uniform, in the record's order, the swash's table last. */
 export const TERRAIN_WET_FIELDS: readonly UniformField[] = WET_FIELDS;
@@ -253,7 +276,8 @@ export const TERRAIN_WET_FIELDS: readonly UniformField[] = WET_FIELDS;
  * filled in place and read whenever the material's uniforms are written).
  * After the terrain's plugin, whose feature table it reads.
  */
-export function terrainWetPlugin(values: WetUniforms, shared?: PluginUniformBlock): MaterialPlugin {
+export function terrainWetPlugin(values: WetUniforms, shared?: PluginUniformBlock, sand?: LookSand): MaterialPlugin {
+  const lights = terrainWetLights(sand);
   const reads = (wgsl: string): string => (shared === undefined ? wgsl : frameReads(wgsl));
   // Given the frame's block, the wet line and the weather are read from it: the material's own is its cap.
   const fields = shared === undefined ? TERRAIN_WET_FIELDS : ownFields(TERRAIN_WET_FIELDS);
@@ -265,7 +289,7 @@ export function terrainWetPlugin(values: WetUniforms, shared?: PluginUniformBloc
         ? {
           CUSTOM_FRAGMENT_DEFINITIONS: reads(WET_WGSL),
           CUSTOM_FRAGMENT_UPDATE_DIFFUSE: reads(WET_WEATHER),
-          CUSTOM_FRAGMENT_BEFORE_LIGHTS: reads(WET_LIGHTS_TERRAIN),
+          CUSTOM_FRAGMENT_BEFORE_LIGHTS: reads(lights),
         }
         : null,
     getUniforms: () => ({ ubo: [...fields] }),

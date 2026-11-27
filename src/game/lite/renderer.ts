@@ -1212,8 +1212,8 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
           usePhysicalLightFalloff: true,
         });
         made.plugins = [
-          terrainPlugin(terrainValues, textures, cover.farLow, paints, shared),
-          terrainWetPlugin(wetValues, shared),
+          terrainPlugin(terrainValues, textures, cover.farLow, paints, shared, look.sand),
+          terrainWetPlugin(wetValues, shared, look.sand),
           terrainSplitPlugin(),
           air(),
           ...extra,
