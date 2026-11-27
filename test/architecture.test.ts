@@ -1141,7 +1141,7 @@ describe("layer boundaries", () => {
       "game/lite/bladeMeshes.ts", "game/lite/brushMeshes.ts", "game/lite/cliffMeshes.ts", "game/lite/clutterMeshes.ts",
       "game/lite/dragonflyMeshes.ts", "game/lite/duffMeshes.ts", "game/lite/forestMeshes.ts", "game/lite/forestModels.ts",
       "game/lite/gpuTimeReadout.ts", "game/lite/groundTextures.ts", "game/lite/impostorBake.ts", "game/lite/lakeMeshes.ts", "game/lite/lakeMirror.ts",
-      "game/lite/lakePanorama.ts", "game/lite/lipMeshes.ts", "game/lite/listMeshes.ts", "game/lite/midgeMeshes.ts", "game/lite/mistMeshes.ts",
+      "game/lite/lakePanorama.ts", "game/lite/lineOnly.ts", "game/lite/lipMeshes.ts", "game/lite/listMeshes.ts", "game/lite/midgeMeshes.ts", "game/lite/mistMeshes.ts",
       "game/lite/motes.ts", "game/lite/postChain.ts", "game/lite/propMeshes.ts", "game/lite/rain.ts", "game/lite/rainMap.ts",
       "game/lite/rainSplash.ts", "game/lite/renderer.ts", "game/lite/seaFft.ts", "game/lite/seaMeshes.ts", "game/lite/shadeMask.ts",
       "game/lite/shadeVeil.ts", "game/lite/shaderUniforms.ts", "game/lite/skinnedModels.ts", "game/lite/skyCapture.ts", "game/lite/skyDome.ts",

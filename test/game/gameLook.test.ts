@@ -8,7 +8,8 @@ import { PAINT_STRENGTH } from "../../src/game/postParams.js";
 import { DEFAULT_HOUR } from "../../src/game/skyWait.js";
 import { emptyTerrainUniforms, terrainUniforms } from "../../src/game/terrainUniforms.js";
 import { DEFAULT_WEATHER, WEATHER_PRESETS } from "../../src/game/weather.js";
-import { farSoftWgsl, gradeWgsl, FAR_SOFT_WGSL } from "../../src/game/lite/postWgsl.js";
+import { farSoftWgsl, gradeWgsl, FAR_SOFT_WGSL, POST_VERTEX_WGSL, depthResolveWgsl, lineOnlyWgsl, passLayout } from "../../src/game/lite/postWgsl.js";
+import { lineOnTier, lineOnlyUniforms } from "../../src/game/lite/lineOnly.js";
 import { sourceText } from "../helpers/source.js";
 
 describe("a game's look over the engine's", () => {
@@ -73,6 +74,56 @@ describe("a game's look over the engine's", () => {
       expect(text).not.toContain("LINE_DEPTH");
       expect(text).not.toContain("${");
     }
+  });
+
+  it("draws the line itself only on a tier with no chain, and only where the look asks for one", () => {
+    const line: LookFinish = { ...NO_FINISH, line: 0.6 };
+    expect(lineOnTier(false, line)).toBe(true);
+    expect(lineOnTier(false, NO_FINISH)).toBe(false);
+    expect(lineOnTier(false, { ...NO_FINISH, grain: 0.02, edge: 0.1, bands: 0.2 })).toBe(false);
+    expect(lineOnTier(true, line)).toBe(false);
+    expect(lineOnTier(true, NO_FINISH)).toBe(false);
+  });
+
+  it("gives the line's own pass the line's uniforms and the depth's two terms", () => {
+    const finish: LookFinish = { ...NO_FINISH, line: 0.6, lineColour: [0.16, 0.17, 0.22], lineFrom: 0.005, lineTo: 0.025 };
+    const record = lineOnlyUniforms(finish, [-1.0002, -0.2]);
+    expect(record.finishLine).toEqual([0.16, 0.17, 0.22, 0.6]);
+    expect(record.finishLineBand).toEqual([0.005, 0.025]);
+    expect(record.depthTerms).toEqual([-1.0002, -0.2]);
+    expect(Object.keys(record)).toEqual(["finishLine", "finishLineBand", "depthTerms"]);
+    const layout = passLayout(record);
+    expect(layout.struct).toBe("struct U{finishLine:vec4<f32>,finishLineBand:vec2<f32>,depthTerms:vec2<f32>}");
+    expect(layout.bytes).toBe(32);
+  });
+
+  it("reads the line's measure from the scene's multisampled depth on the tier with no chain", () => {
+    const text = `${passLayout(lineOnlyUniforms(NO_FINISH)).struct}\n${POST_VERTEX_WGSL}\n${lineOnlyWgsl(4)}`;
+    expect(text).not.toContain("${");
+    expect(text).toContain("texture_depth_multisampled_2d");
+    // A pixel's distance is every sample's, summed as the chain's depth resolve sums them.
+    expect(text).toContain("for(var i:i32=0;i<4;i++){");
+    expect(text).toContain("textureLoad(sceneDepth,at,i)");
+    expect(text).toContain("if(d>0.0){sum+=u.depthTerms.y/(d-u.depthTerms.x);}");
+    expect(depthResolveWgsl(4)).toContain("if(d>0.0){sum+=u.depthTerms.y/(d-u.depthTerms.x);}");
+    expect(text).toContain("select(1.0/LINE_SKY,4.0/max(sum,1e-6),sum>0.0)");
+    expect(text).toContain("let second=wl+wr+wd+wu-4.0*wc;");
+    expect(text).toContain("let largest=max(max(max(wl,wr),max(wd,wu)),wc);");
+    expect(text).toContain("smoothstep(u.finishLineBand.x,u.finishLineBand.y,abs(second)/largest)");
+    expect(text).toContain("mix(c.rgb,c.rgb*u.finishLine.xyz,lineEdge(at)*u.finishLine.w)");
+    // The same measure as the far softening's, line for line.
+    const chain = farSoftWgsl(true);
+    for (const same of ["let second=wl+wr+wd+wu-4.0*wc;", "let largest=max(max(max(wl,wr),max(wd,wu)),wc);", "smoothstep(u.finishLineBand.x,u.finishLineBand.y,abs(second)/largest)"]) {
+      expect(chain).toContain(same);
+    }
+  });
+
+  it("makes no line pass for a look with no line: the renderer asks first", () => {
+    const renderer = sourceText("game/lite/renderer.ts");
+    expect(renderer).toContain("line = lineOnTier(chained, look.finish) ? createLiteLineOnly(");
+    expect(renderer).toContain(": null;\n      addTask(scene, createRenderTask(");
+    expect(renderer).toContain("if (line !== null) addTask(scene, line.task);");
+    expect(renderer).toContain("if (line !== null) await line.ready;");
   });
 
   it("puts the finish's code in a shader only where it is asked for", () => {

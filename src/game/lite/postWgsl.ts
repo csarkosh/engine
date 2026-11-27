@@ -53,6 +53,7 @@ import gradeHalationSource from "../shaders/post/gradeHalation.wgsl?raw";
 import gradeFragmentSource from "../shaders/post/grade.fragment.wgsl?raw";
 import finishGradeSource from "../shaders/post/finishGrade.wgsl?raw";
 import finishLineSource from "../shaders/post/finishLine.wgsl?raw";
+import lineOnlyFragmentSource from "../shaders/post/lineOnly.fragment.wgsl?raw";
 import lensFragmentSource from "../shaders/post/lens.fragment.wgsl?raw";
 import { fill, wgsl } from "../shaders/shaderText.js";
 
@@ -126,6 +127,15 @@ export function depthResolveWgsl(samples: number): string {
  */
 export function farSoftWgsl(line: boolean): string {
   return fill(wgsl(farSoftFragmentSource), { lineFunctions: line ? `\n${wgsl(finishLineSource)}` : "", lineCall: line ? "\n  col=finishLine(vUV,col);" : "" });
+}
+
+/**
+ * The finish's line on the tier with no post chain (`lineOnly.ts`): the scene's colour and its multisampled depth read
+ * as they stand, the line multiplied in. The measure is `finishLine.wgsl`'s, from the depth's own samples: no depth
+ * resolve and no far softening stand between.
+ */
+export function lineOnlyWgsl(samples: number): string {
+  return fill(wgsl(lineOnlyFragmentSource), { samples });
 }
 
 /** farSoft.fragment.glsl, with no finish. */

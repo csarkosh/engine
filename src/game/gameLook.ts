@@ -17,8 +17,9 @@ import { DEFAULT_HOUR } from "./skyWait.js";
 import { DEFAULT_WEATHER, WEATHER_PRESETS, type WeatherParams, type WeatherPresetName } from "./weather.js";
 
 /**
- * A finish over the picture. The tiers with the post chain draw it (medium and high); the low tier has no chain
- * and ignores it. With every strength 0 the passes' shaders and uniforms are the engine's own.
+ * A finish over the picture. The line is drawn on every tier: in the far softening where there is a post chain (medium and high), and on
+ * the low tier by its own pass after the scene's (`lite/lineOnly.ts`). The grain, the edge and the bands are the chain's grade's, and the low
+ * tier draws none of them. With every strength 0 the passes' shaders and uniforms are the engine's own and the low tier adds nothing.
  */
 export type LookFinish = {
   /** Film grain: the noise's amplitude in the shown picture's units (0: none). A sister game uses 0.028. */
@@ -48,7 +49,7 @@ export const LINE_TO = 0.05;
 /** No finish: every strength 0. */
 export const NO_FINISH: LookFinish = { grain: 0, edge: 0, line: 0, lineColour: [1, 1, 1], lineFrom: LINE_FROM, lineTo: LINE_TO, bands: 0 };
 
-/** Whether the far softening draws the finish's line. */
+/** Whether the finish's line is drawn: in the far softening, or on the low tier by its own pass (`lite/lineOnly.ts`). */
 export function finishDrawsLine(finish: LookFinish): boolean {
   return finish.line > 0;
 }
@@ -88,7 +89,7 @@ export type GameLook = {
   readonly weatherName: WeatherPresetName;
   /** The hour a session starts at. */
   readonly hour: number;
-  /** A finish over the picture: bands, grain, an edge and a line from depth. A game gives a whole one or none. Not drawn on the low tier. */
+  /** A finish over the picture: bands, grain, an edge and a line from depth. A game gives a whole one or none. The low tier draws only its line. */
   readonly finish: LookFinish;
   /**
    * The grade by the sun's height, for a game whose day is long: in ascending order of `sun`. Where there are any, the palette and the

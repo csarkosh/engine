@@ -296,7 +296,9 @@
  * chase's cast, and the dither (`materialGrade.ts`, read from the frame's
  * block by the air's plugin at the material's last point, and by the
  * dome's, the mist banks', the motes' and the rain's own stages). No pass is
- * added for it. With a chain every material
+ * added for it, and none for a look with no line: a look whose finish draws
+ * one has the scene resolved into a target of its own and one triangle after
+ * it (`lineOnly.ts`) writing the canvas with the line in. With a chain every material
  * and every stage hands its linear colour on, unexposed, into a half-float
  * target four samples a pixel, and the chain grades the frame
  * (`postChain.ts`): the far softening, the temporal anti-aliasing and its
@@ -481,6 +483,7 @@ import { createLiteMistMeshes, type LiteMistMeshes, type MistFrame } from "./mis
 import { createLiteMotes, type LiteMotes, type MotesFrame } from "./motes.js";
 import { notDrawnMembers } from "./notDrawn.js";
 import { createLitePostChain, type LitePostChain } from "./postChain.js";
+import { createLiteLineOnly, lineOnTier, type LiteLineOnly } from "./lineOnly.js";
 import { createLiteShadeMask, type LiteShadeMask } from "./shadeMask.js";
 import { createLiteShadeVeil, type LiteShadeVeil } from "./shadeVeil.js";
 import { createPropMeshes, type PropMeshes } from "./propMeshes.js";
@@ -587,6 +590,8 @@ type Standing = {
   shared: PluginUniformBlock;
   /** The post chain, on the tiers with one (`postChain.ts`). */
   chain: LitePostChain | null;
+  /** The finish's line on a tier with no chain, whose look asks for one (`lineOnly.ts`). */
+  line: LiteLineOnly | null;
   /** The mask the haunt's figures are drawn into (`shadeMask.ts`), which the chain's grade reads. */
   mask: LiteShadeMask | null;
   /** The veil that lays the mask and the stare's shade over the frame on a tier with no chain (`shadeVeil.ts`). */
@@ -975,6 +980,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
   /** Lets go of what stands: the meshes, the scene, the engine and its device. */
   function release(made: Standing): void {
     made.chain?.dispose();
+    made.line?.dispose();
     made.panorama?.dispose();
     made.mirror?.dispose();
     for (const life of made.waterLives) life.dispose();
@@ -1060,9 +1066,14 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     enableAsyncShaderMaterialPipelines();
     setPipelineAsksPerFrame(LOAD_PIPELINE_ASKS_PER_FRAME);
     const scene = createSceneContext(engine, { defaultRenderTask: false });
+    // A look that asks for a line draws it on this tier too (`lineOnly.ts`): the scene then resolves into a target of its
+    // own and one more task, straight after the pass, writes the canvas with the line in. Without a line, none of that is made.
+    let line: LiteLineOnly | null = null;
     if (!chained) {
       const samples = createRenderTarget({ lbl: "scene-color", format: engine.format, dFormat: "depth24plus-stencil8", samples: FRAME_SAMPLES, size: engine, keep: true });
-      addTask(scene, createRenderTask({ name: "scene", rt: samples, rst: engine.scRT, clr: true }, engine, scene));
+      line = lineOnTier(chained, look.finish) ? createLiteLineOnly(engine, scene, { samples, sampleCount: FRAME_SAMPLES, camera: () => camera, finish: look.finish }) : null;
+      addTask(scene, createRenderTask({ name: "scene", rt: samples, rst: line === null ? engine.scRT : line.resolved, clr: true }, engine, scene));
+      if (line !== null) addTask(scene, line.task);
     }
     scene.imageProcessing.toneMappingEnabled = !chained;
     scene.imageProcessing.toneMapping = NeutralToneMapping;
@@ -1231,6 +1242,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     // The chain's pipelines, asked for as it was made and compiled while the ground's images loaded: in before the scene is
     // registered, which records the chain's pass.
     if (chain !== null) await chain.ready;
+    if (line !== null) await line.ready;
     if (disposed) {
       disposeScene(scene);
       disposeEngine(engine);
@@ -1394,7 +1406,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
       }
     }
     const made: Standing = {
-      engine, scene, camera, sun, fill, lamp, dome, capture, shared, chain, materials, terrain, road, cloudGround, forest: trees, blades, clutter, duff, cliffs, props, brushes, mist, motes,
+      engine, scene, camera, sun, fill, lamp, dome, capture, shared, chain, line, materials, terrain, road, cloudGround, forest: trees, blades, clutter, duff, cliffs, props, brushes, mist, motes,
       rain, rainMap, panorama, mirror, splash, skinClock, mask, veil, wildlife, bed, sea, spray, lakes: lakeMeshes, waterPlants, waterLives,
     };
     if (disposed) {

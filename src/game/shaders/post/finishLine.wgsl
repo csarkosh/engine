@@ -1,3 +1,5 @@
+// The line's edge measure in the far softening. The tier with no chain has its own copy that reads the scene's depth directly
+// (lineOnly.fragment.wgsl): a change to one is a change to the other.
 fn lineInverse(uv:vec2<f32>)->f32{
   return 1.0/farDepth(uv);
 }
