@@ -81,14 +81,15 @@ import {
   type CoveredGround, type RingArrays, type RingGeometry, type RingMove, type RingSamples,
 } from "../clipmap.js";
 import {
-  PATCH_CELL, PATCH_FAR_SPACING, PATCH_NEAR_SPACING, PATCH_REACH, facePatchCells, facePatchCover, facePatchGeometrySlices, facePatchStitch, patchKey,
+  PATCH_CELL, PATCH_FAR_SPACING, PATCH_NEAR_SPACING, PATCH_REACH, facePatchCells, facePatchCover, facePatchGeometrySlices, facePatchStitch, patchIndices, patchKey,
   patchStitchBits,
-  type FacePatch, type PatchCell, type PatchReach, type PatchStitch,
+  type FacePatch, type PatchCell, type PavedGround, type PatchReach, type PatchStitch,
 } from "../facePatches.js";
 import { buildAtOnce, type FirstBuilds } from "../firstBuilds.js";
 import type { QualityTier } from "../quality.js";
 import { createCrossing, crossingAt, finish, nextCrossing, type Slices, type SyncJobs } from "../syncJobs.js";
 import { facePatchVertices, ringVertices, type TerrainVertices } from "../terrainVertices.js";
+import { activeTerrainVariant } from "../../sim/terrain.js";
 import { DRAW_ORDER, DRAW_PLACES } from "./drawOrder.js";
 import type { FrameUploads } from "./frameUploads.js";
 import {
@@ -197,7 +198,7 @@ type RingTwin = { mesh: Mesh | null; geometry: RingGeometry | null; indices: Uin
 
 /** A cell as built: its spacing and stitch, its place among the draws, and its patch's slot in the pool, null for a
  * cell with no steep ground. */
-type PatchEntry = { spacing: number; stitch: number; place: number; slot: PatchSlot | null };
+type PatchEntry = { spacing: number; stitch: number; place: number; slot: PatchSlot | null; pattern: Uint16Array | null };
 
 /** A set for a camera's cell: the cells walked from its centre, their stitches as numbers, and the indices of those
  * the set drawn does not hold as they are wanted, nearest the centre first. */
@@ -345,7 +346,7 @@ export function createTerrainMeshes(
     const mesh = standPatches();
     const count = patchVertexCount(slot.spacing);
     if (vertices.positions.length !== count * 3) throw new Error(`a patch at ${slot.spacing} m has ${count} vertices, not ${vertices.positions.length / 3}`);
-    if (!patterns.has(slot.spacing)) patterns.set(slot.spacing, vertices.indices.slice());
+    if (!patterns.has(slot.spacing)) patterns.set(slot.spacing, patchIndices(Math.round(PATCH_CELL / slot.spacing)));
     patchPositions.set(vertices.positions, slot.at * 3);
     patchNormals.set(vertices.normals, slot.at * 3);
     const [from, to] = pluginRun(slot);
@@ -372,7 +373,7 @@ export function createTerrainMeshes(
     // No patch was ever built: there is nothing to draw, and nothing drawn.
     if (mesh === null) return;
     drawnPatches.length = 0;
-    for (const entry of shown.values()) if (entry.slot !== null) drawnPatches.push({ slot: entry.slot, place: entry.place });
+    for (const entry of shown.values()) if (entry.slot !== null) drawnPatches.push({ slot: entry.slot, place: entry.place, pattern: entry.pattern });
     const count = writePatchTriangles(drawnPatches, patterns, nextTriangles);
     const from = firstDifference(triangles, nextTriangles, Math.min(count, drawnIndices));
     // What the buffer holds past the new list is never drawn, so nothing is cleared: a list that differs is sent from
@@ -462,10 +463,16 @@ export function createTerrainMeshes(
 
   const isReady = (w: Wanted, i: number): boolean => !Number.isNaN(readyAt(w, i));
 
+  /** The ground the game paves, which no patch covers (`TerrainVariant.pavedGround`), as a function of position; null where none. */
+  function pavedGround(): PavedGround | null {
+    const hook = activeTerrainVariant().pavedGround;
+    return hook === undefined ? null : (x, z) => hook(seed, x, z);
+  }
+
   /** Cell `i` of `w`'s patch as wanted, computed in slices ended by the scheduler's clock: null for a cell with no steep ground. */
   function shapeSlices(w: Wanted, i: number): Slices<FacePatch | null> {
     const c = w.cells[i] as PatchCell;
-    return facePatchGeometrySlices(seed, c.ci, c.cj, c.spacing, w.stitches[i] as PatchStitch, options.trail ?? null);
+    return facePatchGeometrySlices(seed, c.ci, c.cj, c.spacing, w.stitches[i] as PatchStitch, options.trail ?? null, pavedGround());
   }
 
   /** Cell `i` of `w`'s patch as wanted, computed at once. */
@@ -486,11 +493,14 @@ export function createTerrainMeshes(
     if (isReady(w, i)) return;
     const c = w.cells[i] as PatchCell;
     let slot: PatchSlot | null = null;
+    let pattern: Uint16Array | null = null;
     if (patch !== null) {
       slot = allot(c.spacing);
       writePatch(slot, facePatchVertices(patch));
+      // A patch with triangles left out (beside paved ground) is drawn by its own list, not its band's.
+      if (patch.indices.length < patchIndexCount(c.spacing)) pattern = patch.indices;
     }
-    ready.set(readyKey(w, i, slot === null), { spacing: c.spacing, stitch: w.bits[i] as number, place: patchPlace(c.ci, c.cj), slot });
+    ready.set(readyKey(w, i, slot === null), { spacing: c.spacing, stitch: w.bits[i] as number, place: patchPlace(c.ci, c.cj), slot, pattern });
   }
 
   /** Cell `i` of `w` built as wanted and not yet drawn, unless it is. */
@@ -569,7 +579,7 @@ export function createTerrainMeshes(
     }
     cells = next;
     drawPatches(cells);
-    patchCover = facePatchCover((w.ci + 0.5) * PATCH_CELL, (w.cj + 0.5) * PATCH_CELL, nearOnly ? nearReach : reach);
+    patchCover = facePatchCover((w.ci + 0.5) * PATCH_CELL, (w.cj + 0.5) * PATCH_CELL, nearOnly ? nearReach : reach, pavedGround());
   }
 
   /** The patches' rebuild for cell (ci, cj): the set worked out, each cell to build in a slice of its own, nearest

@@ -192,12 +192,12 @@ export function createMarkedRun(): MarkedRun {
 }
 
 /** A patch as the list draws it: its slot, and its place among the draws. */
-export type DrawnPatch = { readonly slot: PatchSlot; readonly place: number };
+export type DrawnPatch = { readonly slot: PatchSlot; readonly place: number; readonly pattern?: Uint16Array | null };
 
 /**
  * The triangles of `drawn` into `out`: each patch's `patterns` entry for its
  * spacing (a patch's own indices, from 0) moved to its slot, the patches in
- * the order of their places, two at one place in the order given. `drawn`
+ * the order of their places, two at one place in the order given. A patch with triangles left out brings its own. `drawn`
  * is put in that order. Returns how many indices it wrote; `out` past them
  * is left as it was.
  */
@@ -206,7 +206,7 @@ export function writePatchTriangles(drawn: DrawnPatch[], patterns: ReadonlyMap<n
   drawn.sort((a, b) => a.place - b.place);
   let at = 0;
   for (const patch of drawn) {
-    const pattern = patterns.get(patch.slot.spacing);
+    const pattern = patch.pattern ?? patterns.get(patch.slot.spacing);
     if (pattern === undefined) throw new Error(`no triangles for a patch at a spacing of ${patch.slot.spacing} m`);
     if (at + pattern.length > out.length) throw new Error(`the patches' triangles do not fit: ${at + pattern.length} indices in room for ${out.length}`);
     const base = patch.slot.at;
