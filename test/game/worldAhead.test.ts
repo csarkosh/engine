@@ -23,6 +23,7 @@ function fakes() {
             record.scenes.push(tier);
             return Promise.resolve<PreparedScene | null>(null);
           },
+          handOver: () => null,
           dispose() {
             record.disposed++;
           },
@@ -127,6 +128,7 @@ describe("the next session's world, made before Play", () => {
       start: () => ({
         ready: new Promise<WorldPrepOutcome>((resolve, reject) => ends.push({ resolve, reject })),
         scene: () => Promise.resolve<PreparedScene | null>(null),
+        handOver: () => null,
         dispose: () => undefined,
       }),
     });

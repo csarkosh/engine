@@ -52,8 +52,8 @@ export type WorldAhead = {
    */
   take(token: string, from: WorldMadeFrom): WorldTaken | null;
   /**
-   * Resolves once the world being made now has been (its worker ended, however it ended), and at once where none is
-   * being made: what should not share the machine with the worker waits for this.
+   * Resolves once the world being made now has been (its request to the worker over, however it ended), and at once
+   * where none is being made: what should not share the machine with the worker's work waits for this.
    */
   whenMade(): Promise<void>;
   /** Ends whatever is being made. */

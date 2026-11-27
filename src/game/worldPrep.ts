@@ -18,9 +18,15 @@
  * The worker that finished the world is kept, with the bowl it made, for one
  * more request: the hike's first scene at the tier the page decides on
  * (`scene`, `preparedScene.ts`), which the build then takes in place of
- * sampling the ground itself. It is ended when that request settles, when
- * the hike is left, or when it fails. The same rule holds there: no scene to
- * be had is a null, never a rejection, and the build samples as it always did.
+ * sampling the ground itself. The same rule holds there: no scene to be had
+ * is a null, never a rejection, and the build samples as it always did.
+ *
+ * A worker that has made the world, and the scene where one was asked, is
+ * kept after it, with the terrain's caches it holds, for the session's rock
+ * faces (`patchWork.ts`): the session takes it (`handOver`) and ends it with
+ * itself. It is ended here when it fails, errs or runs out of time, when a
+ * scene request settles with none, or at `dispose` where it was not handed
+ * over: the hike was left, or its build has taken what it wanted.
  */
 import { installChunks } from "../sim/chunkGrid.js";
 import { installPassHash, passHashCachedFor } from "../sim/forest.js";
@@ -57,7 +63,14 @@ export type WorldPrep = {
    * the first's promise, whatever its tier. Never rejects.
    */
   scene(tier: QualityTier): Promise<PreparedScene | null>;
-  /** Ends the worker and lets go of the scene: the hike was left, or its build has taken what it wanted. */
+  /**
+   * Gives up the live worker, once, to the session's rock faces: its listeners taken off, its time limit cleared,
+   * and no reference to it kept, so `dispose` no longer ends it. Null where none is alive (none was started, it
+   * failed, it ran out of time, the prep was disposed, or it was handed over already) and while a request of its own
+   * (the world's, or a scene asked) is still out. `scene` still gives the promise it had.
+   */
+  handOver(): Worker | null;
+  /** Ends the worker, where it was not handed over, and lets go of the scene: the hike was left, or its build has taken what it wanted. */
   dispose(): void;
 };
 
@@ -91,7 +104,9 @@ let lastId = 0;
  * time limit of its own from the asking; where the page held the world
  * already (`cached`), it starts a worker for the scene alone. A scene is
  * taken only when it is that request's, for this seed, terrain and tier.
- * `dispose` ends the worker and settles whatever is waited for.
+ * A scene that comes leaves the worker alive; none ends it. `handOver` gives
+ * the live worker up once nothing of its own is out. `dispose` ends a worker
+ * not handed over and settles whatever is waited for.
  */
 export function startWorldPrep(
   input: { seed: number; variant: string },
@@ -116,17 +131,28 @@ export function startWorldPrep(
   /** The scene's request: its promise once asked, and what settles it while it is out. */
   let asked: Promise<PreparedScene | null> | null = null;
   let wanted: { id: number; tier: QualityTier; settle(scene: PreparedScene | null): void } | null = null;
+  /** A scene has been asked and its promise has not yet resolved: from `scene`'s call, before its request is posted. */
+  let sceneOut = false;
+  /** The worker has been given up (`handOver`): none is started here again. */
+  let handed = false;
+
+  /** Clears the limit that is running, takes this wrapper's listeners off the worker and lets go of it, unended. */
+  function letGo(): Worker | null {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    const was = worker;
+    worker = null;
+    if (was !== null) {
+      was.onmessage = null;
+      was.onerror = null;
+      was.onmessageerror = null;
+    }
+    return was;
+  }
 
   /** Ends the worker, if there is one, and the limit that is running. */
   function stop(): void {
-    if (timer !== null) clearTimeout(timer);
-    timer = null;
-    if (worker === null) return;
-    worker.onmessage = null;
-    worker.onerror = null;
-    worker.onmessageerror = null;
-    worker.terminate();
-    worker = null;
+    letGo()?.terminate();
   }
 
   function end(why: WorldPrepOutcome["why"]): void {
@@ -134,7 +160,7 @@ export function startWorldPrep(
     ended = true;
     if (timer !== null) clearTimeout(timer);
     timer = null;
-    // A worker that finished is kept, with the world it made, for the scene.
+    // A worker that finished is kept, with the world it made, for the scene and the session's rock faces.
     if (why !== "done") stop();
     resolve({ why, ...installed, ms: now() - from });
   }
@@ -199,8 +225,10 @@ export function startWorldPrep(
   }
 
   function scene(tier: QualityTier): Promise<PreparedScene | null> {
-    asked ??= ready.then((outcome) => new Promise<PreparedScene | null>((done) => {
-      if (disposed) return done(null);
+    if (asked !== null) return asked;
+    sceneOut = true;
+    asked = ready.then((outcome) => new Promise<PreparedScene | null>((done) => {
+      if (disposed || handed) return done(null);
       // The page held the world, so no worker was started: one for the scene alone.
       if (outcome.why === "cached") worker = listen();
       else if (outcome.why !== "done") return done(null);
@@ -211,7 +239,12 @@ export function startWorldPrep(
         settle(made: PreparedScene | null): void {
           if (wanted !== mine) return;
           wanted = null;
-          stop();
+          // A scene leaves the worker alive, with its limit cleared; none ends it.
+          if (made === null) stop();
+          else if (timer !== null) {
+            clearTimeout(timer);
+            timer = null;
+          }
           done(made);
         },
       };
@@ -223,7 +256,10 @@ export function startWorldPrep(
       } catch {
         mine.settle(null);
       }
-    }));
+    })).then((made) => {
+      sceneOut = false;
+      return made;
+    });
     return asked;
   }
 
@@ -251,6 +287,12 @@ export function startWorldPrep(
   return {
     ready,
     scene,
+    handOver(): Worker | null {
+      if (disposed || !ended || sceneOut) return null;
+      const given = letGo();
+      if (given !== null) handed = true;
+      return given;
+    },
     dispose(): void {
       disposed = true;
       end("disposed");

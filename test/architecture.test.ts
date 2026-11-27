@@ -173,7 +173,7 @@ describe("layer boundaries", () => {
     expect([...main.matchAll(/\bstartSession</g)].length).toBe(1);
     // A hike's canvas carries no engine: its renderer makes its own from it, at the start and for every switch after.
     expect(main).toContain("      engine: () => sessionCanvas(),");
-    expect(main).toContain("launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled);");
+    expect(main).toContain("launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled, patchWork);");
     // The scene route is drawn by the same renderer, on a canvas of the same kind: the one other caller.
     expect(main).toContain("      void sessionCanvas().then(");
     expect(main).toContain("page.scene({ canvas, container, tier }, parseSceneSearch(location.search), route.name);");
@@ -1089,7 +1089,7 @@ describe("layer boundaries", () => {
     const main = code("shell.ts");
     expect(main).toContain('  function sessionCanvasNow(): EngineOnCanvas {\n    if (verdict !== null && !verdict.play) throw new Error(`this browser cannot draw a ${page.identity.session} (${verdict.reason})`);\n    return { canvas: document.createElement("canvas") };\n  }');
     expect(main).toContain("    return new Promise((resolve) => resolve(sessionCanvasNow()));");
-    expect(main).toContain("        launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled);");
+    expect(main).toContain("        launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled, patchWork);");
     expect(app).toContain("  engineFor(tier: QualityTier): EngineOnCanvas;");
     const swap = code("game/rendererSwap.ts");
     expect(swap).toContain("export type EngineOnCanvas = { canvas: HTMLCanvasElement };");

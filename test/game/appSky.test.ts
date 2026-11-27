@@ -32,11 +32,12 @@ describe("the hike's sky", () => {
     expect(src).toContain(
       // The first renderer is also told where the hike starts (`start`), so its first terrain and water are built
       // there, handed what the world's worker sampled there (`prepared`, taken once), and given the loader of first
-      // builds a start under a film has (`firstBuilds`). Every renderer is given the game's look (`look`, `gameLook.ts`).
-      "game.renderer(next, level, forest, { tier: at, look, deferClipmap: options.deferClipmap, start, prepared: options.takePrepared?.() ?? null, firstBuilds, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator) }),",
+      // builds a start under a film has (`firstBuilds`). Every renderer is given the game's look (`look`, `gameLook.ts`)
+      // and the session's client of the world's worker for its rock faces (`patchWork`), the same one to each in turn.
+      "game.renderer(next, level, forest, { tier: at, look, deferClipmap: options.deferClipmap, start, prepared: options.takePrepared?.() ?? null, patchWork: options.patchWork, firstBuilds, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator) }),",
     );
     expect(src).toContain(
-      "build: (next, target) => game.renderer(next, level, forest, { tier: target, look, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator) }),",
+      "build: (next, target) => game.renderer(next, level, forest, { tier: target, look, patchWork: options.patchWork, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator) }),",
     );
   });
 

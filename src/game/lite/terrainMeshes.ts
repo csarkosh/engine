@@ -49,7 +49,7 @@
  * band at once and leaves the rest to the job; with nothing pending, idle
  * work builds ahead the cells the next crossing will want, asked of the
  * worker where there is one. A set built at once is this thread's, and
- * stops the worker first. The rings are
+ * after the first update stops the worker first. The rings are
  * drawn first, the finest first, and the patches after them, ahead of
  * everything else (`drawOrder.ts`), their triangles in the order of their
  * cells' places (`patchPlace`): whenever a set is shown and whichever
@@ -740,8 +740,9 @@ export function createTerrainMeshes(
       return;
     }
     jobs?.cancel(patchOwner);
-    // Built at once on this thread: the worker stops, and holds nothing of a set no job will place.
-    patchWork?.clear();
+    // Built at once on this thread after the first update (a teleport): the worker stops, and holds nothing of a set
+    // no job will place. On the first update nothing has been asked of it, so it is sent nothing.
+    if (!first) patchWork?.clear();
     if (first && jobs !== undefined) {
       if (firstBuilds?.open === true) {
         // Under the film no frame shows the face in front of the camera: the whole set is the loader's.

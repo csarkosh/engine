@@ -19,6 +19,7 @@ import type { GameLook } from "./gameLook.js";
 import type { GpuTimeReport } from "./gpuTimeReport.js";
 import type { PaintPaletteName } from "./gradeParams.js";
 import type { ImpostorBake } from "./impostorBake.js";
+import type { PatchWork } from "./patchWork.js";
 import type { PreparedScene } from "./preparedScene.js";
 import type { QualityTier } from "./quality.js";
 import type { SkyTable } from "./skyTable.js";
@@ -271,6 +272,11 @@ export type RendererOptions = {
    * Each piece is used only where it is the one this renderer would sample
    * for its seed, terrain, tier and start; the rest it samples. */
   prepared?: PreparedScene | null;
+  /** The session's client of the world's worker (`patchWork.ts`): the rock faces near the camera are built by it,
+   * off the page's thread (`TerrainMeshOptions.patchWork`). The session's, handed to each renderer it makes in turn
+   * and ended by the session, never by a renderer. Absent or null, they are built on the page's thread. In the
+   * measurement mode its record is read out as `window.__patchWork()`. */
+  patchWork?: PatchWork | null;
   /** The loader of first builds, for a start whose intro's film covers the
    * hike (`firstBuilds.ts`): the forest, the ground cover, the blades, the
    * duff and the props hand it the builds that cannot wait, and it steps
