@@ -418,7 +418,9 @@ What a phone run is, against the Mac's and the rig's:
   the window's own start) and the apply cost the scheduler has learned on the phone (`learned`).
   Each reading also carries, for the frame it is read in, the milliseconds of overdue runs apart
   (`overdueMs`, `overdueOwners`), the builds made at once outside every budget by owner (`atOnce`
-  counts, `atOnceMs` milliseconds; an owner that built none is left out), and each crossing as
+  counts, `atOnceMs` milliseconds; an owner that built none is left out), how long each owner's
+  picture has owed a rebuild as the frame's share began (`owedMs`, the time since the oldest request
+  the drawn picture does not answer yet; an owner that owes none is left out), and each crossing as
   `crossingAt` judged it (`crossings`: `owner`, `kind` `now` or `later`, `rule` `first`, `jump`,
   `fast` or `none`, `step` in metres, `moved` the step as judged per sixtieth of a second, and
   `elapsedMs` it was judged against). The harness rows do not sum these; a script reads them from

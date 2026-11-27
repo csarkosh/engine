@@ -125,8 +125,8 @@
  * the frame's record is closed once its jobs have run. In the measurement
  * mode the record of the last frame is read out as
  * `window.__frameUploads()`, beside the jobs' `window.__syncJobs()`, whose record also says what was
- * built at once that frame, outside every budget, by owner, and how each crossing was judged
- * (`SyncJobs.watch`, `syncJobsRecord`).
+ * built at once that frame, outside every budget, by owner, how each crossing was judged, and how
+ * long each owner's picture has owed a rebuild (`SyncJobs.watch`, `syncJobsRecord`).
  *
  * **What every material reads alike is one block** (`frameBlock.ts`): the
  * air, the wet line and the weather, the wind and the players, the eye and

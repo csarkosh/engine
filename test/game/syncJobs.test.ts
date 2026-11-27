@@ -1421,6 +1421,151 @@ describe("the read-out of what is built at once and how crossings were judged", 
     expect(copy.crossings[0]).not.toBe(entry);
   });
 
+  it("records no picture as owing a rebuild while it is off, and reads the clock no more often on", () => {
+    // The same frames on and off: a job begun, a request held behind it once it has started, two more, and its end.
+    const frames = (on: boolean) => {
+      const w = watched(on);
+      const owner = {};
+      w.jobs.begin(owner, job({ advance: w.advance }, 12, 1, { at: null }, () => w.jobs.frame), false, "forest");
+      w.jobs.run();
+      w.jobs.begin(owner, job({ advance: w.advance }, 2, 1, { at: null }, () => w.jobs.frame), false, "forest");
+      w.jobs.viewedAt();
+      w.jobs.begin(owner, job({ advance: w.advance }, 2, 1, { at: null }, () => w.jobs.frame), false, "forest");
+      for (let f = 0; f < 4; f++) w.jobs.run();
+      return w;
+    };
+    const off = frames(false);
+    expect(off.jobs.last.owedMs).toEqual({});
+    expect(syncJobsRecord(off.jobs.last).owedMs).toEqual({});
+    expect(off.reads()).toBe(frames(true).reads());
+  });
+
+  it("records how long a job's picture has owed its rebuild, from its begin, frame by frame, and 0 once it is shown", () => {
+    const { jobs, advance } = watched();
+    const done = { at: null as number | null };
+    advance(10);
+    // 10 slices of 1 ms: four a frame, shown in frame 2.
+    jobs.begin({}, job({ advance }, 10, 1, done, () => jobs.frame), false, "forest");
+    const owed: number[] = [];
+    for (let f = 0; f < 4; f++) {
+      advance(6);
+      jobs.run();
+      owed.push(jobs.last.owedMs.forest as number);
+    }
+    // Begun at 10; the shares begin at 16, 26 (16 + 4 of slices + 6) and 36; at 44 it has been shown.
+    expect(owed).toEqual([6, 16, 26, 0]);
+    expect(done.at).toBe(2);
+    expect(syncJobsRecord(jobs.last).owedMs).toEqual({});
+  });
+
+  it("keeps a replaced job's owed time from the first request, which the picture still does not answer", () => {
+    const { jobs, advance } = watched();
+    const owner = {};
+    advance(10);
+    jobs.begin(owner, job({ advance }, 10, 1, { at: null }, () => jobs.frame), false, "forest");
+    advance(20);
+    jobs.begin(owner, job({ advance }, 10, 1, { at: null }, () => jobs.frame), false, "forest");
+    advance(10);
+    jobs.run();
+    expect(jobs.last.owedMs).toEqual({ forest: 30 });
+    expect(syncJobsRecord(jobs.last).owedMs).toEqual({ forest: 30 });
+  });
+
+  it("owes a request held behind a started job from its frame's time once that job is shown, not from the first request or from its begin", () => {
+    const { jobs, advance } = watched();
+    const owner = {};
+    const first = { at: null as number | null }, held = { at: null as number | null };
+    // 12 slices of 1 ms, begun at 0: four a frame, shown in frame 2.
+    jobs.begin(owner, job({ advance }, 12, 1, first, () => jobs.frame), false, "forest");
+    advance(5);
+    jobs.run();
+    advance(3);
+    jobs.run();
+    // Frame 1's share began at 12: the request held now is owed from then.
+    jobs.begin(owner, job({ advance }, 2, 1, held, () => jobs.frame), false, "forest");
+    const owed: number[] = [jobs.last.owedMs.forest as number];
+    advance(4);
+    jobs.run();
+    owed.push(jobs.last.owedMs.forest as number);
+    // Frame 2 began at 20 and showed the first job at 24, its last slice begun at 23, the held request begun there.
+    expect(first.at).toBe(2);
+    advance(6);
+    jobs.run();
+    owed.push(jobs.last.owedMs.forest as number);
+    advance(6);
+    jobs.run();
+    owed.push(jobs.last.owedMs.forest as number);
+    // From 12, as frame 3's share begins at 30: not 30 (from the first request, at 0) and not 7 (from its begin, at 23).
+    expect(owed).toEqual([12, 20, 18, 0]);
+    expect(held.at).toBe(3);
+  });
+
+  it("owes the newest of several requests held behind a started job from the first held, as the frame's view was judged", () => {
+    const { jobs, advance } = watched();
+    const owner = {};
+    const first = { at: null as number | null }, newest = { at: null as number | null };
+    jobs.begin(owner, job({ advance }, 12, 1, first, () => jobs.frame), false, "forest");
+    jobs.run();
+    // The frame's view judged at 10, before its first request; the second and third are asked a frame later.
+    advance(6);
+    expect(jobs.viewedAt()).toBe(10);
+    jobs.begin(owner, job({ advance }, 2, 1, { at: null }, () => jobs.frame), false, "forest");
+    advance(5);
+    jobs.run();
+    advance(1);
+    jobs.begin(owner, job({ advance }, 2, 1, { at: null }, () => jobs.frame), false, "forest");
+    jobs.begin(owner, job({ advance }, 2, 1, newest, () => jobs.frame), false, "forest");
+    advance(10);
+    jobs.run();
+    expect([first.at, jobs.last.owedMs.forest]).toEqual([2, 30]);
+    advance(6);
+    jobs.run();
+    // At 40, from the first held at 10: not 25 (frame 1's share, when the second was asked) and not 7 (the newest's begin at 33).
+    expect([newest.at, jobs.last.owedMs.forest]).toEqual([3, 30]);
+    jobs.run();
+    expect(jobs.last.owedMs.forest).toBe(0);
+  });
+
+  it("owes nothing for an owner whose job is cancelled, and counts its next request afresh", () => {
+    const { jobs, advance } = watched();
+    const owner = {};
+    jobs.begin(owner, job({ advance }, 12, 1, { at: null }, () => jobs.frame), false, "forest");
+    advance(5);
+    jobs.run();
+    expect(jobs.last.owedMs.forest).toBe(5);
+    // A request held behind it, then both dropped.
+    jobs.begin(owner, job({ advance }, 2, 1, { at: null }, () => jobs.frame), false, "forest");
+    jobs.cancel(owner);
+    advance(5);
+    jobs.run();
+    expect(jobs.last.owedMs.forest).toBe(0);
+    // A new request at 19, its share at 29.
+    jobs.begin(owner, job({ advance }, 1, 1, { at: null }, () => jobs.frame), false, "forest");
+    advance(10);
+    jobs.run();
+    expect(jobs.last.owedMs.forest).toBe(10);
+    jobs.run();
+    expect(jobs.last.owedMs.forest).toBe(0);
+  });
+
+  it("keeps each owner's owed time apart", () => {
+    const { jobs, advance } = watched();
+    const forest = {};
+    jobs.begin(forest, job({ advance }, 2, 1, { at: null }, () => jobs.frame), false, "forest");
+    advance(5);
+    jobs.begin({}, job({ advance }, 2, 1, { at: null }, () => jobs.frame), false, "props");
+    advance(5);
+    jobs.run();
+    expect(jobs.last.owedMs).toEqual({ forest: 10, props: 5 });
+    // Both shown at 14; forest asks again at 20, and the share at 25 owes it 5 and props nothing.
+    advance(6);
+    jobs.begin(forest, job({ advance }, 2, 1, { at: null }, () => jobs.frame), false, "forest");
+    advance(5);
+    jobs.run();
+    expect(jobs.last.owedMs).toEqual({ forest: 5, props: 0 });
+    expect(syncJobsRecord(jobs.last).owedMs).toEqual({ forest: 5 });
+  });
+
   it("records nothing and reads no clock while it is off, and changes no verdict", () => {
     const off = watched(false);
     const on = watched(true);

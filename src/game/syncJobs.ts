@@ -352,6 +352,14 @@ export type SyncJobsLast = {
    */
   readonly atOnce: Readonly<Record<string, number>>;
   readonly atOnceMs: Readonly<Record<string, number>>;
+  /**
+   * The read-out (`watch`), empty until it is switched on. By owner, as the frame's share began, how long (ms) its
+   * picture has owed a rebuild: the time since the oldest request the drawn picture does not answer yet. A request
+   * that replaced a job not started answers nothing the first did not, so the first's time stands; one held behind a
+   * started job is owed from its frame's time once that job is shown (the newest wins the place, the first held keeps
+   * the time). 0 when nothing is owed, and left out of the page's copy.
+   */
+  readonly owedMs: Readonly<Record<string, number>>;
   /** The crossings judged this frame: the first `crossingCount` of `crossings` (the rest is last frames' leavings). */
   readonly crossings: readonly CrossingJudgement[];
   readonly crossingCount: number;
@@ -405,7 +413,9 @@ export type SyncJobs = {
   resetLongest(): void;
   /**
    * Switches the read-out on or off (the measurement mode switches it on). Off, `atOnceStart`, `atOnceEnd` and `judged`
-   * do nothing and read no clock; on, they record into `last` for the frame whose `run` follows them.
+   * do nothing and read no clock; on, they record into `last` for the frame whose `run` follows them. On, `begin` notes
+   * when each owner's picture began to owe a rebuild, with the readings it makes already, and `run` records it
+   * (`owedMs`); off, nothing is noted and what was is forgotten.
    */
   watch(on: boolean): void;
   readonly watching: boolean;
@@ -425,6 +435,9 @@ export type SyncJobs = {
 type Job = {
   owner: object; slices: Slices; begun: number; begunAt: number; next: number; patient: boolean; name: string; starved: number;
   ran: boolean; waiting: Slices | null; waitingPatient: boolean; waitingName: string;
+  /** The read-out's (`watch`): the clock since which the owner's picture has owed a rebuild, and since which it will
+   * owe one once this job is shown (the first request held behind it); NaN for none, and while not watching. */
+  owedSince: number; nextOwedSince: number;
 };
 
 /** The weight of the newest apply slice in an owner's learned cost. */
@@ -449,7 +462,7 @@ export function createSyncJobs(clock: () => number): SyncJobs {
   const last = {
     slices: 0, late: 0, lateJobs: 0, overdue: 0, overdueJobs: 0, completed: 0, held: 0, floor: 0, idle: 0, ms: 0, lateMs: 0,
     overdueMs: 0, overdueOwners: {} as Record<string, number>,
-    atOnce: {} as Record<string, number>, atOnceMs: {} as Record<string, number>,
+    atOnce: {} as Record<string, number>, atOnceMs: {} as Record<string, number>, owedMs: {} as Record<string, number>,
     crossings: [] as CrossingJudgement[], crossingCount: 0,
     owners: {} as Record<string, number>, longest: {} as Record<string, number>, learned: {} as Record<string, number>,
   };
@@ -518,7 +531,10 @@ export function createSyncJobs(clock: () => number): SyncJobs {
 
   /** A new job of `owner`'s, begun in this frame at `begunAt` on the clock. */
   function createJob(owner: object, slices: Slices, begunAt: number, patient: boolean, name: string): Job {
-    return { owner, slices, begun: frame, begunAt, next: 0, patient, name, starved: 0, ran: false, waiting: null, waitingPatient: false, waitingName: "" };
+    return {
+      owner, slices, begun: frame, begunAt, next: 0, patient, name, starved: 0, ran: false, waiting: null, waitingPatient: false, waitingName: "",
+      owedSince: Number.NaN, nextOwedSince: Number.NaN,
+    };
   }
 
   /** One slice of `job`; true when it has applied. A slice that throws takes
@@ -540,9 +556,14 @@ export function createSyncJobs(clock: () => number): SyncJobs {
       if (done !== false) {
         remove(job);
         if (job.waiting !== null) {
-          enqueue(createJob(job.owner, job.waiting, sliceAt, job.waitingPatient, job.waitingName));
+          const next = createJob(job.owner, job.waiting, sliceAt, job.waitingPatient, job.waitingName);
+          // The picture shown answers every request up to the first held; from it on, it owes one.
+          next.owedSince = job.nextOwedSince;
+          enqueue(next);
           job.waiting = null;
         }
+        job.owedSince = Number.NaN;
+        job.nextOwedSince = Number.NaN;
       }
     }
     last.slices++;
@@ -556,10 +577,14 @@ export function createSyncJobs(clock: () => number): SyncJobs {
     begin(owner, slices, patient = false, name = "other") {
       const held = queue.find((job) => job.owner === owner);
       if (held === undefined) {
-        enqueue(createJob(owner, slices, clock(), patient, name));
+        const job = createJob(owner, slices, clock(), patient, name);
+        if (watching) job.owedSince = job.begunAt;
+        enqueue(job);
         return;
       }
       if (held.ran) {
+        // The read-out: the first request held is owed from its frame's time, which is no new reading of the clock.
+        if (watching && Number.isNaN(held.nextOwedSince)) held.nextOwedSince = viewRead ? viewAt : startedAt;
         // Started: it goes on to be shown, and this request waits behind it, in the place of any that waited (ended with
         // `return`, so whatever it holds is handed back): the newest wins.
         held.waiting?.return(undefined);
@@ -607,6 +632,14 @@ export function createSyncJobs(clock: () => number): SyncJobs {
     },
     watch(on) {
       watching = on;
+      // Off, the read-out keeps nothing: what was owed is forgotten, and counted again from the next requests.
+      if (!on) {
+        for (let i = 0; i < queue.length; i++) {
+          const job = queue[i] as Job;
+          job.owedSince = Number.NaN;
+          job.nextOwedSince = Number.NaN;
+        }
+      }
     },
     get watching() {
       return watching;
@@ -675,6 +708,15 @@ export function createSyncJobs(clock: () => number): SyncJobs {
       charging = null;
       const start = tick();
       startedAt = start;
+      // The read-out: what each owner's picture owes as the share begins. A job pending is what owes, so an owner whose
+      // jobs are gone (a shell disposed) is held on to by nothing here.
+      for (const name in last.owedMs) last.owedMs[name] = 0;
+      for (let i = 0; watching && i < queue.length; i++) {
+        const job = queue[i] as Job;
+        if (Number.isNaN(job.owedSince)) continue;
+        const owed = start - job.owedSince;
+        if (owed > (last.owedMs[job.name] ?? 0)) last.owedMs[job.name] = owed;
+      }
       for (let i = 0; i < queue.length; i++) if (isLate(queue[i] as Job, start)) last.lateJobs++;
       // A job begun `SYNC_OVERDUE_MS` ago goes to its end: the hard bound, for
       // a clock that jumped or a job starved. Its last slice takes it out of
@@ -796,20 +838,23 @@ export function createSyncJobs(clock: () => number): SyncJobs {
 
 /**
  * A copy of `last` for a page to read, since the record is written in place every frame: the owners' records copied, the
- * read-out's owners left out where they built nothing this frame, and the crossings judged this frame as entries of their own.
+ * read-out's owners left out where they built nothing this frame or owe nothing, and the crossings judged this frame as
+ * entries of their own.
  */
 export function syncJobsRecord(last: SyncJobsLast): SyncJobsLast {
   const atOnce: Record<string, number> = {};
   const atOnceMs: Record<string, number> = {};
+  const owedMs: Record<string, number> = {};
   for (const name in last.atOnce) {
     if ((last.atOnce[name] as number) === 0) continue;
     atOnce[name] = last.atOnce[name] as number;
     atOnceMs[name] = last.atOnceMs[name] as number;
   }
+  for (const name in last.owedMs) if ((last.owedMs[name] as number) !== 0) owedMs[name] = last.owedMs[name] as number;
   return {
     ...last,
     owners: { ...last.owners }, longest: { ...last.longest }, learned: { ...last.learned }, overdueOwners: { ...last.overdueOwners },
-    atOnce, atOnceMs,
+    atOnce, atOnceMs, owedMs,
     crossings: last.crossings.slice(0, last.crossingCount).map((c) => ({ ...c })),
   };
 }
