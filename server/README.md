@@ -67,7 +67,7 @@ The settings file. A missing or malformed file stops the process before it liste
 The admin routes (`/admin/live`, `/admin/kpis`, `/admin/query/<name>`, `/admin/session|visitor|match/<id>`)
 run saved SQL queries over the game's telemetry on BigQuery. The server does not ship them: they
 are the game's files, one `<name>.sql` each, and they must include `funnel`, `lobbies`, `progress`,
-`errors`, `players`, `paths`, `kpis`, `places`, `session`, `visitor`, `match` and `now`. A file is read
+`errors`, `players`, `paths`, `kpis`, `places`, `machines`, `session`, `visitor`, `match` and `now`. A file is read
 when a route is asked, never at start-up. A game with no admin page sets no `ADMIN_EMAILS`, has no
 queries folder and loses nothing: signaling and telemetry run as ever.
 
