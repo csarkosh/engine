@@ -27,6 +27,13 @@
  * between them, so a newer set, or a world or scene request, is served before
  * the rest of an older set is built. A newer set drops what is left of the
  * older, and an empty one is how the page tells the worker to stop.
+ *
+ * A fourth request asks for the terrain's rings for a camera place
+ * (`ringServe.ts`), of the same world: the worker holds the rings' samples
+ * the page gave it, re-centres them, and builds and posts each ring that is
+ * stale against what the page has drawn, a ring at a time, with its arrays
+ * transferred. The rings go before the rock faces, and between two sets of
+ * rings one rock-face cell is built where any is asked for.
  */
 import { generateChunk, type Chunk } from "../sim/chunk.js";
 import { PLAYER_HALF } from "../sim/constants.js";
@@ -39,6 +46,8 @@ import {
 } from "./facePatches.js";
 import { prepareScene, sceneTransfer, type PreparedScene } from "./preparedScene.js";
 import type { QualityTier } from "./quality.js";
+import type { RingDrawn } from "./ringBuild.js";
+import { createRingServer, createWorkOrder, type RingSent, type WorldRingsRequest } from "./ringServe.js";
 
 /** `skip`: what the page already holds and the worker leaves out. */
 export type WorldPrepRequest = { id: number; seed: number; variant: string; skip?: { prepared?: boolean; passHash?: boolean } };
@@ -58,6 +67,8 @@ export type WorldPrepReply =
   | { id: number; kind: "scene"; scene: PreparedScene }
   | { id: number; kind: "patch"; set: number; index: number; patch: FacePatch | null; ms: number }
   | { id: number; kind: "patchesDone"; set: number }
+  | { id: number; kind: "ring"; set: number; level: number; drawn: RingDrawn; ring: RingSent; ms: number }
+  | { id: number; kind: "ringsDone"; set: number; ms: number }
   | { id: number; kind: "done" }
   | { id: number; kind: "failed"; message: string };
 
@@ -217,29 +228,46 @@ export function createPatchServer(
 
 /**
  * Serves the world's requests in a worker, for `game`: the world's, the first
- * scene's, each served whole when its message is taken, and sets of rock-face
- * cells, which `createPatchServer` builds a cell at a time. Between cells the
- * worker's messages are taken (a message to itself over a `MessageChannel`,
- * which a timer, clamped, would not give), so a request that arrives while a
- * set is built is served before the next cell. The seed and variant of the last
- * world or scene request served, where it ended with `done`, are the world a
- * set is built for; after one that failed there is none. Only inside
- * a worker: under Node, where a test imports `prepareWorld`, and on a page,
- * there is no WorkerGlobalScope, and this does nothing.
+ * scene's, each served whole when its message is taken, sets of rock-face
+ * cells, which `createPatchServer` builds a cell at a time, and sets of rings,
+ * which `createRingServer` works a ring at a time; `createWorkOrder` says which
+ * goes next. Between steps the worker's messages are taken (a message to
+ * itself over a `MessageChannel`, which a timer, clamped, would not give), so
+ * a request that arrives while a set is worked is served before the next step,
+ * and a rings request that stops is taken at once. One turn is asked at a
+ * time. The seed and variant of the last world or scene request served, where
+ * it ended with `done`, are the world a set is built for; after one that failed
+ * there is none. Only inside a worker: under Node, where a test imports
+ * `prepareWorld`, and on a page, there is no WorkerGlobalScope, and this does
+ * nothing.
  */
 export function serveWorldWork(game: WorldWorkGame): void {
   if (typeof (globalThis as { WorkerGlobalScope?: unknown }).WorkerGlobalScope === "function") {
     let made: { seed: number; variant: string } | null = null;
-    const server = createPatchServer((reply, transfer) => self.postMessage(reply, { transfer }), () => made);
+    const post = (reply: WorldPrepReply, transfer: ArrayBuffer[]): void => self.postMessage(reply, { transfer });
+    const patches = createPatchServer(post, () => made);
+    const rings = createRingServer(post, () => made);
+    const order = createWorkOrder(rings, patches);
     const turn = new MessageChannel();
-    const next = (): void => turn.port2.postMessage(null);
-    turn.port1.onmessage = (): void => {
-      if (server.step()) next();
+    let asked = false;
+    const next = (): void => {
+      if (asked) return;
+      asked = true;
+      turn.port2.postMessage(null);
     };
-    self.onmessage = (event: MessageEvent<WorldPrepRequest | WorldSceneRequest | WorldPatchesRequest>): void => {
+    turn.port1.onmessage = (): void => {
+      asked = false;
+      if (order.step()) next();
+    };
+    self.onmessage = (event: MessageEvent<WorldPrepRequest | WorldSceneRequest | WorldPatchesRequest | WorldRingsRequest>): void => {
       const request = event.data;
       if ("kind" in request && request.kind === "patches") {
-        server.ask(request);
+        patches.ask(request);
+        next();
+        return;
+      }
+      if ("kind" in request && request.kind === "rings") {
+        rings.ask(request);
         next();
         return;
       }
