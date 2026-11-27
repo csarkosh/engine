@@ -19,12 +19,24 @@
  * water's among it. It is posted with its typed arrays transferred, never
  * copied, and this thread does not touch them again. It finds the bowl the
  * first request made in this thread's own cache.
+ *
+ * A third request asks for a set of rock-face cells (`facePatches.ts`) of the
+ * world the last of those two made: the page's current wish for the steep
+ * ground near its camera. The cells are built one at a time, each posted as
+ * it is made with its arrays transferred, and the worker's messages are taken
+ * between them, so a newer set, or a world or scene request, is served before
+ * the rest of an older set is built. A newer set drops what is left of the
+ * older, and an empty one is how the page tells the worker to stop.
  */
 import { generateChunk, type Chunk } from "../sim/chunk.js";
 import { PLAYER_HALF } from "../sim/constants.js";
 import { passHash, passHashKey } from "../sim/forest.js";
 import type { Vec3 } from "../sim/core.js";
 import { activeTerrainVariant, setActiveTerrainVariant } from "../sim/terrain.js";
+import type { TrailGraph } from "../sim/trail.js";
+import {
+  PATCH_FAR_SPACING, PATCH_NEAR_SPACING, PATCH_WIDE_SPACING, facePatchGeometry, type FacePatch, type PatchStitch, type PavedGround,
+} from "./facePatches.js";
 import { prepareScene, sceneTransfer, type PreparedScene } from "./preparedScene.js";
 import type { QualityTier } from "./quality.js";
 
@@ -32,11 +44,20 @@ import type { QualityTier } from "./quality.js";
 export type WorldPrepRequest = { id: number; seed: number; variant: string; skip?: { prepared?: boolean; passHash?: boolean } };
 /** The hike's first scene at `tier`: told from the world's request by its `kind`. */
 export type WorldSceneRequest = { id: number; kind: "scene"; seed: number; variant: string; tier: QualityTier };
+/** One cell of a set: where, at what spacing, and how it meets its neighbours (`facePatchGeometry`). */
+export type PatchCellAsk = { ci: number; cj: number; spacing: number; stitch: PatchStitch };
+/**
+ * A set of rock-face cells for the world of `seed` and `variant`, to be built in order and posted one by one; `set`
+ * numbers the page's wishes, and a newer set drops what is left of an older. Told from the others by its `kind`.
+ */
+export type WorldPatchesRequest = { id: number; kind: "patches"; seed: number; variant: string; set: number; cells: PatchCellAsk[] };
 export type WorldPrepReply =
   | { id: number; kind: "prepared"; seed: number; variant: string; prepared: unknown }
   | { id: number; kind: "passHash"; hash: number; passCount: number; variant: string }
   | { id: number; kind: "chunks"; seed: number; variant: string; chunks: Chunk[] }
   | { id: number; kind: "scene"; scene: PreparedScene }
+  | { id: number; kind: "patch"; set: number; index: number; patch: FacePatch | null; ms: number }
+  | { id: number; kind: "patchesDone"; set: number }
   | { id: number; kind: "done" }
   | { id: number; kind: "failed"; message: string };
 
@@ -92,17 +113,123 @@ export function prepareSceneReply(
   }
 }
 
+/** The seven buffers of a patch's arrays, for a post that transfers them; none for a cell with no patch. */
+export function patchTransfer(patch: FacePatch | null): ArrayBuffer[] {
+  if (patch === null) return [];
+  return [patch.positions, patch.normals, patch.colors, patch.weights, patch.weights2, patch.cover, patch.indices].map(
+    (a) => a.buffer as ArrayBuffer,
+  );
+}
+
+export type PatchServer = {
+  /** Takes `request` as the newest set: what is left of an older one is dropped. */
+  ask(request: WorldPatchesRequest): void;
+  /** Builds and posts the next cell of the current set; false when there is none left to build. */
+  step(): boolean;
+};
+
+/** The spacings the bands build at; a cell asked at any other is refused. */
+const PATCH_SPACINGS: readonly number[] = [PATCH_NEAR_SPACING, PATCH_FAR_SPACING, PATCH_WIDE_SPACING];
+
+/** The set being built: its request, the next cell to build, and what every cell of it shares. */
+type PatchRun = { request: WorldPatchesRequest; next: number; trail: TrailGraph | null; paved: PavedGround | null };
+
 /**
- * Serves the world's requests in a worker, for `game`. Only inside a worker:
- * under Node, where a test imports `prepareWorld`, and on a page, there is no
- * WorkerGlobalScope, and this does nothing.
+ * The set requests' logic, apart from the worker's loop. `madeFor` is the seed and variant the last world or scene
+ * request served, null before any: a set for another world is one `failed`. A step builds the next cell with the
+ * active terrain, posts it (a cell with no steep ground as a null patch) with its arrays transferred, and posts
+ * `patchesDone` after the last. A cell that throws, a spacing no band has, or a world that is no longer the set's is
+ * one `failed` and ends the set. The arrays are not touched after they are posted.
+ */
+export function createPatchServer(
+  post: (reply: WorldPrepReply, transfer: ArrayBuffer[]) => void,
+  madeFor: () => { seed: number; variant: string } | null,
+  now: () => number = () => performance.now(),
+): PatchServer {
+  let run: PatchRun | null = null;
+
+  const fail = (id: number, error: unknown): void => {
+    run = null;
+    post({ id, kind: "failed", message: error instanceof Error ? error.message : String(error) }, []);
+  };
+  const isMadeFor = (request: WorldPatchesRequest): boolean => {
+    const made = madeFor();
+    return made !== null && made.seed === request.seed && made.variant === request.variant;
+  };
+
+  return {
+    ask(request) {
+      run = null;
+      try {
+        if (!isMadeFor(request)) throw new Error(`no world of seed ${request.seed} on terrain "${request.variant}" has been made`);
+        const { seed } = request;
+        const hook = activeTerrainVariant().pavedGround;
+        run = {
+          request, next: 0, trail: activeTerrainVariant().trailGraph?.(seed) ?? null,
+          paved: hook === undefined ? null : (x, z) => hook(seed, x, z),
+        };
+      } catch (error) {
+        fail(request.id, error);
+      }
+    },
+    step() {
+      const current = run;
+      if (current === null) return false;
+      const { request } = current;
+      const { id, set } = request;
+      try {
+        const cell = request.cells[current.next];
+        if (cell !== undefined) {
+          if (!isMadeFor(request)) throw new Error(`the world of seed ${request.seed} on terrain "${request.variant}" is no longer the one made`);
+          if (!PATCH_SPACINGS.includes(cell.spacing)) throw new Error(`no band builds cells at a spacing of ${cell.spacing} m`);
+          const start = now();
+          const patch = facePatchGeometry(request.seed, cell.ci, cell.cj, cell.spacing, cell.stitch, current.trail, current.paved);
+          const ms = now() - start;
+          post({ id, kind: "patch", set, index: current.next, patch, ms }, patchTransfer(patch));
+          current.next++;
+        }
+        if (current.next >= request.cells.length) {
+          run = null;
+          post({ id, kind: "patchesDone", set }, []);
+        }
+      } catch (error) {
+        fail(id, error);
+      }
+      return true;
+    },
+  };
+}
+
+/**
+ * Serves the world's requests in a worker, for `game`: the world's, the first
+ * scene's, each served whole when its message is taken, and sets of rock-face
+ * cells, which `createPatchServer` builds a cell at a time. Between cells the
+ * worker's messages are taken (a message to itself over a `MessageChannel`,
+ * which a timer, clamped, would not give), so a request that arrives while a
+ * set is built is served before the next cell. The seed and variant of the last
+ * world or scene request served are the world a set is built for. Only inside
+ * a worker: under Node, where a test imports `prepareWorld`, and on a page,
+ * there is no WorkerGlobalScope, and this does nothing.
  */
 export function serveWorldWork(game: WorldWorkGame): void {
   if (typeof (globalThis as { WorkerGlobalScope?: unknown }).WorkerGlobalScope === "function") {
-    self.onmessage = (event: MessageEvent<WorldPrepRequest | WorldSceneRequest>): void => {
+    let made: { seed: number; variant: string } | null = null;
+    const server = createPatchServer((reply, transfer) => self.postMessage(reply, { transfer }), () => made);
+    const turn = new MessageChannel();
+    const next = (): void => turn.port2.postMessage(null);
+    turn.port1.onmessage = (): void => {
+      if (server.step()) next();
+    };
+    self.onmessage = (event: MessageEvent<WorldPrepRequest | WorldSceneRequest | WorldPatchesRequest>): void => {
       const request = event.data;
+      if ("kind" in request && request.kind === "patches") {
+        server.ask(request);
+        next();
+        return;
+      }
       if ("kind" in request) prepareSceneReply(request, (reply, transfer) => self.postMessage(reply, { transfer }), game);
       else prepareWorld(request, (reply) => self.postMessage(reply), game);
+      made = { seed: request.seed, variant: request.variant };
     };
   }
 }
