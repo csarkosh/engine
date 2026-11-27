@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ENGINE_LOOK, LINE_FROM, LINE_TO, NO_FINISH, finishDrawsInGrade, finishDrawsLine, finishGradeUniform, finishLineBandUniform, finishLineUniform, gameLook, lookGradeAt, type LookFinish, type LookGrade } from "../../src/game/gameLook.js";
+import { ENGINE_LOOK, LINE_FAR, LINE_FROM, LINE_NEAR, LINE_TO, NO_FINISH, finishDrawsInGrade, finishDrawsLine, finishGradeUniform, finishLineBandUniform, finishLineFarUniform, finishLineUniform, gameLook, lookGradeAt, type LookFinish, type LookGrade } from "../../src/game/gameLook.js";
 import { PAINT_OILS, mixPalette } from "../../src/game/gradeParams.js";
 import { SWARD_FLOOR, SWARD_MAX } from "../../src/game/groundHexParams.js";
 import { sunPositionAt } from "../../src/game/sky.js";
@@ -59,6 +59,18 @@ describe("a game's look over the engine's", () => {
     expect(finishGradeUniform(finish)).toEqual([0.028, 0.14, 0.25]);
   });
 
+  it("thins the line with distance only where the finish says so, and never divides by nothing", () => {
+    // Not said: the line is the same at every distance (band 1, weight 1).
+    expect(finishLineFarUniform(NO_FINISH)).toEqual([LINE_NEAR, LINE_FAR, 1, 1]);
+    expect(finishLineFarUniform({ ...NO_FINISH, lineNear: 40, lineFar: 600, lineFarBand: 16, lineFarWeight: 0.4 })).toEqual([40, 600, 16, 0.4]);
+    // A band under 1 would draw more far off, a weight out of 0 to 1 is no share: both are held, and the far end stays beyond the near.
+    expect(finishLineFarUniform({ ...NO_FINISH, lineFarBand: 0.5, lineFarWeight: 3 })).toEqual([LINE_NEAR, LINE_FAR, 1, 1]);
+    expect(finishLineFarUniform({ ...NO_FINISH, lineFarWeight: -1 })[3]).toBe(0);
+    const same = finishLineFarUniform({ ...NO_FINISH, lineNear: 100, lineFar: 100 });
+    expect(same[1]).toBeGreaterThan(same[0] as number);
+    expect(finishLineFarUniform({ ...NO_FINISH, lineNear: 0 })[0]).toBeGreaterThan(0);
+  });
+
   it("asks the grade for its part and the far softening for the line separately", () => {
     expect(finishDrawsLine({ ...NO_FINISH, line: 0.5 })).toBe(true);
     expect(finishDrawsInGrade({ ...NO_FINISH, line: 0.5 })).toBe(false);
@@ -86,15 +98,16 @@ describe("a game's look over the engine's", () => {
   });
 
   it("gives the line's own pass the line's uniforms and the depth's two terms", () => {
-    const finish: LookFinish = { ...NO_FINISH, line: 0.6, lineColour: [0.16, 0.17, 0.22], lineFrom: 0.005, lineTo: 0.025 };
+    const finish: LookFinish = { ...NO_FINISH, line: 0.6, lineColour: [0.16, 0.17, 0.22], lineFrom: 0.005, lineTo: 0.025, lineFarBand: 16, lineFarWeight: 0.4 };
     const record = lineOnlyUniforms(finish, [-1.0002, -0.2]);
     expect(record.finishLine).toEqual([0.16, 0.17, 0.22, 0.6]);
     expect(record.finishLineBand).toEqual([0.005, 0.025]);
     expect(record.depthTerms).toEqual([-1.0002, -0.2]);
-    expect(Object.keys(record)).toEqual(["finishLine", "finishLineBand", "depthTerms"]);
+    expect(record.finishLineFar).toEqual([LINE_NEAR, LINE_FAR, 16, 0.4]);
+    expect(Object.keys(record)).toEqual(["finishLine", "finishLineBand", "depthTerms", "finishLineFar"]);
     const layout = passLayout(record);
-    expect(layout.struct).toBe("struct U{finishLine:vec4<f32>,finishLineBand:vec2<f32>,depthTerms:vec2<f32>}");
-    expect(layout.bytes).toBe(32);
+    expect(layout.struct).toBe("struct U{finishLine:vec4<f32>,finishLineBand:vec2<f32>,depthTerms:vec2<f32>,finishLineFar:vec4<f32>}");
+    expect(layout.bytes).toBe(48);
   });
 
   it("reads the line's measure from the scene's multisampled depth on the tier with no chain", () => {
@@ -109,11 +122,19 @@ describe("a game's look over the engine's", () => {
     expect(text).toContain("select(1.0/LINE_SKY,4.0/max(sum,1e-6),sum>0.0)");
     expect(text).toContain("let second=wl+wr+wd+wu-4.0*wc;");
     expect(text).toContain("let largest=max(max(max(wl,wr),max(wd,wu)),wc);");
-    expect(text).toContain("smoothstep(u.finishLineBand.x,u.finishLineBand.y,abs(second)/largest)");
+    expect(text).toContain("smoothstep(u.finishLineBand.x*reach.x,u.finishLineBand.y*reach.x,abs(second)/largest)*reach.y");
     expect(text).toContain("mix(c.rgb,c.rgb*u.finishLine.xyz,lineEdge(at)*u.finishLine.w)");
+    // The distance's thinning: the logarithm of the nearest reading's distance between the two ends, eased, and the same in both.
+    for (const same of ["fn lineReach(largest:f32)->vec2<f32>{", "log2(1.0/max(largest,1e-9)/far.x)/max(log2(far.y/far.x),1e-4)", "return vec2<f32>(pow(far.z,t),mix(1.0,far.w,t));"]) {
+      expect(text).toContain(same);
+      expect(farSoftWgsl(true)).toContain(same);
+    }
+    // The sky's reading is 1 over 100000 in both, so a ridge against it is measured at the ridge's own distance.
+    expect(text).toContain("const LINE_SKY:f32=100000.0;");
+    expect(FAR_SOFT_WGSL).toContain("const FAR_SOFT_SKY:f32=100000.0;");
     // The same measure as the far softening's, line for line.
     const chain = farSoftWgsl(true);
-    for (const same of ["let second=wl+wr+wd+wu-4.0*wc;", "let largest=max(max(max(wl,wr),max(wd,wu)),wc);", "smoothstep(u.finishLineBand.x,u.finishLineBand.y,abs(second)/largest)"]) {
+    for (const same of ["let second=wl+wr+wd+wu-4.0*wc;", "let largest=max(max(max(wl,wr),max(wd,wu)),wc);", "let reach=lineReach(largest);", "smoothstep(u.finishLineBand.x*reach.x,u.finishLineBand.y*reach.x,abs(second)/largest)*reach.y"]) {
       expect(chain).toContain(same);
     }
   });
@@ -129,7 +150,7 @@ describe("a game's look over the engine's", () => {
   it("puts the finish's code in a shader only where it is asked for", () => {
     const line = farSoftWgsl(true);
     expect(line).toContain("fn finishLine(");
-    expect(line).toContain("smoothstep(u.finishLineBand.x,u.finishLineBand.y,");
+    expect(line).toContain("smoothstep(u.finishLineBand.x*reach.x,u.finishLineBand.y*reach.x,");
     expect(line).toContain("col=finishLine(vUV,col);");
     for (const halation of [true, false]) {
       const grade = gradeWgsl(halation, true);

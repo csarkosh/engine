@@ -38,6 +38,18 @@ export type LookFinish = {
    */
   readonly lineFrom: number;
   readonly lineTo: number;
+  /**
+   * How the line thins out with distance, as a draughtsman lifts the pen (all four optional; where they are not said the line is the
+   * same at every distance, as it always was). `lineNear` and `lineFar` are two distances in metres: within `lineNear` the line is as
+   * it is above, and it eases over the way to `lineFar`, measured in the logarithm of the distance, so that a long reach is a long
+   * ease and there is no ring. At `lineFar` and beyond, a step must be `lineFarBand` times deeper to draw (1 or more: the small steps
+   * of a far forest or a fold in a slope stop being drawn, and the few that carry the shape stay), and what is drawn is `lineFarWeight`
+   * of the line's strength (0 to 1: lighter than near ones). Defaults `LINE_NEAR`, `LINE_FAR`, 1 and 1.
+   */
+  readonly lineNear?: number;
+  readonly lineFar?: number;
+  readonly lineFarBand?: number;
+  readonly lineFarWeight?: number;
   /** How far the picture's light is gathered into five soft bands, 0 to 1 (0: none). 0.25. */
   readonly bands: number;
 };
@@ -45,6 +57,10 @@ export type LookFinish = {
 /** Where a line begins and where it is full, where a game's finish does not say: a step of 1 and of 5 parts in a hundred of the distance behind it. */
 export const LINE_FROM = 0.01;
 export const LINE_TO = 0.05;
+
+/** Where the line's thinning begins and ends, in metres, where a finish does not say: it then does not thin (band 1, weight 1), so the distances matter to nothing. */
+export const LINE_NEAR = 40;
+export const LINE_FAR = 600;
 
 /** No finish: every strength 0. */
 export const NO_FINISH: LookFinish = { grain: 0, edge: 0, line: 0, lineColour: [1, 1, 1], lineFrom: LINE_FROM, lineTo: LINE_TO, bands: 0 };
@@ -62,6 +78,16 @@ export function finishDrawsInGrade(finish: LookFinish): boolean {
 /** The far softening's `finishLineBand` uniform: where the line begins and where it is full. */
 export function finishLineBandUniform(finish: LookFinish): [number, number] {
   return [finish.lineFrom, finish.lineTo];
+}
+
+/**
+ * The `finishLineFar` uniform: `lineNear`, `lineFar` (kept apart, so the shader never divides by nothing), the multiple of the band at
+ * `lineFar` (not under 1) and the share of the strength left there (0 to 1).
+ */
+export function finishLineFarUniform(finish: LookFinish): [number, number, number, number] {
+  const near = Math.max(finish.lineNear ?? LINE_NEAR, 0.01);
+  const far = Math.max(finish.lineFar ?? LINE_FAR, near * 1.01);
+  return [near, far, Math.max(finish.lineFarBand ?? 1, 1), Math.min(Math.max(finish.lineFarWeight ?? 1, 0), 1)];
 }
 
 /** The far softening's `finishLine` uniform: the line's colour, then its strength. */

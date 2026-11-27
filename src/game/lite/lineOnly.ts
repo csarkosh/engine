@@ -20,7 +20,7 @@
  * The task is added straight after the scene's pass by the renderer, before anything else that draws to the canvas.
  */
 import { createCustomTask, createRenderTarget, getFrameEncoder, getGpuDevice, getProjectionMatrix, getRenderTargetAttachments, type BankedFreeCamera, type EngineContext, type RenderTarget, type RenderTargetAttachments, type SceneContext, type Task } from "@babylonjs/lite";
-import { finishDrawsLine, finishLineBandUniform, finishLineUniform, type LookFinish } from "../gameLook.js";
+import { finishDrawsLine, finishLineBandUniform, finishLineFarUniform, finishLineUniform, type LookFinish } from "../gameLook.js";
 import { chainTargetsStand } from "./postChain.js";
 import { askRenderPipeline } from "./pipelineAsk.js";
 import { POST_VERTEX_WGSL, lineOnlyWgsl, passLayout, writePass } from "./postWgsl.js";
@@ -34,9 +34,9 @@ export function lineOnTier(chained: boolean, finish: LookFinish): boolean {
   return !chained && finishDrawsLine(finish);
 }
 
-/** The pass's uniforms: the line's colour and strength, where it begins and is full, and the projection's two depth terms (`depthTerms`: its elements 10 and 14). */
-export function lineOnlyUniforms(finish: LookFinish, depthTerms: readonly [number, number] = [0, 0]): { finishLine: number[]; finishLineBand: number[]; depthTerms: number[] } {
-  return { finishLine: finishLineUniform(finish), finishLineBand: finishLineBandUniform(finish), depthTerms: [depthTerms[0], depthTerms[1]] };
+/** The pass's uniforms: the line's colour and strength, where it begins and is full, the projection's two depth terms (`depthTerms`: its elements 10 and 14), and how the line thins with distance. */
+export function lineOnlyUniforms(finish: LookFinish, depthTerms: readonly [number, number] = [0, 0]): { finishLine: number[]; finishLineBand: number[]; depthTerms: number[]; finishLineFar: number[] } {
+  return { finishLine: finishLineUniform(finish), finishLineBand: finishLineBandUniform(finish), depthTerms: [depthTerms[0], depthTerms[1]], finishLineFar: finishLineFarUniform(finish) };
 }
 
 export type LiteLineOnly = {

@@ -122,7 +122,8 @@ export function depthResolveWgsl(samples: number): string {
  * four neighbours a texel of the depth texture away, of the inverse of the distance (affine across the screen on
  * any flat plane, so a wall seen at a glancing angle gives 0; the sky is about 0), divided by the largest of the
  * five readings: about the relative step in inverse distance, the same at any distance. The look's
- * `lineFrom` and `lineTo` (`finishLineBand`) ease it in. The line multiplies the colour by `finishLine.xyz`, by
+ * `lineFrom` and `lineTo` (`finishLineBand`) ease it in, and `lineNear`, `lineFar`, `lineFarBand` and `lineFarWeight`
+ * (`finishLineFar`) make the line need a deeper step, and draw lighter, the farther off the nearest of the five lies. The line multiplies the colour by `finishLine.xyz`, by
  * `finishLine.w` where it is full.
  */
 export function farSoftWgsl(line: boolean): string {

@@ -59,7 +59,7 @@ import {
 } from "@babylonjs/lite";
 import type { AtmosphereUniforms } from "../atmosphereParams.js";
 import { emptyCloudUniforms, type CloudUniforms } from "../cloudParams.js";
-import { ENGINE_LOOK, finishDrawsInGrade, finishDrawsLine, finishGradeUniform, finishLineBandUniform, finishLineUniform, lookGradeAt, type GameLook } from "../gameLook.js";
+import { ENGINE_LOOK, finishDrawsInGrade, finishDrawsLine, finishGradeUniform, finishLineBandUniform, finishLineFarUniform, finishLineUniform, lookGradeAt, type GameLook } from "../gameLook.js";
 import { gradeRecordUnder, type GradeRecord, type PaintPalette } from "../gradeParams.js";
 import { LENS, lensDropletMap } from "../lensParams.js";
 import {
@@ -99,7 +99,7 @@ type CloudSun = Pick<AtmosphereUniforms, "atmSunDir" | "atmSunColour">;
 /** The uniforms of every pass, each a record by name: the order is the buffer's. */
 function sections(features: PostFeatures, look: GameLook) {
   // The finish's uniforms are in a pass's record only where its code is in the pass: a look with none hands the passes what they always had.
-  const far = { ...emptyFarSoftUniforms(), atmSunDir: [0, 0, 0], atmSunColour: [0, 0, 0], ...emptyCloudUniforms(), ...(finishDrawsLine(look.finish) ? { finishLine: finishLineUniform(look.finish), finishLineBand: finishLineBandUniform(look.finish) } : {}) };
+  const far = { ...emptyFarSoftUniforms(), atmSunDir: [0, 0, 0], atmSunColour: [0, 0, 0], ...emptyCloudUniforms(), ...(finishDrawsLine(look.finish) ? { finishLine: finishLineUniform(look.finish), finishLineBand: finishLineBandUniform(look.finish), finishLineFar: finishLineFarUniform(look.finish) } : {}) };
   const grade = { ...emptyGradeUniforms(), ...composeUniforms(2, 2), ...(finishDrawsInGrade(look.finish) ? { finishGrade: finishGradeUniform(look.finish) } : {}) };
   return {
     depth: { depthTerms: [0, 0] },
