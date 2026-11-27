@@ -14,7 +14,7 @@
  * teleport or on a renderer made mid-hike, is not held back. `dispose` (the hike left) runs
  * nothing more.
  */
-import { FIRST_BUILD_SLICE_MS, finish, type Slices } from "./syncJobs.js";
+import { FIRST_BUILD_SLICE_MS, finish, type Slices, type SyncJobs } from "./syncJobs.js";
 
 export type FirstBuilds = {
   /** True until `close` or `dispose`: a shell asks before handing a first build over. */
@@ -145,7 +145,14 @@ export function createFirstBuilds(deps: { now?: () => number; later?: (run: () =
  * the loader while one is open, which is while the intro's film covers the hike, and otherwise
  * run whole here, as it always was.
  */
-export function buildAtOnce(loader: FirstBuilds | undefined, owner: object, slices: Slices, name: string): void {
+export function buildAtOnce(loader: FirstBuilds | undefined, owner: object, slices: Slices, name: string, jobs?: SyncJobs): void {
   if (loader?.open === true) loader.add(owner, slices, name);
-  else finish(slices);
+  else if (jobs?.watching === true) {
+    const startedAt = jobs.atOnceStart();
+    try {
+      finish(slices);
+    } finally {
+      jobs.atOnceEnd(name, startedAt);
+    }
+  } else finish(slices);
 }

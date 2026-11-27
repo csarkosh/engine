@@ -39,6 +39,7 @@ import { creatureRoleGroups, resolveCreatureAssets, type CreatureAsset } from ".
 import { stepClip, type ClipClock } from "../clipClock.js";
 import { expectModels } from "../loadReport.js";
 import type { FirstBuilds } from "../firstBuilds.js";
+import type { SyncJobs } from "../syncJobs.js";
 import { composeInto, type Quat } from "../instancePose.js";
 import { writeClipParams, type BakedClip } from "../skinInstances.js";
 import type { ClipRole, PlayerPoint, WildlifeEvent } from "../wildlifeBehaviour.js";
@@ -81,6 +82,8 @@ export type LiteWildlifeOptions = {
   /** The species' discs scaled, as the tier asks. */
   radiusScale?: number;
   firstBuilds?: FirstBuilds;
+  /** The renderer's scheduler, for its read-out of what is built at once only. */
+  jobs?: SyncJobs;
   /** The air's plugin, one a material. */
   air: () => MaterialPlugin;
   /** The frame's block (`frameBlock.ts`): the wings' clock is in it. */
@@ -122,7 +125,7 @@ export function createLiteWildlifeMeshes(engine: EngineContext, scene: SceneCont
       release: (key) => void clocks.delete(key),
       planes: options.planes,
     },
-    { radiusScale: options.radiusScale, firstBuilds: options.firstBuilds },
+    { radiusScale: options.radiusScale, firstBuilds: options.firstBuilds, jobs: options.jobs },
   );
 
   // The ground species: every creature the catalog ships, each landing on its own.

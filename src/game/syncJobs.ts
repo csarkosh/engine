@@ -287,6 +287,26 @@ export async function stepSlices<T>(
   }
 }
 
+/** The rule that decided a crossing (`crossingAt`): "first" the shell's first build, "jump" a move of more than one cell
+ * since the last origin, "fast" a step over `min(cell / 2, SYNC_FAST_STEP_M)` a sixtieth of a second, "unscheduled" a
+ * shell given no scheduler, and "none" no rule: the crossing waits as a job. */
+export type CrossingRule = "first" | "jump" | "fast" | "unscheduled" | "none";
+
+/** One crossing as `crossingAt` judged it, for the read-out (`SyncJobs.watch`). */
+export type CrossingJudgement = {
+  /** The shell's name, as its jobs are named. */
+  owner: string;
+  /** The verdict: "now" builds at once, "later" begins a job. */
+  kind: "now" | "later";
+  rule: CrossingRule;
+  /** The view's step since its last frame (m), as it moved. */
+  step: number;
+  /** The step as judged (m): `step` scaled to a sixtieth of a second where the frame was longer; NaN for a first view, which has no step. */
+  moved: number;
+  /** The time since the shell's last view that the step was judged against (ms); NaN with no clock (a first view). */
+  elapsedMs: number;
+};
+
 /** What `SyncJobs.last` carries: the last `run`'s slices, and the counts since the last `resetLongest`. */
 export type SyncJobsLast = {
   /** Slices the last `run` ran. */
@@ -305,6 +325,19 @@ export type SyncJobsLast = {
   /** The milliseconds the slices took, how many of those a late or overdue run took, and the milliseconds by the jobs' names. */
   readonly ms: number;
   readonly lateMs: number;
+  /** How many of those milliseconds an overdue run took (a job run to its end in one frame), in all and by owner. A late run's are in `lateMs` too. */
+  readonly overdueMs: number;
+  readonly overdueOwners: Readonly<Record<string, number>>;
+  /**
+   * The read-out (`watch`), empty until it is switched on. What shells built at once this frame, outside every budget,
+   * before the frame's share began: by owner the builds (`atOnce`) and the milliseconds they took (`atOnceMs`); an
+   * owner with none this frame is 0 here, and left out of the page's `window.__syncJobs()` copy.
+   */
+  readonly atOnce: Readonly<Record<string, number>>;
+  readonly atOnceMs: Readonly<Record<string, number>>;
+  /** The crossings judged this frame: the first `crossingCount` of `crossings` (the rest is last frames' leavings). */
+  readonly crossings: readonly CrossingJudgement[];
+  readonly crossingCount: number;
   readonly owners: Readonly<Record<string, number>>;
   /** The longest single slice by owner (ms) since the last `resetLongest`. */
   readonly longest: Readonly<Record<string, number>>;
@@ -341,6 +374,18 @@ export type SyncJobs = {
   readonly last: SyncJobsLast;
   /** Forgets the longest slices recorded, so the next reading's are those since now. */
   resetLongest(): void;
+  /**
+   * Switches the read-out on or off (the measurement mode switches it on). Off, `atOnceStart`, `atOnceEnd` and `judged`
+   * do nothing and read no clock; on, they record into `last` for the frame whose `run` follows them.
+   */
+  watch(on: boolean): void;
+  readonly watching: boolean;
+  /** Before a build made at once: the clock to hand `atOnceEnd`, NaN (no reading) while not watching. */
+  atOnceStart(): number;
+  /** After it: counts the build and its milliseconds to `name` in this frame's record. */
+  atOnceEnd(name: string, startedAt: number): void;
+  /** Records a crossing's verdict (`crossingAt` calls it, while watching). */
+  judged(name: string, kind: "now" | "later", rule: CrossingRule, step: number, moved: number, elapsedMs: number): void;
 };
 
 /** A queued job: its slices, the frame whose crossing began it and the
@@ -364,15 +409,25 @@ export function createSyncJobs(clock: () => number): SyncJobs {
   let startedAt = Number.NaN;
   const last = {
     slices: 0, late: 0, lateJobs: 0, overdue: 0, overdueJobs: 0, completed: 0, floor: 0, idle: 0, ms: 0, lateMs: 0,
+    overdueMs: 0, overdueOwners: {} as Record<string, number>,
+    atOnce: {} as Record<string, number>, atOnceMs: {} as Record<string, number>,
+    crossings: [] as CrossingJudgement[], crossingCount: 0,
     owners: {} as Record<string, number>, longest: {} as Record<string, number>, learned: {} as Record<string, number>,
   };
+  // The read-out's frame in the making: what is built and judged before `run` is moved into `last` as it begins, so the
+  // record of a frame holds its own crossings. Written in place, entries kept: nothing is made once the owners are known.
+  let watching = false;
+  const madeAtOnce: Record<string, number> = {};
+  const madeAtOnceMs: Record<string, number> = {};
+  let judgements: CrossingJudgement[] = [];
+  let judgedCount = 0;
   /** The slice the clock's next reading is charged to: the one that just ran
    * (its name, whether it ran late, and whether it said what it would take),
    * or none. The clock is read once as a frame's share starts, once before
    * each slice and once as the share ends, never inside a slice's timing, so
    * a test clock that advances on every reading charges each slice one
    * reading. */
-  let charging: { name: string; late: boolean; announced: boolean } | null = null;
+  let charging: { name: string; late: boolean; announced: boolean; overdue: boolean } | null = null;
   let at = 0;
   /** Whether a patient job ran a slice this frame. */
   let patientRan = false;
@@ -384,6 +439,10 @@ export function createSyncJobs(clock: () => number): SyncJobs {
       const { name } = charging;
       last.ms += ms;
       if (charging.late) last.lateMs += ms;
+      if (charging.overdue) {
+        last.overdueMs += ms;
+        last.overdueOwners[name] = (last.overdueOwners[name] ?? 0) + ms;
+      }
       last.owners[name] = (last.owners[name] ?? 0) + ms;
       if (ms > (last.longest[name] ?? 0)) last.longest[name] = ms;
       if (charging.announced) {
@@ -418,9 +477,9 @@ export function createSyncJobs(clock: () => number): SyncJobs {
 
   /** One slice of `job`; true when it has applied. A slice that throws takes
    * its job out of the queue before the error goes on. */
-  function slice(job: Job, late = false): boolean {
+  function slice(job: Job, late = false, overdue = false): boolean {
     let done: boolean | undefined;
-    charging = { name: job.name, late, announced: job.next > 0 };
+    charging = { name: job.name, late, announced: job.next > 0, overdue };
     const held = openSlice(clock, at);
     try {
       const step = job.slices.next();
@@ -471,6 +530,35 @@ export function createSyncJobs(clock: () => number): SyncJobs {
       if (slices !== null) idle.push({ owner, slices, next: 0 });
     },
     started: () => startedAt,
+    watch(on) {
+      watching = on;
+    },
+    get watching() {
+      return watching;
+    },
+    atOnceStart: () => (watching ? clock() : Number.NaN),
+    atOnceEnd(name, startedAt) {
+      if (!watching || Number.isNaN(startedAt)) return;
+      const ms = Math.max(0, clock() - startedAt);
+      madeAtOnce[name] = (madeAtOnce[name] ?? 0) + 1;
+      madeAtOnceMs[name] = (madeAtOnceMs[name] ?? 0) + ms;
+    },
+    judged(name, kind, rule, step, moved, elapsedMs) {
+      if (!watching) return;
+      let entry = judgements[judgedCount];
+      if (entry === undefined) {
+        entry = { owner: name, kind, rule, step, moved, elapsedMs };
+        judgements.push(entry);
+      } else {
+        entry.owner = name;
+        entry.kind = kind;
+        entry.rule = rule;
+        entry.step = step;
+        entry.moved = moved;
+        entry.elapsedMs = elapsedMs;
+      }
+      judgedCount++;
+    },
     resetLongest() {
       for (const name in last.longest) last.longest[name] = 0;
     },
@@ -486,6 +574,24 @@ export function createSyncJobs(clock: () => number): SyncJobs {
       last.idle = 0;
       last.ms = 0;
       last.lateMs = 0;
+      last.overdueMs = 0;
+      for (const name in last.overdueOwners) last.overdueOwners[name] = 0;
+      // The frame's read-out: what was built and judged since the last share is this frame's.
+      for (const name in last.atOnce) {
+        last.atOnce[name] = 0;
+        last.atOnceMs[name] = 0;
+      }
+      for (const name in madeAtOnce) {
+        last.atOnce[name] = madeAtOnce[name] as number;
+        last.atOnceMs[name] = madeAtOnceMs[name] as number;
+        madeAtOnce[name] = 0;
+        madeAtOnceMs[name] = 0;
+      }
+      const judgedNow = last.crossings as CrossingJudgement[];
+      last.crossings = judgements;
+      judgements = judgedNow;
+      last.crossingCount = judgedCount;
+      judgedCount = 0;
       for (const name in last.owners) last.owners[name] = 0;
       charging = null;
       const start = tick();
@@ -505,7 +611,7 @@ export function createSyncJobs(clock: () => number): SyncJobs {
         // Each slice after a reading, so each is charged its own time.
         for (;;) {
           tick();
-          const done = slice(job, true);
+          const done = slice(job, true, true);
           last.overdue++;
           if (done) break;
         }
@@ -581,7 +687,7 @@ export function createSyncJobs(clock: () => number): SyncJobs {
         }
         skipped = 0;
         let done = true;
-        charging = { name: "idle", late: false, announced: false };
+        charging = { name: "idle", late: false, announced: false, overdue: false };
         const held = openSlice(clock, at);
         try {
           const step = work.slices.next();
@@ -606,6 +712,26 @@ export function createSyncJobs(clock: () => number): SyncJobs {
       return frame;
     },
     last,
+  };
+}
+
+/**
+ * A copy of `last` for a page to read, since the record is written in place every frame: the owners' records copied, the
+ * read-out's owners left out where they built nothing this frame, and the crossings judged this frame as entries of their own.
+ */
+export function syncJobsRecord(last: SyncJobsLast): SyncJobsLast {
+  const atOnce: Record<string, number> = {};
+  const atOnceMs: Record<string, number> = {};
+  for (const name in last.atOnce) {
+    if ((last.atOnce[name] as number) === 0) continue;
+    atOnce[name] = last.atOnce[name] as number;
+    atOnceMs[name] = last.atOnceMs[name] as number;
+  }
+  return {
+    ...last,
+    owners: { ...last.owners }, longest: { ...last.longest }, learned: { ...last.learned }, overdueOwners: { ...last.overdueOwners },
+    atOnce, atOnceMs,
+    crossings: last.crossings.slice(0, last.crossingCount).map((c) => ({ ...c })),
   };
 }
 
@@ -688,6 +814,9 @@ export const SYNC_FRAME_S = 1 / 60;
  * the face patches' set in one frame of 1.1 to 1.3 s on the rig that measured
  * it (2026-11-09), three times in six runs, each after a frame of 0.18 to
  * 0.26 s. A jump of more than a cell is a jump at any frame rate.
+ *
+ * `record`, the scheduler, and `name`, the shell's, are for the read-out: while it is watching, each verdict is recorded
+ * with the rule that decided it, the step, and the time it was judged against (`SyncJobs.judged`). They change no verdict.
  */
 export function crossingAt(
   c: Crossing,
@@ -698,6 +827,8 @@ export function crossingAt(
   cell: number,
   deferrable: boolean,
   now: number = Number.NaN,
+  record?: SyncJobs,
+  name = "",
 ): CrossingKind {
   const step = Math.hypot(x - c.lastX, z - c.lastZ);
   const seconds = (now - c.lastAt) / 1000;
@@ -711,6 +842,9 @@ export function crossingAt(
   const jump = Math.abs(ox - c.originX) > cell || Math.abs(oz - c.originZ) > cell;
   c.originX = ox;
   c.originZ = oz;
-  if (!deferrable || first || jump || moved > Math.min(cell / 2, SYNC_FAST_STEP_M)) return "now";
-  return "later";
+  const rule: CrossingRule = !deferrable ? "unscheduled" : first ? "first" : jump ? "jump" : moved > Math.min(cell / 2, SYNC_FAST_STEP_M) ? "fast" : "none";
+  const kind = rule === "none" ? "later" : "now";
+  // With the read-out on, the verdict and what it judged: the step and the time it was reckoned against.
+  if (record?.watching === true) record.judged(name, kind, rule, step, moved, seconds * 1000);
+  return kind;
 }

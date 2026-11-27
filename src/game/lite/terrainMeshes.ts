@@ -643,7 +643,7 @@ export function createTerrainMeshes(
     const ci = Math.floor(camX / PATCH_CELL);
     const cj = Math.floor(camZ / PATCH_CELL);
     const first = Number.isNaN(patchCrossing.originX);
-    const kind = crossingAt(patchCrossing, camX, camZ, ci * PATCH_CELL, cj * PATCH_CELL, PATCH_CELL, jobs !== undefined, jobs?.started());
+    const kind = crossingAt(patchCrossing, camX, camZ, ci * PATCH_CELL, cj * PATCH_CELL, PATCH_CELL, jobs !== undefined, jobs?.started(), jobs, "facePatches");
     if (kind === "none") {
       // While the loader steps the first set, nothing is built ahead of it.
       if (firstBuilds?.queued(patchOwner) !== true) aimPatches(camX, camZ);
@@ -665,11 +665,15 @@ export function createTerrainMeshes(
         return;
       }
       // The face in front of the camera on the first frame, the distance over the frames after it.
+      const startedAt = jobs.atOnceStart();
       finish(rebuildPatches(ci, cj, true));
+      jobs.atOnceEnd("facePatches", startedAt);
       jobs.begin(patchOwner, rebuildPatches(ci, cj), true, "facePatches");
       return;
     }
+    const startedAt = jobs?.atOnceStart() ?? Number.NaN;
     finish(rebuildPatches(ci, cj));
+    jobs?.atOnceEnd("facePatches", startedAt);
   }
 
   // ---- The rings -----------------------------------------------------------------------------------------------
@@ -926,7 +930,7 @@ export function createTerrainMeshes(
       headingX = hx;
       headingZ = hz;
     }
-    const kind = crossingAt(ringCrossing, camX, camZ, snapOrigin(camX, base), snapOrigin(camZ, base), ringStep, jobs !== undefined, jobs?.started());
+    const kind = crossingAt(ringCrossing, camX, camZ, snapOrigin(camX, base), snapOrigin(camZ, base), ringStep, jobs !== undefined, jobs?.started(), jobs, "clipmap");
     if (kind === "none") {
       // While the loader steps the rings' build, nothing else is begun and nothing prepared ahead of it.
       if (firstBuilds?.queued(ringOwner) === true) return;
@@ -940,7 +944,7 @@ export function createTerrainMeshes(
         } else {
           // Nothing is prepared ahead beside a build the loader steps: the build aims it again as it ends.
           jobs?.idle(ringOwner, null);
-          buildAtOnce(firstBuilds, ringOwner, build(camX, camZ), "clipmap");
+          buildAtOnce(firstBuilds, ringOwner, build(camX, camZ), "clipmap", jobs);
         }
         return;
       }
@@ -955,7 +959,7 @@ export function createTerrainMeshes(
     }
     jobs?.cancel(ringOwner);
     // At once, or stepped by the loader while the film covers the hike.
-    buildAtOnce(firstBuilds, ringOwner, build(camX, camZ), "clipmap");
+    buildAtOnce(firstBuilds, ringOwner, build(camX, camZ), "clipmap", jobs);
   }
 
   return {

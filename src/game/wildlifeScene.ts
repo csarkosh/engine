@@ -37,7 +37,7 @@ import {
   type ClipRole, type PlayerPoint, type UnitState, type WildlifeEvent,
 } from "./wildlifeBehaviour.js";
 import { buildAtOnce, type FirstBuilds } from "./firstBuilds.js";
-import type { Slices } from "./syncJobs.js";
+import type { Slices, SyncJobs } from "./syncJobs.js";
 import {
   createDirectorState, DIRECTOR_ID_BASE, onScreen, PLACE_BODY_H, step as stepDirector,
   type Candidate, type CueEvent, type Ground, type MatchState, type View,
@@ -320,6 +320,8 @@ export type WildlifeSceneOptions = {
    * while it is open, a collect of the field (the first, about 30 ms, and one after the camera has
    * moved on) is a task of the loader's own, never part of a frame; closed or absent, it runs in the call. */
   firstBuilds?: FirstBuilds;
+  /** The renderer's scheduler, only for its read-out of what is built at once (`SyncJobs.watch`): the collect is never a job. */
+  jobs?: SyncJobs;
 };
 
 export type WildlifeScene = {
@@ -949,7 +951,7 @@ export function createWildlifeScene(seed: number, ports: WildlifePorts, options:
         // One step, the whole collect: in the call, or a turn of the loader's while the film covers
         // the hike, where a collect still queued for the last place is replaced by this one. Until
         // it has run the shell steps the units it has, none at first.
-        buildAtOnce(options.firstBuilds, collectOwner, (function* (): Slices { rebuild(camX, camZ, tick); })(), "wildlife");
+        buildAtOnce(options.firstBuilds, collectOwner, (function* (): Slices { rebuild(camX, camZ, tick); })(), "wildlife", options.jobs);
         lastX = camX;
         lastZ = camZ;
       }

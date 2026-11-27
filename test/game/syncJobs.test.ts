@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { runBySlices } from "../../testing/sliceRun.js";
 import {
   SLICE_READ_UNITS, SLICE_TARGET_MS, SYNC_BUDGET_MS, SYNC_PATIENT_MAX_MS, SYNC_PATIENT_WAIT_FRAMES, SYNC_LATE_BUDGET_MS, SYNC_LATE_FRAMES_MAX, SYNC_LATE_MS_MAX, SYNC_OVERDUE_MS,
-  createCrossing, createSyncJobs, crossingAt, finish, nextCrossing, sliceDue, sortSlices, turn,
-  type Slices,
+  createCrossing, createSyncJobs, crossingAt, finish, nextCrossing, sliceDue, sortSlices, syncJobsRecord, turn,
+  type Slices, type SyncJobs,
 } from "../../src/game/syncJobs.js";
 
 /** `list` sorted at once by `sortSlices`. */
@@ -1007,5 +1007,173 @@ describe("a patient job under busy jobs", () => {
     jobs.begin({}, job(t, 3, 1, { at: null }, () => jobs.frame));
     jobs.run();
     expect(jobs.last.floor).toBe(0);
+  });
+});
+
+describe("the read-out of what is built at once and how crossings were judged", () => {
+  /** A scheduler on a clock the test advances by hand, and counts the readings of. */
+  function watched(on = true) {
+    let now = 0;
+    let reads = 0;
+    const jobs = createSyncJobs(() => {
+      reads++;
+      return now;
+    });
+    jobs.watch(on);
+    return { jobs, advance: (ms: number) => { now += ms; }, reads: () => reads };
+  }
+
+  it("records a build made at once under its owner, with its count and its milliseconds, in the frame whose share follows", () => {
+    const { jobs, advance } = watched();
+    for (const ms of [2.5, 1]) {
+      const at = jobs.atOnceStart();
+      advance(ms);
+      jobs.atOnceEnd("clipmap", at);
+    }
+    const at = jobs.atOnceStart();
+    advance(4);
+    jobs.atOnceEnd("clutter", at);
+    jobs.run();
+    expect(jobs.last.atOnce).toEqual({ clipmap: 2, clutter: 1 });
+    expect(jobs.last.atOnceMs.clipmap).toBeCloseTo(3.5, 9);
+    expect(jobs.last.atOnceMs.clutter).toBeCloseTo(4, 9);
+    expect(syncJobsRecord(jobs.last).atOnce).toEqual({ clipmap: 2, clutter: 1 });
+  });
+
+  it("does not count a sliced job as built at once, and resets each frame", () => {
+    const { jobs, advance } = watched();
+    const done = { at: null as number | null };
+    jobs.begin({}, job({ advance }, 3, 0.5, done, () => jobs.frame), false, "forest");
+    const at = jobs.atOnceStart();
+    advance(1);
+    jobs.atOnceEnd("clipmap", at);
+    jobs.run();
+    expect(done.at).toBe(0);
+    expect(jobs.last.atOnce).toEqual({ clipmap: 1 });
+    expect(jobs.last.owners.forest).toBeGreaterThan(0);
+    expect(jobs.last.atOnce.forest).toBeUndefined();
+    // The next frame built nothing at once: the owner stays in the record at 0 and the page's copy leaves it out.
+    jobs.run();
+    expect(jobs.last.atOnce.clipmap).toBe(0);
+    expect(jobs.last.atOnceMs.clipmap).toBe(0);
+    expect(syncJobsRecord(jobs.last).atOnce).toEqual({});
+    expect(syncJobsRecord(jobs.last).atOnceMs).toEqual({});
+  });
+
+  it("tells a job run to its end because it was overdue from the same frame's ordinary slices", () => {
+    const { jobs, advance } = watched();
+    const done = { at: null as number | null };
+    jobs.begin({}, job({ advance }, 30, 1, done, () => jobs.frame), false, "forest");
+    advance(SYNC_OVERDUE_MS);
+    jobs.begin({}, job({ advance }, 2, 0.25, { at: null }, () => jobs.frame), false, "props");
+    jobs.run();
+    expect(done.at).toBe(0);
+    expect(jobs.last.overdueJobs).toBe(1);
+    expect(jobs.last.overdueMs).toBeCloseTo(30, 9);
+    expect(jobs.last.overdueOwners.forest).toBeCloseTo(30, 9);
+    expect(jobs.last.overdueOwners.props).toBeUndefined();
+    // The overdue run took the frame's share: it is all of what the frame spent, and counted as late's too.
+    expect(jobs.last.ms).toBeCloseTo(jobs.last.overdueMs, 9);
+    expect(jobs.last.lateMs).toBeCloseTo(jobs.last.overdueMs, 9);
+    jobs.run();
+    expect(jobs.last.overdueMs).toBe(0);
+    expect(jobs.last.overdueOwners.forest).toBe(0);
+  });
+
+  it("records each verdict with the rule that decided it, the step and the time it judged", () => {
+    const { jobs } = watched();
+    const c = createCrossing();
+    let t = 1000;
+    const view = (x: number, cell: number, frameMs = 1000 / 60) =>
+      crossingAt(c, x, 0, Math.floor(x / cell) * cell, 0, cell, true, (t += frameMs), jobs, "ring");
+    // First build.
+    expect(view(10.5, 2)).toBe("now");
+    jobs.run();
+    expect(jobs.last.crossingCount).toBe(1);
+    expect(jobs.last.crossings[0]).toMatchObject({ owner: "ring", kind: "now", rule: "first" });
+    expect(Number.isNaN(jobs.last.crossings[0]?.step)).toBe(true);
+    // A jump of more than a cell.
+    view(10.6, 2);
+    expect(view(110.5, 2)).toBe("now");
+    // A step over half a cell in a sixtieth: the fast-step rule, judged at its own step.
+    view(111.5, 2);
+    expect(view(113.9, 2)).toBe("now");
+    // A one-cell step at a walk: a job, decided by no rule.
+    view(113.95, 2);
+    expect(view(114.0375, 2)).toBe("later");
+    jobs.run();
+    const [jump, fast, later] = jobs.last.crossings;
+    expect(jobs.last.crossingCount).toBe(3);
+    expect(jump).toMatchObject({ owner: "ring", kind: "now", rule: "jump" });
+    expect(jump?.step).toBeCloseTo(99.9, 9);
+    expect(fast).toMatchObject({ kind: "now", rule: "fast" });
+    expect(fast?.step).toBeCloseTo(2.4, 9);
+    expect(fast?.moved).toBeCloseTo(2.4, 9);
+    expect(fast?.elapsedMs).toBeCloseTo(1000 / 60, 9);
+    expect(later).toMatchObject({ kind: "later", rule: "none" });
+    expect(later?.step).toBeCloseTo(0.0875, 9);
+  });
+
+  it("scales a step over a long frame to a sixtieth of a second and records both, and the longer time", () => {
+    const { jobs } = watched();
+    const c = createCrossing();
+    crossingAt(c, 5.95, 0, 4, 0, 4, true, 1000, jobs, "clutter");
+    expect(crossingAt(c, 7.15, 0, 4, 0, 4, true, 1120, jobs, "clutter")).toBe("none");
+    // 1.2 m in 120 ms is 0.17 m a sixtieth: a job, with the step as it moved and as judged.
+    expect(crossingAt(c, 8.35, 0, 8, 0, 4, true, 1240, jobs, "clutter")).toBe("later");
+    jobs.run();
+    const judged = jobs.last.crossings[jobs.last.crossingCount - 1];
+    expect(judged?.step).toBeCloseTo(1.2, 9);
+    expect(judged?.moved).toBeCloseTo(0.1667, 3);
+    expect(judged?.elapsedMs).toBeCloseTo(120, 9);
+  });
+
+  it("records the crossings of each frame in the record of the frame, not the one after", () => {
+    const { jobs } = watched();
+    const c = createCrossing();
+    crossingAt(c, 1, 0, 0, 0, 2, true, 10, jobs, "a");
+    jobs.run();
+    expect(jobs.last.crossingCount).toBe(1);
+    jobs.run();
+    expect(jobs.last.crossingCount).toBe(0);
+    expect(syncJobsRecord(jobs.last).crossings).toEqual([]);
+  });
+
+  it("writes in place: its entries are reused from frame to frame, and the page's copy is its own", () => {
+    const { jobs } = watched();
+    crossingAt(createCrossing(), 1, 0, 0, 0, 2, true, 10, jobs, "a");
+    jobs.run();
+    const copy = syncJobsRecord(jobs.last);
+    const entry = jobs.last.crossings[0];
+    crossingAt(createCrossing(), 9, 0, 8, 0, 2, true, 20, jobs, "b");
+    jobs.run();
+    crossingAt(createCrossing(), 9, 0, 8, 0, 2, true, 30, jobs, "c");
+    jobs.run();
+    // Two buffers swap, so an entry made in frame 1 is written again by frame 3, and not a new one made.
+    expect(jobs.last.crossings[0]).toBe(entry);
+    expect(jobs.last.crossings[0]?.owner).toBe("c");
+    expect(copy.crossings[0]?.owner).toBe("a");
+    expect(copy.crossings[0]).not.toBe(entry);
+  });
+
+  it("records nothing and reads no clock while it is off, and changes no verdict", () => {
+    const off = watched(false);
+    const on = watched(true);
+    const verdicts = (jobs: SyncJobs | undefined) => {
+      const c = createCrossing();
+      return [10.5, 10.6, 110.5, 111.5, 113.9, 113.95, 114.0375].map((x, i) => crossingAt(c, x, 0, Math.floor(x / 2) * 2, 0, 2, true, 1000 + (i * 1000) / 60, jobs, "ring"));
+    };
+    expect(verdicts(off.jobs)).toEqual(verdicts(on.jobs));
+    expect(verdicts(off.jobs)).toEqual(verdicts(undefined));
+    const at = off.jobs.atOnceStart();
+    expect(Number.isNaN(at)).toBe(true);
+    off.jobs.atOnceEnd("clipmap", at);
+    off.jobs.judged("ring", "now", "first", 0, 0, 0);
+    expect(off.reads()).toBe(0);
+    off.jobs.run();
+    expect(off.jobs.last.atOnce).toEqual({});
+    expect(off.jobs.last.crossingCount).toBe(0);
+    expect(off.jobs.last.crossings).toEqual([]);
+    expect(off.jobs.watching).toBe(false);
   });
 });

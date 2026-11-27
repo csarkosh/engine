@@ -416,6 +416,13 @@ What a phone run is, against the Mac's and the rig's:
   the late share (`late`), the jobs run to their end by the hard bound (`overdueJobs`, the slices
   `overdue`, the frames `overdueFrames`), the longest single slice by owner (`longest`, counted from
   the window's own start) and the apply cost the scheduler has learned on the phone (`learned`).
+  Each reading also carries, for the frame it is read in, the milliseconds of overdue runs apart
+  (`overdueMs`, `overdueOwners`), the builds made at once outside every budget by owner (`atOnce`
+  counts, `atOnceMs` milliseconds; an owner that built none is left out), and each crossing as
+  `crossingAt` judged it (`crossings`: `owner`, `kind` `now` or `later`, `rule` `first`, `jump`,
+  `fast` or `none`, `step` in metres, `moved` the step as judged per sixtieth of a second, and
+  `elapsedMs` it was judged against). The harness rows do not sum these; a script reads them from
+  the page each frame.
 - Windows, not a settle and one sample: `--windows 3` times three consecutive 10 s windows from
   the first, so a moment that passes (the summit scene, the reveal, the death) is seen in turn. A
   `check` view's `extraSettleS` is skipped with more than one window.

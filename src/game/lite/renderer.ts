@@ -124,7 +124,9 @@
  * a job's hand-over waits for a frame whose budget has room for it, and
  * the frame's record is closed once its jobs have run. In the measurement
  * mode the record of the last frame is read out as
- * `window.__frameUploads()`, beside the jobs' `window.__syncJobs()`.
+ * `window.__frameUploads()`, beside the jobs' `window.__syncJobs()`, whose record also says what was
+ * built at once that frame, outside every budget, by owner, and how each crossing was judged
+ * (`SyncJobs.watch`, `syncJobsRecord`).
  *
  * **What every material reads alike is one block** (`frameBlock.ts`): the
  * air, the wet line and the weather, the wind and the players, the eye and
@@ -452,7 +454,7 @@ import { SILENT_SURF_SOUND, createSurfSound, fillSurfSound, type SurfSound } fro
 import type { SkyState } from "../skyState.js";
 import { STARE_LENS_REST, stareShadeUnder, type StareLens } from "../stareLens.js";
 import { sunAltitudeDeg, whenSkyHeld } from "../skyWait.js";
-import { createSyncJobs, finish, stepSlices, type SyncJobsLast } from "../syncJobs.js";
+import { createSyncJobs, finish, stepSlices, syncJobsRecord, type SyncJobsLast } from "../syncJobs.js";
 import { followRoadCentre, terrainTablesFor, type TerrainTables } from "../terrainTables.js";
 import { terrainCoverFor, terrainSurfaceUnder, terrainUniforms, type TerrainUniformInputs } from "../terrainUniforms.js";
 import { createViewBob } from "../viewBob.js";
@@ -832,9 +834,9 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     __syncJobs?: () => SyncJobsLast; __syncJobsReset?: () => void; __frameUploads?: () => FrameUploadCounts;
   };
   if (options.gpuTime === true) {
-    measured.__syncJobs = () => ({
-      ...jobs.last, owners: { ...jobs.last.owners }, longest: { ...jobs.last.longest }, learned: { ...jobs.last.learned },
-    });
+    // The read-out of what is built at once and how each crossing was judged is on with it (`SyncJobs.watch`).
+    jobs.watch(true);
+    measured.__syncJobs = () => syncJobsRecord(jobs.last);
     measured.__syncJobsReset = () => jobs.resetLongest();
   }
   // What each frame hands to the GPU, and the budget its streamed part is held to (`frameUploads.ts`); the last
@@ -1343,7 +1345,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     const wildlife = !hasWildlife || forest === null || cloudMap === null || disposed
       ? null
       : createLiteWildlifeMeshes(engine, scene, forest.seed, {
-        radiusScale: tier === "low" ? 0.6 : undefined, firstBuilds: options.firstBuilds, air, shared, clock: skinClock,
+        radiusScale: tier === "low" ? 0.6 : undefined, firstBuilds: options.firstBuilds, jobs, air, shared, clock: skinClock,
         planes: () => planes, uploads,
       });
     // The water, in a world with a sea level: the bed's square every body of it reads its depth from, round the

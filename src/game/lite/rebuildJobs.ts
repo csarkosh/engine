@@ -72,7 +72,7 @@ export function createRebuilds(options: RebuildOptions): Rebuilds {
     update(x, z) {
       if (turn(heading, x - crossing.lastX, z - crossing.lastZ)) aimed = false;
       options.origin(x, z, origin);
-      const kind = crossingAt(crossing, x, z, origin[0] as number, origin[1] as number, cell, jobs !== undefined, jobs?.started());
+      const kind = crossingAt(crossing, x, z, origin[0] as number, origin[1] as number, cell, jobs !== undefined, jobs?.started(), jobs, name);
       if (kind === "none") {
         // While the loader steps this shell's build, nothing is prepared ahead of it.
         if (firstBuilds?.queued(owner) !== true) aim(x, z);
@@ -85,7 +85,7 @@ export function createRebuilds(options: RebuildOptions): Rebuilds {
         return kind;
       }
       jobs?.cancel(owner);
-      buildAtOnce(firstBuilds, owner, rebuild(x, z), name);
+      buildAtOnce(firstBuilds, owner, rebuild(x, z), name, jobs);
       return kind;
     },
     pending: () => (jobs?.pending(owner) ?? false) || (firstBuilds?.queued(owner) ?? false),

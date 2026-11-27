@@ -599,7 +599,9 @@ export function createForestMeshes(engine: EngineContext, scene: SceneContext, s
       card.board.bake.state = "ready";
     }
     // A rebuild may have split the far lists while the bakes were drawn: each card takes its own now.
+    const startedAt = options.jobs?.atOnceStart() ?? Number.NaN;
     for (const card of cards) fillBillboard(card.slot);
+    options.jobs?.atOnceEnd("forestBillboards", startedAt);
   }
 
   /**

@@ -271,3 +271,49 @@ describe("a shell's rebuilds on the renderer's scheduler", () => {
     expect(s.shown).toEqual([{ x: 2.98, z: 0 }]);
   });
 });
+
+describe("a shell's at-once builds and verdicts in the scheduler's read-out", () => {
+  it("records a build made at once under the shell's name, with the first-build rule, and a job as no at-once build", () => {
+    const { jobs, frame } = scheduler();
+    jobs.watch(true);
+    const s = shell({ jobs, slices: 4, ms: 1 });
+    s.rebuilds.update(1, 1);
+    frame();
+    expect(jobs.last.atOnce).toEqual({ "stand-in": 1 });
+    expect(jobs.last.atOnceMs["stand-in"]).toBeGreaterThanOrEqual(0);
+    expect(jobs.last.crossings[0]).toMatchObject({ owner: "stand-in", kind: "now", rule: "first" });
+    expect(jobs.last.crossingCount).toBe(1);
+    // A crossing at a walk is a job: judged "later", and nothing built at once.
+    s.rebuilds.update(2.95, 1);
+    frame();
+    s.rebuilds.update(3.0375, 1);
+    frame();
+    expect(jobs.last.atOnce["stand-in"] ?? 0).toBe(0);
+    expect(jobs.last.crossings[0]).toMatchObject({ owner: "stand-in", kind: "later", rule: "none" });
+    // A jump of more than a cell builds at once again.
+    s.rebuilds.update(40, 1);
+    frame();
+    expect(jobs.last.atOnce).toMatchObject({ "stand-in": 1 });
+    expect(jobs.last.crossings[0]).toMatchObject({ kind: "now", rule: "jump" });
+  });
+
+  it("records no at-once build and no verdict while the read-out is off", () => {
+    const { jobs, frame } = scheduler();
+    const s = shell({ jobs });
+    s.rebuilds.update(1, 1);
+    frame();
+    expect(jobs.last.atOnce).toEqual({});
+    expect(jobs.last.crossingCount).toBe(0);
+  });
+
+  it("does not count a build the loader of first builds takes as one made at once", () => {
+    const { jobs, frame } = scheduler();
+    jobs.watch(true);
+    const firstBuilds = createFirstBuilds({ later: () => undefined });
+    const s = shell({ jobs, firstBuilds });
+    s.rebuilds.update(1, 1);
+    frame();
+    expect(jobs.last.atOnce).toEqual({});
+    expect(jobs.last.crossings[0]).toMatchObject({ kind: "now", rule: "first" });
+  });
+});
