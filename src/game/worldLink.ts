@@ -48,7 +48,13 @@ export function createWorldLink(worker: Worker): WorldLink {
     if (failed) return;
     failed = true;
     const heard = failures.splice(0);
-    for (const call of heard) call();
+    for (const call of heard) {
+      try {
+        call();
+      } catch (error) {
+        console.error("worldLink: a listener of the link's failure threw.", error);
+      }
+    }
   };
   const end = (): void => {
     if (ended) return;
@@ -57,8 +63,8 @@ export function createWorldLink(worker: Worker): WorldLink {
     worker.onerror = null;
     worker.onmessageerror = null;
     listeners.clear();
-    fail();
     worker.terminate();
+    fail();
   };
 
   worker.onmessage = (event: MessageEvent<WorldPrepReply>): void => {

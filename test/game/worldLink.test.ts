@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createWorldLink } from "../../src/game/worldLink.js";
 import type { WorldPrepReply } from "../../src/game/worldWork.js";
 
@@ -148,5 +148,40 @@ describe("createWorldLink", () => {
     send({ id: 1, kind: "done" });
     expect(heard).toHaveLength(0);
     expect(link.post({})).toBe(false);
+  });
+
+  it("an onFail callback that throws does not keep the others from being told", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { worker, link } = make();
+      let second = 0;
+      link.onFail(() => {
+        throw new Error("listener");
+      });
+      link.onFail(() => (second += 1));
+      expect(() => worker.onerror?.({})).not.toThrow();
+      expect(second).toBe(1);
+      expect(link.failed).toBe(true);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("dispose ends the worker once and does not throw when an onFail callback throws", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { worker, link } = make();
+      link.onFail(() => {
+        throw new Error("listener");
+      });
+      expect(() => link.dispose()).not.toThrow();
+      link.dispose();
+      expect(worker.terminated).toBe(1);
+      expect(link.failed).toBe(true);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
