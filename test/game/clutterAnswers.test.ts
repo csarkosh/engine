@@ -371,6 +371,10 @@ describe("an answer that does not fit its strips", () => {
       const answer = answerFor(mine);
       return { strips: mine, answer: { ...answer, cells: answer.cells.subarray(0, answer.cells.length - 1) } };
     }],
+    ["a cells array that lost its last instance", (mine) => {
+      const answer = answerFor(mine);
+      return { strips: mine, answer: { ...answer, cells: answer.cells.subarray(0, answer.cells.length - 3) } };
+    }],
     ["a frames array cut short", (mine) => {
       const answer = answerFor(mine);
       return { strips: mine, answer: { ...answer, frames: answer.frames.subarray(0, answer.frames.length - 1) } };

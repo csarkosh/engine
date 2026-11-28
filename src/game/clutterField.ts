@@ -620,7 +620,7 @@ export type ClutterCollector = {
    * then `cz`), in slices. A cell is skipped if the collector already remembers it, or if it lies out of reach of a
    * camera at (camX, camZ) (`evictRadius`, measured as the sweep measures it); every other is remembered, as the
    * answer's instance or as holding nothing. `found` is told of each instance newly remembered, with its index in
-   * the answer, in the same step. An answer that does not fit its strips (its arrays too short, or an instance
+   * the answer, in the same step. An answer that does not fit its strips (its arrays not exactly as long as its instances, or an instance
    * whose cell is in no strip or out of the strips' order) is dropped whole: nothing is remembered, `found` is never
    * called and the result is false; true where the answer was taken.
    */
@@ -855,14 +855,15 @@ export function createClutterCollector(seed: number, release?: (inst: ClutterIns
     return Int32Array.from(out);
   }
   /**
-   * Whether `answer` is what `strips` asked: its arrays are long enough for its instances, and the instances' cells
+   * Whether `answer` is what `strips` asked: its arrays are exactly as long as its instances need (the server cuts them to
+   * what it found), so none has lost or gained an instance, and the instances' cells
    * are in the strips, in strictly increasing (strip, cx, cz) order, one pass over both.
    */
   function fits(strips: Int32Array, answer: ClutterAnswer): boolean {
     const { cells } = answer;
     if (cells.length % 3 !== 0) return false;
     const count = cells.length / 3;
-    if (answer.values.length < count * CLUTTER_WIRE_VALUES || answer.frames.length < count * KEPT_STRIDE || answer.framed.length < count) return false;
+    if (answer.values.length !== count * CLUTTER_WIRE_VALUES || answer.frames.length !== count * KEPT_STRIDE || answer.framed.length !== count) return false;
     const strip = Math.floor(strips.length / CLUTTER_STRIP_INTS);
     let s = 0;
     let lastX = 0;
