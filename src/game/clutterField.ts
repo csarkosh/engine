@@ -19,6 +19,7 @@ import type { FadeBands } from "./distanceFade.js";
 import {
   clutterInCell, clutterCell, CLUTTER_CLASS_COUNT, CLUTTER_GRASS_CELL, CLUTTER_MEADOW, type ClutterInstance, CLUTTER_GRASS, CLUTTER_BUSH, CLUTTER_FLOWER, CLUTTER_LITTER, CLUTTER_FERN, CLUTTER_SHRUB, CLUTTER_WETPLANT, CLUTTER_HIGHPLANT,
 } from "../sim/clutter.js";
+import { CLUTTER_STRIP_INTS, instanceAt, type ClutterAnswer } from "./clutterWire.js";
 import { finish, nextCrossing, sliceDue, type Slices } from "./syncJobs.js";
 import {
   createCellWindow, inWindow, moveWindow, prefetchWindow, walkEveryCell, type CellRows, type CellWindow,
@@ -407,6 +408,26 @@ function clutterOrigin(camX: number, camZ: number, cell: number): { x: number; z
   };
 }
 
+/** A rectangle of a class's cells, both ends included. */
+export type CellSquare = { x0: number; x1: number; z0: number; z1: number };
+
+/**
+ * The cell square circumscribing class `cls`'s disc at a camera at (camX, camZ): every cell that could hold an
+ * in-range instance, plus a few corner cells that can't (trimmed by the band walk's squared-distance test on the
+ * sampled instance). The one place the walk, the prefetch and the ask for cells (`unknown`) take it from.
+ */
+export function clutterWindowAt(cls: number, camX: number, camZ: number, radiusScale: number): CellSquare {
+  const cell = clutterCell(cls);
+  const r = CLUTTER_RADII[cls]! * radiusScale;
+  const { x: ax, z: az } = clutterOrigin(camX, camZ, cell);
+  return {
+    x0: Math.floor((ax - r) / cell),
+    x1: Math.floor((ax + r) / cell),
+    z0: Math.floor((az - r) / cell),
+    z1: Math.floor((az + r) / cell),
+  };
+}
+
 /** Listed instances a slice of the band walk classifies before it yields. A slice also ends by the scheduler's clock
  * (`sliceDue`), which counts `LIST_UNITS` listed instances as one unit of work. */
 const BAND_SLICE = 6144;
@@ -446,14 +467,11 @@ function* collectClutterSlices(
     const seamHi2 = seamHi * seamHi;
     const { x: ax, z: az } = clutterOrigin(camX, camZ, cell);
 
-    // The cell square circumscribing the disc — every cell that could hold
-    // an in-range instance, plus a few corner cells that can't (trimmed
-    // below by the actual squared-distance test on the sampled instance).
-    const c0x = Math.floor((ax - r) / cell);
-    const c1x = Math.floor((ax + r) / cell);
-    const c0z = Math.floor((az - r) / cell);
-    const c1z = Math.floor((az + r) / cell);
-    const rows = yield* rowsOf(cls, c0x, c1x, c0z, c1z);
+    // The cell square circumscribing the disc (`clutterWindowAt`); the corner
+    // cells that can't hold an in-range instance are trimmed below by the
+    // actual squared-distance test on the sampled instance.
+    const sq = clutterWindowAt(cls, camX, camZ, radiusScale);
+    const rows = yield* rowsOf(cls, sq.x0, sq.x1, sq.z0, sq.z1);
 
     const near: { inst: ClutterInstance; d2: number }[] = [];
     const far: { inst: ClutterInstance; d2: number }[] = [];
@@ -585,6 +603,26 @@ export type ClutterCollector = {
   prefetchSlices(
     camX: number, camZ: number, hx: number, hz: number, radiusScale: number, found?: (inst: ClutterInstance) => number,
   ): Slices;
+  /** Cells the collector has looked up itself (`clutterInCell`) since it was made. */
+  readonly looked: number;
+  /**
+   * The cells of each class's window at (camX, camZ) that lie outside the window as held, that the collector does
+   * not remember and that `asked` (by `clutterCellKey`) says nothing has been asked for, as strips
+   * (`CLUTTER_STRIP_INTS` ints each: `cls, x0, x1, z0, z1`): rows that hold the same run of cells are merged into
+   * one rectangle, and every such cell is in exactly one strip. Walks only those cells, never the whole window.
+   * Nothing for a class whose window was never built, or that shares no cell with the one held.
+   */
+  unknown(camX: number, camZ: number, radiusScale: number, asked: (key: number) => boolean): Int32Array;
+  /**
+   * Remembers the cells of `strips` as `answer` has them (its instances are in the strips' order: strip, then `cx`,
+   * then `cz`), in slices. A cell is skipped if the collector already remembers it, or if it lies out of reach of a
+   * camera at (camX, camZ) (`evictRadius`, measured as the sweep measures it); every other is remembered, as the
+   * answer's instance or as holding nothing. `found` is told of each instance newly remembered, with its index in
+   * the answer, in the same step.
+   */
+  take(
+    strips: Int32Array, answer: ClutterAnswer, camX: number, camZ: number, found?: (inst: ClutterInstance, i: number) => void,
+  ): Slices;
 };
 
 // Numeric cell key, class-prefixed since fourteen grids share one cache: exact
@@ -594,6 +632,11 @@ const CELL_KEY_HALF = 1 << 20;
 const CELL_KEY_SPAN = 1 << 21;
 const CELL_KEY_CLASS_SPAN = CELL_KEY_SPAN * CELL_KEY_SPAN;
 
+/** The numeric key of cell (cx, cz) of class `cls` in the collector's cache. */
+export function clutterCellKey(cls: number, cx: number, cz: number): number {
+  return cls * CELL_KEY_CLASS_SPAN + (cx + CELL_KEY_HALF) * CELL_KEY_SPAN + (cz + CELL_KEY_HALF);
+}
+
 /** Cells whose nearest point sits this far past a class's own radius are
  * evicted from the collector cache — mirrors forestField's
  * COLLECTOR_EVICT_MARGIN, scaled to each class's own cell size so a camera
@@ -601,6 +644,16 @@ const CELL_KEY_CLASS_SPAN = CELL_KEY_SPAN * CELL_KEY_SPAN;
  * trailing edge. */
 function evictRadius(cls: number): number {
   return CLUTTER_RADII[cls]! + 8 * clutterCell(cls);
+}
+
+/** Whether cell (cx, cz) of class `cls` is at or past the forgetting distance from the class's snapped origin (ax, az):
+ * the nearest point of the cell is measured, as the collector's sweep does. */
+function outOfReach(cls: number, cx: number, cz: number, ax: number, az: number): boolean {
+  const cell = clutterCell(cls);
+  const dx = Math.max(cx * cell - ax, 0, ax - (cx + 1) * cell);
+  const dz = Math.max(cz * cell - az, 0, az - (cz + 1) * cell);
+  const evR = evictRadius(cls);
+  return dx * dx + dz * dz >= evR * evR;
 }
 
 /** Cache size that triggers an eviction sweep (every figure below is freshly
@@ -675,13 +728,15 @@ export function createClutterCollector(seed: number, release?: (inst: ClutterIns
   const cache = new Map<number, ClutterInstance | null>();
   const windows = Array.from({ length: CLUTTER_CLASS_COUNT }, () => createCellWindow<ClutterInstance>());
   const fresh = { count: 0 };
+  let looked = 0;
   const lookups = windows.map((_, cls) => (cx: number, cz: number): ClutterInstance | null => {
-    const key = cls * CELL_KEY_CLASS_SPAN + (cx + CELL_KEY_HALF) * CELL_KEY_SPAN + (cz + CELL_KEY_HALF);
+    const key = clutterCellKey(cls, cx, cz);
     let inst = cache.get(key);
     if (inst === undefined) {
       inst = clutterInCell(seed, cls, cx, cz);
       cache.set(key, inst);
       fresh.count++;
+      looked++;
     }
     return inst;
   });
@@ -715,12 +770,8 @@ export function createClutterCollector(seed: number, release?: (inst: ClutterIns
         const czPart = rest % CELL_KEY_SPAN;
         const cz = czPart - CELL_KEY_HALF;
         const cx = (rest - czPart) / CELL_KEY_SPAN - CELL_KEY_HALF;
-        const cell = clutterCell(cls);
         const { x: ax, z: az } = originByClass[cls]!;
-        const dx = Math.max(cx * cell - ax, 0, ax - (cx + 1) * cell);
-        const dz = Math.max(cz * cell - az, 0, az - (cz + 1) * cell);
-        const evR = evictRadius(cls);
-        if (dx * dx + dz * dz >= evR * evR) {
+        if (outOfReach(cls, cx, cz, ax, az)) {
           cache.delete(key);
           if (inst !== null) release?.(inst);
           // A corner cell of the square can lie past the eviction radius and
@@ -739,18 +790,95 @@ export function createClutterCollector(seed: number, release?: (inst: ClutterIns
     const ahead = new Float64Array(2);
     if (!nextCrossing(camX, camZ, hx, hz, CLUTTER_GRASS_CELL, ahead)) return;
     for (let cls = 0; cls < CLUTTER_CLASS_COUNT; cls++) {
-      const cell = clutterCell(cls);
-      const r = CLUTTER_RADII[cls]! * radiusScale;
-      const { x: ax, z: az } = clutterOrigin(ahead[0] as number, ahead[1] as number, cell);
-      yield* prefetchWindow(
-        windows[cls] as CellWindow<ClutterInstance>,
-        Math.floor((ax - r) / cell), Math.floor((ax + r) / cell), Math.floor((az - r) / cell), Math.floor((az + r) / cell),
-        lookups[cls]!, fresh, found,
-      );
+      const sq = clutterWindowAt(cls, ahead[0] as number, ahead[1] as number, radiusScale);
+      yield* prefetchWindow(windows[cls] as CellWindow<ClutterInstance>, sq.x0, sq.x1, sq.z0, sq.z1, lookups[cls]!, fresh, found);
+    }
+  }
+  function unknown(camX: number, camZ: number, radiusScale: number, asked: (key: number) => boolean): Int32Array {
+    const out: number[] = [];
+    for (let cls = 0; cls < CLUTTER_CLASS_COUNT; cls++) {
+      const w = windows[cls] as CellWindow<ClutterInstance>;
+      if (Number.isNaN(w.x0)) continue;
+      const sq = clutterWindowAt(cls, camX, camZ, radiusScale);
+      if (sq.x0 > w.x1 || sq.x1 < w.x0 || sq.z0 > w.z1 || sq.z1 < w.z0) continue;
+      // Rows of runs, ascending in cz; a run that repeats the last row's, directly above it, grows that rectangle.
+      let open: { x0: number; x1: number; z0: number; z1: number }[] = [];
+      for (let cz = sq.z0; cz <= sq.z1; cz++) {
+        const heldRow = cz >= w.z0 && cz <= w.z1;
+        const next: typeof open = [];
+        // The cells of the row outside the held window: all of it, or the stretch each side of the held span.
+        for (let side = 0; side < 2; side++) {
+          const from = heldRow ? (side === 0 ? sq.x0 : Math.max(sq.x0, w.x1 + 1)) : side === 0 ? sq.x0 : sq.x1 + 1;
+          const to = heldRow ? (side === 0 ? Math.min(sq.x1, w.x0 - 1) : sq.x1) : sq.x1;
+          let start = NaN;
+          for (let cx = from; cx <= to + 1; cx++) {
+            const lacking = cx <= to && !cache.has(clutterCellKey(cls, cx, cz)) && !asked(clutterCellKey(cls, cx, cz));
+            if (lacking) {
+              if (Number.isNaN(start)) start = cx;
+            } else if (!Number.isNaN(start)) {
+              const run = open.find((r) => r.x0 === start && r.x1 === cx - 1 && r.z1 === cz - 1);
+              if (run !== undefined) {
+                run.z1 = cz;
+                next.push(run);
+              } else {
+                next.push({ x0: start, x1: cx - 1, z0: cz, z1: cz });
+              }
+              start = NaN;
+            }
+          }
+        }
+        for (const r of open) if (r.z1 < cz) out.push(cls, r.x0, r.x1, r.z0, r.z1);
+        open = next;
+      }
+      for (const r of open) out.push(cls, r.x0, r.x1, r.z0, r.z1);
+    }
+    return Int32Array.from(out);
+  }
+  /** Cells' worth of an answer a slice of `take` remembers before it yields. */
+  const TAKE_SLICE = 512;
+  function* take(
+    strips: Int32Array, answer: ClutterAnswer, camX: number, camZ: number, found?: (inst: ClutterInstance, i: number) => void,
+  ): Slices {
+    const origins: ({ x: number; z: number } | undefined)[] = [];
+    const count = answer.cells.length / 3;
+    const { cells } = answer;
+    let at = 0;
+    let done = 0;
+    for (let s = 0; s + CLUTTER_STRIP_INTS <= strips.length; s += CLUTTER_STRIP_INTS) {
+      const cls = strips[s] as number;
+      const x0 = strips[s + 1] as number;
+      const x1 = strips[s + 2] as number;
+      const z0 = strips[s + 3] as number;
+      const z1 = strips[s + 4] as number;
+      const origin = (origins[cls] ??= clutterOrigin(camX, camZ, clutterCell(cls)));
+      for (let cx = x0; cx <= x1; cx++) {
+        for (let cz = z0; cz <= z1; cz++) {
+          // The answer holds the strips' non-empty cells in this order: the cell is the next instance's, or holds nothing.
+          const mine = at < count && cells[at * 3] === cls && cells[at * 3 + 1] === cx && cells[at * 3 + 2] === cz;
+          const i = at;
+          if (mine) at++;
+          const key = clutterCellKey(cls, cx, cz);
+          if (!cache.has(key) && !outOfReach(cls, cx, cz, origin.x, origin.z)) {
+            if (mine) {
+              const inst = instanceAt(answer, i);
+              cache.set(key, inst);
+              found?.(inst, i);
+            } else {
+              cache.set(key, null);
+            }
+          }
+          if (++done % TAKE_SLICE === 0) yield;
+        }
+      }
     }
   }
   return {
     collectSlices,
+    unknown,
+    take,
+    get looked(): number {
+      return looked;
+    },
     collect(camX: number, camZ: number, radiusScale: number = 1): ClutterBands {
       return finish(collectSlices(camX, camZ, radiusScale));
     },

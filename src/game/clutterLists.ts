@@ -16,6 +16,7 @@ import {
   CLUTTER_MEADOW_NEAR_IN, COVER_RAMP_CLASSES, clutterFadeEdges, clutterSeamEdges, coverBands, coverFarBand, createClutterCollector,
 } from "./clutterField.js";
 import { clutterFrameInto } from "./clutterFrame.js";
+import type { ClutterAnswer } from "./clutterWire.js";
 import { CLUTTER_CULLED, FAR_LOD, FOLIAGE_BY_CLASS, NEAR_LOD, cutOf, cutsFor } from "./clutterInstances.js";
 import { fadeBands, writeFadeBands, type FadeBands } from "./distanceFade.js";
 import type { CullPose } from "./grassCull.js";
@@ -122,6 +123,19 @@ export type ClutterLists = {
   cut(pose: CullPose | null, changed: (bucket: ClutterBucket) => void): void;
   /** Forgets the cut of every culled list that holds drawn buffers: they were handed back, so the next cut is made and reported. */
   forgetCuts(): void;
+  /**
+   * Strips of the cells the next rebuild at (x, z) would look up that the page has neither remembered nor had
+   * `asked` for (`ClutterCollector.unknown`), for the lists' radius scale.
+   */
+  unknown(x: number, z: number, asked: (key: number) => boolean): Int32Array;
+  /**
+   * Remembers an answer to those strips (`ClutterCollector.take`), as slices; each instance's frame and tint the
+   * answer carries is put in the store as the instance is remembered, so the fill copies it. The lists are what they
+   * are without the answer.
+   */
+  take(strips: Int32Array, answer: ClutterAnswer, x: number, z: number): Slices;
+  /** Cells the page looked up itself (`ClutterCollector.looked`). */
+  readonly looked: number;
   /** The camera position the buffers were last built for. */
   readonly view: { readonly x: number; readonly z: number };
   /** Instances whose matrix and tint are kept (`keptValues.ts`). */
@@ -257,6 +271,17 @@ export function createClutterLists(seed: number, options: ClutterListsOptions): 
     },
     prefetch(x, z, headingX, headingZ) {
       return collector.prefetchSlices(x, z, headingX, headingZ, radiusScale, ahead);
+    },
+    unknown(x, z, asked) {
+      return collector.unknown(x, z, radiusScale, asked);
+    },
+    take(strips, answer, x, z) {
+      return collector.take(strips, answer, x, z, (inst, i) => {
+        if (answer.framed[i] === 1) kept.put(inst, answer.frames, i * KEPT_STRIDE);
+      });
+    },
+    get looked() {
+      return collector.looked;
     },
     cut(pose, changed) {
       if (culledBuckets.length === 0) return;

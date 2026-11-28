@@ -24,6 +24,11 @@ export type KeptValues<K extends object> = {
    * is replaced when it grows.
    */
   offsetOf(key: K): number;
+  /**
+   * Stores the `stride` floats at `values[offset]` as `key`'s, for a key that has no slot, and returns true: the values
+   * a `compute` would have written, made elsewhere. A key that has a slot is left as it is, and false is returned.
+   */
+  put(key: K, values: Float32Array, offset: number): boolean;
   /** Lets `key`'s values go, freeing its slot; a key never kept is ignored. */
   release(key: K): void;
   /** The slab, `stride` floats a slot. */
@@ -43,22 +48,33 @@ export function createKeptValues<K extends object>(
   const free: number[] = [];
   let data = new Float32Array(MIN_SLOTS * stride);
   let used = 0;
+  /** A free slot for a key about to be stored, the slab grown if it is full. */
+  function take(key: K): number {
+    let next = free.pop();
+    if (next === undefined) {
+      if (used * stride === data.length) {
+        const grown = new Float32Array(data.length * 2);
+        grown.set(data);
+        data = grown;
+      }
+      next = used++;
+    }
+    slots.set(key, next);
+    return next;
+  }
   return {
     offsetOf(key) {
       const slot = slots.get(key);
       if (slot !== undefined) return slot * stride;
-      let next = free.pop();
-      if (next === undefined) {
-        if (used * stride === data.length) {
-          const grown = new Float32Array(data.length * 2);
-          grown.set(data);
-          data = grown;
-        }
-        next = used++;
-      }
-      slots.set(key, next);
+      const next = take(key);
       compute(key, data, next * stride);
       return next * stride;
+    },
+    put(key, values, offset) {
+      if (slots.has(key)) return false;
+      const next = take(key);
+      data.set(values.subarray(offset, offset + stride), next * stride);
+      return true;
     },
     release(key) {
       const slot = slots.get(key);
