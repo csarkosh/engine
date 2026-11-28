@@ -22,6 +22,12 @@
  * moves: Lite keeps a mesh's draw arguments with its instances, so two
  * meshes of different geometry cannot share them.
  *
+ * **A primitive with bodies of its own** (`own`): a model's primitives draw the same bodies, so one that only some of them wear (a head among
+ * several heads, a hat, a thing in the hand) would be drawn for every body, as nothing for most, and its vertices worked for each. Its owner can
+ * ask for it to have bodies of its own instead (`SkinnedModelOptions.own`): matrices, clips and a count that are its alone (`SkinnedPart.own`),
+ * read from the model's one table. It is then drawn for the bodies that wear it and no others; its owner writes each wearer's matrix and clips
+ * into it and shows it, as the model's own are written and shown.
+ *
  * **A clip table in fewer texels** (`clipLayout`): a bone's matrix is four texels of the table by default. A model whose bones are
  * only a turn, a move and one size can have two (`"rigid"`), and any model three (`"rows"`: the matrix's first three rows, exact, since
  * its fourth is 0,0,0,1). The shader rebuilds the same matrix where it reads a bone, so a table of two or three texels a bone is half or
@@ -114,6 +120,23 @@ export function createSkinClock(engine: EngineContext): SkinClock {
   };
 }
 
+/** A primitive's own bodies: what a model has for all its primitives, for one of them alone. */
+export type PartBodies = {
+  /** A matrix a body, sixteen floats each: written in place, then shown. */
+  readonly matrices: Float32Array;
+  /** A body's clips, `CLIP_FLOATS` each: written in place (`writeClipParams`), then shown. */
+  readonly clipParams: Float32Array;
+  /** Bodies drawn. */
+  readonly count: number;
+  /** Draws the primitive's first `count` bodies: `moved` and `reclipped` as a model's `show` takes them. A primitive shown no body is hidden. */
+  show(count: number, moved: boolean, reclipped: boolean): void;
+};
+
+/** Which of a model's primitives is the first that draws the model's bodies (it holds the clips the others read), given which have bodies of their own; -1 where all have. */
+export function sharedFirst(owns: readonly boolean[]): number {
+  return owns.indexOf(false);
+}
+
 /** One primitive of a model: the loader's mesh and its material. */
 export type SkinnedPart = {
   readonly mesh: Mesh;
@@ -129,6 +152,8 @@ export type SkinnedPart = {
    * are, and stays hidden, which leaves it out of every pass but one that shows it by its own word.
    */
   elsewhere: boolean;
+  /** The primitive's own bodies, where its owner asked for them (`SkinnedModelOptions.own`): the loader sets it. Null for a primitive that draws the model's bodies. */
+  own: PartBodies | null;
 };
 
 export type SkinnedModel = {
@@ -147,7 +172,8 @@ export type SkinnedModel = {
    * Draws the first `count` bodies. `moved`: a matrix among them has changed,
    * or the count has; `reclipped`: a body's clips have. The clips are sent
    * once whatever the primitives, the matrices once a primitive drawn, and a
-   * model shown no body is hidden.
+   * model shown no body is hidden. A primitive with bodies of its own
+   * (`SkinnedPart.own`) is not this's to draw: it is shown by its own `show`.
    */
   show(count: number, moved: boolean, reclipped: boolean): void;
   dispose(): void;
@@ -160,6 +186,11 @@ export type SkinnedModelOptions = {
   signal: AbortSignal;
   /** Dresses a primitive's material and places it among the draws, before it joins the scene; false for one that is not drawn. */
   dress(part: SkinnedPart, index: number): boolean;
+  /**
+   * Whether a primitive has bodies of its own (`SkinnedPart.own`), asked once for each after `dress`: true for one that only some of the
+   * model's bodies wear. Unset, every primitive draws the model's bodies, as it always has.
+   */
+  own?(part: SkinnedPart, index: number): boolean;
   uploads?: FrameUploads;
   /**
    * How the model's clip table holds a bone: `"rigid"` (two texels; for a model whose bones are a turn, a move and one size),
@@ -222,11 +253,47 @@ async function makeSkinnedModel(
   for (let i = 0; i < capacity; i++) matrices[i * 16] = matrices[i * 16 + 5] = matrices[i * 16 + 10] = matrices[i * 16 + 15] = 1;
   const clipParams = new Float32Array(capacity * CLIP_FLOATS);
   const held = new Set<Texture2D>();
-  const parts: SkinnedPart[] = [];
-  const handles: VatHandle[] = [];
+  const made: SkinnedPart[] = [];
+  /** Shows or hides primitives with their bodies: never one that only a pass of its owner's draws (`elsewhere`), whoever's bodies it has. */
+  const seen = (parts: readonly SkinnedPart[], next: number): void => {
+    for (const part of parts) if (part.drawn && !part.elsewhere) setMeshVisible(part.mesh, next > 0);
+  };
+  // The first primitive that draws the model's bodies: the others like it read its clips.
+  const shared: { mesh: Mesh | null; handle: VatHandle | null } = { mesh: null, handle: null };
+  let disposed = false;
+  /** Bodies of its own for a primitive: its matrices, its clips (a texture of its own, which Lite makes for it) and its count. */
+  const ownBodies = (mesh: Mesh, handle: VatHandle, part: SkinnedPart): PartBodies => {
+    const own = new Float32Array(capacity * 16);
+    for (let i = 0; i < capacity; i++) own[i * 16] = own[i * 16 + 5] = own[i * 16 + 10] = own[i * 16 + 15] = 1;
+    const clipsOwn = new Float32Array(capacity * CLIP_FLOATS);
+    setThinInstances(mesh, own, capacity);
+    setThinInstanceCount(mesh, 0);
+    handle.setInstancesBlend(clipsOwn);
+    let shown = 0;
+    return {
+      matrices: own,
+      clipParams: clipsOwn,
+      get count() {
+        return shown;
+      },
+      show(next, moved, reclipped) {
+        if (disposed) return;
+        if (next > capacity) throw new Error(`${url}: ${next} bodies of ${part.name}, where the model was made for ${capacity}`);
+        if (reclipped && next > 0) {
+          handle.setInstancesBlend(clipsOwn);
+          options.uploads?.count("textures", next * CLIP_FLOATS * 4);
+        }
+        if ((moved || next !== shown) && part.drawn) {
+          setThinInstanceCount(mesh, next);
+          if (next > 0) options.uploads?.count("instances", next * MATRIX_BYTES);
+        }
+        if ((next > 0) !== (shown > 0)) seen([part], next);
+        shown = next;
+      },
+    };
+  };
   meshes.forEach((mesh, index) => {
     const handle = attachVat(engine, mesh, baked[index] as (typeof baked)[number]);
-    handles.push(handle);
     options.clock.adopt(mesh);
     const material = mesh.material as PbrMaterialProps;
     for (const texture of texturesOf(material)) {
@@ -235,32 +302,40 @@ async function makeSkinnedModel(
       acquireTexture(texture);
     }
     const name = (material as { name?: string }).name ?? "";
-    const part: SkinnedPart = { mesh, material, name, emissive: emissive.get(name) ?? [0, 0, 0], drawn: true, elsewhere: false };
+    const part: SkinnedPart = { mesh, material, name, emissive: emissive.get(name) ?? [0, 0, 0], drawn: true, elsewhere: false, own: null };
     part.drawn = options.dress(part, index);
-    parts.push(part);
-    // Every primitive draws the same bodies, from the same array of matrices, and reads the first one's clips.
-    setThinInstances(mesh, matrices, capacity);
-    setThinInstanceCount(mesh, 0);
-    handle.setInstancesBlend(clipParams);
-    const first = meshes[0] as Mesh;
-    if (index > 0) {
-      const own = (mesh as unknown as BakedMesh).vat;
-      const shared = (first as unknown as BakedMesh).vat;
-      if (own !== undefined && own !== null && shared !== undefined && shared !== null) {
-        own.instanceTexture?.destroy();
-        own.instanceTexture = shared.instanceTexture;
+    made.push(part);
+    if (options.own?.(part, index) === true) {
+      // Bodies of its own: nothing of the model's matrices or of the first primitive's clips.
+      part.own = ownBodies(mesh, handle, part);
+    } else {
+      // Every other primitive draws the same bodies, from the same array of matrices, and reads the first such one's clips.
+      setThinInstances(mesh, matrices, capacity);
+      setThinInstanceCount(mesh, 0);
+      handle.setInstancesBlend(clipParams);
+      if (shared.mesh === null) {
+        shared.mesh = mesh;
+        shared.handle = handle;
+      } else {
+        const own = (mesh as unknown as BakedMesh).vat;
+        const first = (shared.mesh as unknown as BakedMesh).vat;
+        if (own !== undefined && own !== null && first !== undefined && first !== null) {
+          own.instanceTexture?.destroy();
+          own.instanceTexture = first.instanceTexture;
+        }
       }
     }
     setMeshVisible(mesh, false);
   });
+  /** The primitives that draw the model's bodies. */
+  const common = made.filter((part) => part.own === null);
   const roots = container.entities as SceneNode[];
   for (const root of roots) addToScene(scene, root);
   options.uploads?.made(meshes.length);
 
   let count = 0;
-  let disposed = false;
   return {
-    parts,
+    parts: made,
     clips,
     capacity,
     matrices,
@@ -271,18 +346,18 @@ async function makeSkinnedModel(
     show(next, moved, reclipped) {
       if (disposed) return;
       if (next > capacity) throw new Error(`${url}: ${next} bodies, where the model was made for ${capacity}`);
-      if (reclipped && next > 0) {
-        (handles[0] as VatHandle).setInstancesBlend(clipParams);
+      if (reclipped && next > 0 && shared.handle !== null) {
+        shared.handle.setInstancesBlend(clipParams);
         options.uploads?.count("textures", clipParams.byteLength);
       }
       if (moved || next !== count) {
-        for (const part of parts) {
+        for (const part of common) {
           if (!part.drawn) continue;
           setThinInstanceCount(part.mesh, next);
           if (next > 0) options.uploads?.count("instances", next * MATRIX_BYTES);
         }
       }
-      if ((next > 0) !== (count > 0)) for (const part of parts) if (part.drawn && !part.elsewhere) setMeshVisible(part.mesh, next > 0);
+      if ((next > 0) !== (count > 0)) seen(common, next);
       count = next;
     },
     dispose() {
