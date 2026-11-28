@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import "../../src/sim/montane.js";
 import { registerOlympic } from "../../src/sim/olympic.js";
-import { activeTerrainVariant, activeTerrainVariantName } from "../../src/sim/terrain.js";
+import { activeTerrainVariant, activeTerrainVariantName, terrainVariant, type TerrainVariant } from "../../src/sim/terrain.js";
 import type { TrailGraph } from "../../src/sim/trail.js";
 import {
   NO_STITCH, OPEN_NORTH_EAST, OPEN_WEST, PATCH_CELL, PATCH_FAR_SPACING, PATCH_NEAR_SPACING, PATCH_WIDE_SPACING,
@@ -238,6 +238,32 @@ describe("what the world's requests report", () => {
     const bad: WorldPrepReply[] = [];
     expect(prepareWorld({ id: 2, seed: SEED, variant: "nowhere" }, (r) => bad.push(r), game)).toBe(false);
     expect(kinds(bad)).toEqual(["failed"]);
+  });
+
+  it("a quiet prepare posts only done, prepares once and generates no chunk; an ordinary one is as it was", () => {
+    const variant = terrainVariant(VARIANT) as TerrainVariant;
+    const before = variant.prepare;
+    let prepares = 0;
+    let spawns = 0;
+    variant.prepare = () => { prepares++; return { made: true }; };
+    const counting = { startOf: () => null, spawnCells: () => { spawns++; return [{ cx: 0, cz: 0 }]; } };
+    try {
+      const quiet: WorldPrepReply[] = [];
+      expect(prepareWorld({ id: 1, seed: SEED, variant: VARIANT, quiet: true }, (r) => quiet.push(r), counting)).toBe(true);
+      expect(quiet).toEqual([{ id: 1, kind: "done" }]);
+      expect(prepares).toBe(1);
+      expect(spawns).toBe(0);
+      const loud: WorldPrepReply[] = [];
+      expect(prepareWorld({ id: 2, seed: SEED, variant: VARIANT }, (r) => loud.push(r), counting)).toBe(true);
+      expect(kinds(loud)).toEqual(["prepared", "passHash", "chunks", "done"]);
+      expect(prepares).toBe(2);
+      expect(spawns).toBe(1);
+      const bad: WorldPrepReply[] = [];
+      expect(prepareWorld({ id: 3, seed: SEED, variant: "nowhere", quiet: true }, (r) => bad.push(r), counting)).toBe(false);
+      expect(kinds(bad)).toEqual(["failed"]);
+    } finally {
+      variant.prepare = before;
+    }
   });
 
   it("prepareSceneReply is true where it ends with done, false with one failed for a terrain the sim does not know", () => {

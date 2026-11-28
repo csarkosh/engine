@@ -456,20 +456,38 @@ describe("the order of the worker's work", () => {
         return true;
       },
     };
-    return { log, rings, patches };
+    return { log, rings, patches, clutter: idleClutter };
+  }
+
+  /** A clutter server with nothing to do. */
+  const idleClutter = { working: false, step: () => false };
+
+  /** A clutter server whose requests take `steps` steps each; `ask()` queues one; its steps write "c" to `log`. */
+  function clutterOf(log: string[], steps: number) {
+    let left = 0;
+    return {
+      get working() { return left > 0; },
+      ask() { left += steps; },
+      step() {
+        if (left === 0) return false;
+        left--;
+        log.push("c");
+        return true;
+      },
+    };
   }
 
   it("a waiting rings set is stepped before any patch cell", () => {
-    const { log, rings, patches } = fakes(4);
-    const order = createWorkOrder(rings, patches);
+    const { log, rings, patches, clutter } = fakes(4);
+    const order = createWorkOrder(rings, clutter, patches);
     rings.ask(3);
     while (order.step()) { /* all */ }
     expect(log).toEqual(["r", "r", "r", "p", "p", "p", "p"]);
   });
 
   it("one patch cell falls between two sets of rings that arrive back to back", () => {
-    const { log, rings, patches } = fakes(10);
-    const order = createWorkOrder(rings, patches);
+    const { log, rings, patches, clutter } = fakes(10);
+    const order = createWorkOrder(rings, clutter, patches);
     const sets = [2, 3, 1, 2];
     rings.ask(sets.shift() as number);
     while (order.step()) {
@@ -480,9 +498,67 @@ describe("the order of the worker's work", () => {
   });
 
   it("with no rings, the patches step as they did", () => {
-    const { log, rings, patches } = fakes(3);
-    const order = createWorkOrder(rings, patches);
+    const { log, rings, patches, clutter } = fakes(3);
+    const order = createWorkOrder(rings, clutter, patches);
     expect([order.step(), order.step(), order.step(), order.step()]).toEqual([true, true, true, false]);
     expect(log).toEqual(["p", "p", "p"]);
+  });
+
+  it("when a set ends, the clutter's steps run to its end, then one patch cell, then rings again", () => {
+    const { log, rings, patches } = fakes(4);
+    const clutter = clutterOf(log, 3);
+    const order = createWorkOrder(rings, clutter, patches);
+    rings.ask(2);
+    clutter.ask();
+    let again = true;
+    while (order.step()) {
+      if (!rings.working && again) { again = false; rings.ask(1); }
+    }
+    expect(log.join("")).toBe("rrcccprppp");
+  });
+
+  it("a request that arrives while the clutter is worked is worked before the patch cell", () => {
+    const { log, rings, patches } = fakes(2);
+    const clutter = clutterOf(log, 2);
+    const order = createWorkOrder(rings, clutter, patches);
+    rings.ask(1);
+    clutter.ask();
+    order.step();
+    order.step();
+    clutter.ask();
+    while (order.step()) { /* all */ }
+    expect(log.join("")).toBe("rcccc" + "pp");
+  });
+
+  it("after each of five sets back to back, the clutter and one patch cell run", () => {
+    const { log, rings, patches } = fakes(20);
+    const clutter = clutterOf(log, 2);
+    const order = createWorkOrder(rings, clutter, patches);
+    let sets = 4;
+    let was = true;
+    rings.ask(2);
+    while (order.step()) {
+      // As each set ends the clutter is asked again, and the next set arrives.
+      if (was && !rings.working) {
+        clutter.ask();
+        if (sets > 0) { sets--; rings.ask(2); } else was = false;
+      }
+    }
+    expect(log.join("")).toBe("rrccp".repeat(5) + "p".repeat(15));
+  });
+
+  it("with no rings, the clutter's steps come before any patch cell", () => {
+    const { log, rings, patches } = fakes(2);
+    const clutter = clutterOf(log, 3);
+    const order = createWorkOrder(rings, clutter, patches);
+    clutter.ask();
+    while (order.step()) { /* all */ }
+    expect(log.join("")).toBe("cccpp");
+  });
+
+  it("with nothing waiting, step does nothing and says so", () => {
+    const { rings, patches, clutter } = fakes(0);
+    const order = createWorkOrder(rings, clutter, patches);
+    expect(order.step()).toBe(false);
   });
 });

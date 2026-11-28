@@ -23,6 +23,7 @@ import {
 } from "./clipmap.js";
 import { SAMPLE_ARRAYS, ringSentTransfer, type RingSent, type WorldRingsRequest } from "./ringWire.js";
 import { ringBuildSlices, ringDrawnOf, ringStale } from "./ringBuild.js";
+import type { ClutterServer } from "./clutterServe.js";
 import { finish } from "./syncJobs.js";
 import { TERRAIN_VERTEX_FLOATS } from "./terrainVertexData.js";
 import { activeTerrainVariant } from "../sim/terrain.js";
@@ -239,17 +240,27 @@ export function createRingServer(
   };
 }
 
-/** Which of the worker's two kinds of work goes next: the rings first, and one rock-face cell between two sets of rings. */
-export function createWorkOrder(rings: Pick<RingServer, "step" | "working">, patches: Pick<PatchServer, "step">): { step(): boolean } {
-  /** Whether a set of rings ended since a rock-face cell was last offered its turn. */
+/**
+ * Which of the worker's three kinds of work goes next. A set of rings in hand goes first, a ring a step. The moment a
+ * set ends the worker owes the clutter and the rock faces a turn: the steps that follow work the clutter until it has
+ * nothing queued or in hand (requests that arrive meanwhile included), then one rock-face cell, and only then the
+ * rings again, even where a new set arrived meanwhile. With no rings in hand and nothing owed, the clutter while it
+ * has work, else a rock-face cell. A step returns false only where it did nothing.
+ */
+export function createWorkOrder(
+  rings: Pick<RingServer, "step" | "working">, clutter: Pick<ClutterServer, "step" | "working">, patches: Pick<PatchServer, "step">,
+): { step(): boolean } {
+  /** Whether a set of rings ended since the clutter and a rock-face cell last had their turn. */
   let owed = false;
   return {
     step() {
       if (!rings.working) {
         owed = false;
+        if (clutter.working && clutter.step()) return true;
         return patches.step();
       }
       if (owed) {
+        if (clutter.working && clutter.step()) return true;
         owed = false;
         if (patches.step()) return true;
       }

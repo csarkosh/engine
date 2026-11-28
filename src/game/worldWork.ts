@@ -44,14 +44,20 @@ import type { TrailGraph } from "../sim/trail.js";
 import {
   PATCH_FAR_SPACING, PATCH_NEAR_SPACING, PATCH_WIDE_SPACING, facePatchGeometry, type FacePatch, type PatchStitch, type PavedGround,
 } from "./facePatches.js";
-import type { ClutterAnswer } from "./clutterWire.js";
+import { createClutterServer } from "./clutterServe.js";
+import type { ClutterAnswer, WorldClutterRequest } from "./clutterWire.js";
 import { prepareScene, sceneTransfer, type PreparedScene } from "./preparedScene.js";
 import type { QualityTier } from "./quality.js";
 import type { RingDrawn } from "./ringBuild.js";
 import { createRingServer, createWorkOrder, type RingSent, type WorldRingsRequest } from "./ringServe.js";
 
-/** `skip`: what the page already holds and the worker leaves out. */
-export type WorldPrepRequest = { id: number; seed: number; variant: string; skip?: { prepared?: boolean; passHash?: boolean } };
+/**
+ * `skip`: what the page already holds and the worker leaves out. `quiet`: a second worker prepares the world for
+ * itself and posts only `done` (or `failed`): no `prepared`, no pass hash and no chunks.
+ */
+export type WorldPrepRequest = {
+  id: number; seed: number; variant: string; skip?: { prepared?: boolean; passHash?: boolean }; quiet?: true;
+};
 /** The hike's first scene at `tier`: told from the world's request by its `kind`. */
 export type WorldSceneRequest = { id: number; kind: "scene"; seed: number; variant: string; tier: QualityTier };
 /** One cell of a set: where, at what spacing, and how it meets its neighbours (`facePatchGeometry`). */
@@ -95,6 +101,11 @@ export function prepareWorld(request: WorldPrepRequest, post: (reply: WorldPrepR
   const { id, seed, variant } = request;
   try {
     setActiveTerrainVariant(variant);
+    if (request.quiet === true) {
+      activeTerrainVariant().prepare?.(seed);
+      post({ id, kind: "done" });
+      return true;
+    }
     const prepared = request.skip?.prepared === true ? undefined : activeTerrainVariant().prepare?.(seed);
     if (prepared !== undefined) post({ id, kind: "prepared", seed, variant, prepared });
     if (request.skip?.passHash !== true) post({ id, kind: "passHash", hash: passHash(), ...passHashKey() });
@@ -232,8 +243,9 @@ export function createPatchServer(
  * Serves the world's requests in a worker, for `game`: the world's, the first
  * scene's, each served whole when its message is taken, sets of rock-face
  * cells, which `createPatchServer` builds a cell at a time, and sets of rings,
- * which `createRingServer` works a ring at a time; `createWorkOrder` says which
- * goes next. Between steps the worker's messages are taken (a message to
+ * which `createRingServer` works a ring at a time, and the clutter's cells,
+ * which `createClutterServer` looks up; `createWorkOrder` says which goes
+ * next. Between steps the worker's messages are taken (a message to
  * itself over a `MessageChannel`, which a timer, clamped, would not give), so
  * a request that arrives while a set is worked is served before the next step,
  * and a rings request that stops is taken at once. One turn is asked at a
@@ -249,7 +261,8 @@ export function serveWorldWork(game: WorldWorkGame): void {
     const post = (reply: WorldPrepReply, transfer: ArrayBuffer[]): void => self.postMessage(reply, { transfer });
     const patches = createPatchServer(post, () => made);
     const rings = createRingServer(post, () => made);
-    const order = createWorkOrder(rings, patches);
+    const clutter = createClutterServer(post, () => made);
+    const order = createWorkOrder(rings, clutter, patches);
     const turn = new MessageChannel();
     let asked = false;
     const next = (): void => {
@@ -261,7 +274,7 @@ export function serveWorldWork(game: WorldWorkGame): void {
       asked = false;
       if (order.step()) next();
     };
-    self.onmessage = (event: MessageEvent<WorldPrepRequest | WorldSceneRequest | WorldPatchesRequest | WorldRingsRequest>): void => {
+    self.onmessage = (event: MessageEvent<WorldPrepRequest | WorldSceneRequest | WorldPatchesRequest | WorldRingsRequest | WorldClutterRequest>): void => {
       const request = event.data;
       if ("kind" in request && request.kind === "patches") {
         patches.ask(request);
@@ -270,6 +283,11 @@ export function serveWorldWork(game: WorldWorkGame): void {
       }
       if ("kind" in request && request.kind === "rings") {
         rings.ask(request);
+        next();
+        return;
+      }
+      if ("kind" in request && request.kind === "clutter") {
+        clutter.ask(request);
         next();
         return;
       }
