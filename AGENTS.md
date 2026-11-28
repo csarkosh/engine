@@ -19,6 +19,7 @@ stable API. See `README.md` for what it is and how a game takes it.
 - `tools/`: plain Node scripts a game runs from its own root, and their tests in `tools/**/test/`.
   `tools/gate.mjs` and `tools/gate/plan.mjs` are a game's push gate, not this repository's.
   `tools/site/deploy.mjs` deploys one game's path of a shared Firebase Hosting site, guarded (`tools/site/README.md`).
+  `tools/memory/` measures where a game's memory goes in a headless Chrome (`check.mjs`), groups the GPU inventory (`group.mjs`) and diffs two runs (`diff.mjs`) (`tools/memory/README.md`).
   `tools/new-game.mjs` is run from this checkout, not a game's: it copies `empty/` into a new game under
   its own name, and gives it a server for development (`game.json`, a `Dockerfile` and `server.package.json` for its image). It renames the empty game's names by exact strings and fails if one is gone, so change
   one of those in `empty/` together with the script (`tools/new-game/test/`). It is not in the package.
