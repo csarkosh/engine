@@ -63,7 +63,9 @@ import type { CullPose } from "../grassCull.js";
 import { HIGH_PLANT_COUNT, highPlantGeometry } from "../highPlantClump.js";
 import { ROCK_CUTS, rockPlanes, rockRelief } from "../rockRelief.js";
 import { SHRUB_CHARACTERS, shrubGeometry } from "../shrubClump.js";
-import type { Slices, SyncJobs } from "../syncJobs.js";
+import type { ClutterWork } from "../clutterWork.js";
+import type { ClutterAnswer } from "../clutterWire.js";
+import { nextCrossing, type Slices, type SyncJobs } from "../syncJobs.js";
 import { WET_PLANT_COUNT, wetPlantGeometry } from "../wetPlantClump.js";
 import type { WetUniforms } from "../wetSurface.js";
 import { loadModel, type LoadedModel, type ModelPart } from "./forestModels.js";
@@ -75,6 +77,7 @@ import {
 import { DRAW_ORDER, createDrawOrders } from "./drawOrder.js";
 import type { FrameUploads } from "./frameUploads.js";
 import { listBytes, listMesh, showList, type ListMesh } from "./listMeshes.js";
+import { askAhead, askThenRebuild, fillArrived } from "./clutterJob.js";
 import { cellOrigin, createRebuilds } from "./rebuildJobs.js";
 
 /** What showing the clutter's lists is expected to take (ms): every bucket handed its list, one step. The scheduler
@@ -92,6 +95,8 @@ export type ClutterMeshes = {
   readonly ready: Promise<void>;
   /** What is drawn now: the buckets' meshes with an instance, and their instances. */
   drawn(): { meshes: number; instances: number };
+  /** What the jobs that asked the worker spent and what the lists looked up themselves; null before the lists exist. */
+  clutterRecord(): { waits: number; waitMs: number; refusedAnswers: number; looked: number; framedHere: number } | null;
   dispose(): void;
 };
 
@@ -120,6 +125,8 @@ export type ClutterMeshOptions = {
   firstBuilds?: FirstBuilds;
   /** The renderer's record of its uploads, and its budget for the streamed ones (`frameUploads.ts`). */
   uploads?: FrameUploads;
+  /** The page's client of the world's worker, which looks up the cells a crossing needs (`clutterWork.ts`); absent or failed, the page looks them up. The session owns it. */
+  clutterWork?: ClutterWork | null;
 };
 
 /** One mesh's worth of geometry: a model's primitive, a cut of one, or a plant built in code. */
@@ -301,6 +308,8 @@ export function createClutterMeshes(engine: EngineContext, scene: SceneContext, 
   /** The buckets of every class from their rows, each mesh hidden until its first list, and the lists that fill them. */
   function adopt(rows: readonly Row[][]): void {
     lists = createClutterLists(seed, { radiusScale, nearBlades, cull: options.cull, rows: rows.map((of) => of.length) });
+    // A new renderer's lists start with nothing asked.
+    options.clutterWork?.reset();
     rows.forEach((ofClass, cls) =>
       ofClass.forEach((row, r) =>
         row.levels.forEach((parts, lod) => {
@@ -354,13 +363,63 @@ export function createClutterMeshes(engine: EngineContext, scene: SceneContext, 
     // A culled bucket goes on drawing its last cut until the next one.
     for (const bucket of made.all) if (!bucket.list.culled) show(bucket);
   }
+  /** Jobs that waited at least a frame, the milliseconds they waited, and answers the lists refused. */
+  let waits = 0;
+  let waitMs = 0;
+  let refusedAnswers = 0;
+  /** The client while it is live: absent, or failed, the page looks the cells up as it always did. */
+  const liveWork = (): ClutterWork | null => {
+    const work = options.clutterWork ?? null;
+    return work !== null && !work.failed ? work : null;
+  };
+  /** Fills the page's memory from an answer, counting one the lists refused. */
+  function* takeAnswer(strips: Int32Array, answer: ClutterAnswer, x: number, z: number): Slices<boolean> {
+    const taken = yield* (lists as ClutterLists).take(strips, answer, x, z);
+    if (!taken) refusedAnswers++;
+    return taken;
+  }
+  /** The rebuild of a crossing at a walk: asks the worker, waits a bounded time, fills, then `rebuild`. */
+  function* scheduled(x: number, z: number, hx: number, hz: number): Slices {
+    const work = liveWork();
+    const made = lists;
+    if (work === null || made === null) {
+      yield* rebuild(x, z);
+      return;
+    }
+    const next = new Float64Array(2);
+    const ahead = nextCrossing(x, z, hx, hz, CLUTTER_GRASS_CELL, next) ? { x: next[0] as number, z: next[1] as number } : null;
+    yield* askThenRebuild(
+      {
+        work, unknown: (px, pz, asked) => made.unknown(px, pz, asked), take: takeAnswer, rebuild, ahead,
+        now: () => performance.now(), disposed: () => disposed,
+        waited(ms) {
+          waits++;
+          waitMs += ms;
+        },
+      },
+      x, z,
+    );
+  }
+  /** The idle work: with a live client, takes the answers that have arrived and asks for the next crossing's cells; else the lists' prefetch. */
+  function* askedAhead(work: ClutterWork, x: number, z: number, hx: number, hz: number): Slices {
+    const made = lists;
+    if (made === null) return;
+    const p = { work, unknown: (px: number, pz: number, asked: (key: number) => boolean) => made.unknown(px, pz, asked), take: takeAnswer };
+    yield* fillArrived(p, x, z);
+    const next = new Float64Array(2);
+    if (nextCrossing(x, z, hx, hz, CLUTTER_GRASS_CELL, next)) askAhead(p, next[0] as number, next[1] as number);
+  }
   // One snap for every class, on the smallest cell.
   const rebuilds = createRebuilds({
     name: "clutter",
     cell: CLUTTER_GRASS_CELL,
     origin: cellOrigin(CLUTTER_GRASS_CELL),
     rebuild,
-    ahead: (x, z, hx, hz) => lists?.prefetch(x, z, hx, hz) ?? null,
+    ...(options.clutterWork == null ? {} : { scheduled }),
+    ahead: (x, z, hx, hz) => {
+      const work = liveWork();
+      return work === null ? (lists?.prefetch(x, z, hx, hz) ?? null) : askedAhead(work, x, z, hx, hz);
+    },
     jobs: options.jobs,
     firstBuilds: options.firstBuilds,
   });
@@ -451,9 +510,13 @@ export function createClutterMeshes(engine: EngineContext, scene: SceneContext, 
       }
       return { meshes: shown, instances };
     },
+    clutterRecord() {
+      return lists === null ? null : { waits, waitMs, refusedAnswers, looked: lists.looked, framedHere: lists.framedHere };
+    },
     dispose() {
       if (disposed) return;
       disposed = true;
+      options.clutterWork?.reset();
       rebuilds.dispose();
       beach?.dispose();
       beach = null;

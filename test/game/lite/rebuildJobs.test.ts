@@ -384,3 +384,65 @@ describe("a shell's at-once builds and verdicts in the scheduler's read-out", ()
     expect(jobs.last.crossings[0]).toMatchObject({ kind: "now", rule: "first" });
   });
 });
+
+describe("a shell's scheduled rebuild", () => {
+  /** A shell whose rebuild and scheduled rebuild each note the view they were begun for. */
+  function scheduledShell(jobs: SyncJobs, withScheduled: boolean) {
+    const rebuilt: { x: number; z: number }[] = [];
+    const scheduled: { x: number; z: number; hx: number; hz: number }[] = [];
+    const rebuilds = createRebuilds({
+      name: "stand-in",
+      cell: CELL,
+      origin: cellOrigin(CELL),
+      *rebuild(x, z): Slices {
+        yield;
+        rebuilt.push({ x, z });
+      },
+      ...(withScheduled
+        ? {
+            *scheduled(x: number, z: number, hx: number, hz: number): Slices {
+              scheduled.push({ x, z, hx, hz });
+              yield;
+            },
+          }
+        : {}),
+      jobs,
+    });
+    return { rebuilds, rebuilt, scheduled };
+  }
+
+  it("begins a crossing at a walk with the view and its heading, and builds the first view and a jump with rebuild", () => {
+    const { jobs, frame } = scheduler();
+    const s = scheduledShell(jobs, true);
+    expect(s.rebuilds.update(2.9, 0)).toBe("now");
+    frame();
+    expect(s.rebuilds.update(2.95, 0)).toBe("none");
+    frame();
+    expect(s.rebuilds.update(3.0, 0)).toBe("later");
+    expect(s.scheduled).toEqual([]);
+    frame();
+    frame();
+    expect(s.scheduled).toHaveLength(1);
+    expect(s.scheduled[0]?.x).toBe(3.0);
+    expect(s.scheduled[0]?.hx).toBeCloseTo(0.05);
+    expect(s.scheduled[0]?.hz).toBe(0);
+    expect(s.rebuilt).toEqual([{ x: 2.9, z: 0 }]);
+    // A jump of 9 m in one frame is built at once, by rebuild.
+    expect(s.rebuilds.update(12.0, 0)).toBe("now");
+    expect(s.rebuilt.at(-1)).toEqual({ x: 12.0, z: 0 });
+    expect(s.scheduled).toHaveLength(1);
+  });
+
+  it("begins a crossing at a walk with rebuild when it is given none", () => {
+    const { jobs, frame } = scheduler();
+    const s = scheduledShell(jobs, false);
+    s.rebuilds.update(2.9, 0);
+    frame();
+    s.rebuilds.update(2.95, 0);
+    frame();
+    expect(s.rebuilds.update(3.0, 0)).toBe("later");
+    frame();
+    frame();
+    expect(s.rebuilt).toEqual([{ x: 2.9, z: 0 }, { x: 3.0, z: 0 }]);
+  });
+});

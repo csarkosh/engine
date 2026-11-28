@@ -34,6 +34,11 @@ export type RebuildOptions = {
   origin(x: number, z: number, out: Float64Array): void;
   /** The rebuild for a view at (x, z), as slices: the last one shows its result whole. */
   rebuild(x: number, z: number): Slices;
+  /**
+   * The rebuild a crossing judged "later" begins in place of `rebuild`, given the view's heading: it may wait a frame
+   * (`SLICE_WAITS`). A build at once and a first build always run `rebuild`, which never waits.
+   */
+  scheduled?(x: number, z: number, headingX: number, headingZ: number): Slices;
   /** Idle work ahead of the next crossing from (x, z) on the heading; absent or null, none. */
   ahead?(x: number, z: number, headingX: number, headingZ: number): Slices | null;
   /** The renderer's scheduler; absent, every crossing builds at once. */
@@ -66,6 +71,11 @@ export function createRebuilds(options: RebuildOptions): Rebuilds {
     aimed = false;
   }
 
+  function* scheduledRebuild(x: number, z: number, hx: number, hz: number): Slices {
+    yield* (options.scheduled as NonNullable<RebuildOptions["scheduled"]>)(x, z, hx, hz);
+    aimed = false;
+  }
+
   /** Sets the idle work for the next crossing, while no rebuild is pending. */
   function aim(x: number, z: number): void {
     if (aimed || jobs === undefined || options.ahead === undefined || jobs.pending(owner)) return;
@@ -86,7 +96,7 @@ export function createRebuilds(options: RebuildOptions): Rebuilds {
       // A new place: a build the loader still holds for the last one is dropped.
       firstBuilds?.cancel(owner);
       if (kind === "later") {
-        (jobs as SyncJobs).begin(owner, rebuild(x, z), false, name);
+        (jobs as SyncJobs).begin(owner, options.scheduled === undefined ? rebuild(x, z) : scheduledRebuild(x, z, heading.x, heading.z), false, name);
         return kind;
       }
       jobs?.cancel(owner);
