@@ -116,6 +116,7 @@ export function createClutterWork(link: WorldLink, input: { seed: number; varian
   const fail = (): void => {
     failed = true;
     letGo();
+    out.clear();
     through = last;
   };
 
@@ -130,9 +131,10 @@ export function createClutterWork(link: WorldLink, input: { seed: number; varian
     workerMs += reply.ms;
     answered += 1;
     instances += reply.cells.length / 3;
-    const strips = live.get(reply.set);
-    if (reply.set <= dropUpTo || strips === undefined) return;
+    if (reply.set <= dropUpTo) return;
     if (reply.set > through) through = reply.set;
+    const strips = live.get(reply.set);
+    if (strips === undefined) return;
     waiting.push({ strips, answer: reply });
   });
   link.onFail(fail);
@@ -147,16 +149,18 @@ export function createClutterWork(link: WorldLink, input: { seed: number; varian
         return 0;
       }
       const set = last + 1;
-      const request: WorldClutterRequest = { id, kind: "clutter", seed: input.seed, variant: input.variant, set, strips };
+      // The client's own copy: the caller may reuse its buffer, and the keys must be walked again at `filled`.
+      const own = strips.slice();
+      const request: WorldClutterRequest = { id, kind: "clutter", seed: input.seed, variant: input.variant, set, strips: own };
       if (!link.post(request)) {
         fail();
         return 0;
       }
       last = set;
       out.add(set);
-      live.set(set, strips);
+      live.set(set, own);
       askedCount += 1;
-      forEachKey(strips, (key) => {
+      forEachKey(own, (key) => {
         counts.set(key, (counts.get(key) ?? 0) + 1);
         cells += 1;
       });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CLUTTER_STRIP_INTS, clutterCellKey, type ClutterAnswer, type WorldClutterRequest } from "../../src/game/clutterWire.js";
 import { CLUTTER_WORK_OUT, createClutterWork } from "../../src/game/clutterWork.js";
-import { createWorldLink } from "../../src/game/worldLink.js";
+import { createWorldLink, type WorldLink } from "../../src/game/worldLink.js";
 import type { WorldPrepReply } from "../../src/game/worldWork.js";
 
 type FakeWorker = {
@@ -223,5 +223,90 @@ describe("createClutterWork", () => {
     answer(1, 3, 2);
     answer(2, 4, 5);
     expect(work.record()).toEqual({ asked: 2, cells: 7, instances: 7, answered: 2, workerMs: 7, out: 0, refused: 1, failed: false });
+  });
+
+  it("keeps its own copy of the strips it asked", () => {
+    const { work, answer } = make();
+    const strips = strip(1, 0, 1, 0, 1);
+    const set = work.ask(strips);
+    strips.fill(9);
+    answer(set, 1);
+    const taken = work.take();
+    expect(Array.from(taken?.strips ?? [])).toEqual([1, 0, 1, 0, 1]);
+    work.filled(set);
+    for (const cx of [0, 1]) for (const cz of [0, 1]) expect(work.asked(clutterCellKey(1, cx, cz))).toBe(false);
+    expect(work.asked(clutterCellKey(9, 9, 9))).toBe(false);
+  });
+
+  it("filled before the reply arrives still lets through advance", () => {
+    const { work, answer } = make();
+    const set = work.ask(strip(0, 0, 0, 0, 0));
+    work.filled(set);
+    answer(set, 1);
+    expect(work.through).toBe(work.last);
+    expect(work.take()).toBeNull();
+    expect(work.record().out).toBe(0);
+  });
+
+  it("out is 0 once the client has failed or been disposed", () => {
+    const a = make();
+    a.work.ask(strip(0, 0, 0, 0, 0));
+    a.work.ask(strip(0, 1, 1, 0, 0));
+    a.worker.onerror?.({});
+    expect(a.work.record().out).toBe(0);
+    const b = make();
+    b.work.ask(strip(0, 0, 0, 0, 0));
+    b.work.dispose();
+    expect(b.work.record().out).toBe(0);
+  });
+
+  it("dispose unlistens with the client's id and releases the hold exactly once", () => {
+    const unlistened: number[] = [];
+    let releases = 0;
+    let listenedId = -1;
+    const link = {
+      nextId: () => 41,
+      post: () => true,
+      listen: (id: number) => {
+        listenedId = id;
+      },
+      unlisten: (id: number) => {
+        unlistened.push(id);
+      },
+      failed: false,
+      onFail: () => {},
+      hold: () => () => {
+        releases += 1;
+      },
+      dispose: () => {},
+    } as unknown as WorldLink;
+    const work = createClutterWork(link, input);
+    work.dispose();
+    work.dispose();
+    expect(listenedId).toBe(41);
+    expect(unlistened[0]).toBe(41);
+    expect(releases).toBe(1);
+  });
+
+  it("a failed reply while two are out fails the client", () => {
+    const { worker, work, failedReply } = make();
+    work.ask(strip(0, 0, 0, 0, 0));
+    work.ask(strip(0, 1, 1, 0, 0));
+    failedReply((worker.posted[0] as WorldClutterRequest).id);
+    expect(work.failed).toBe(true);
+    expect(work.ask(strip(0, 2, 2, 0, 0))).toBe(0);
+    expect(work.asked(clutterCellKey(0, 0, 0))).toBe(false);
+    expect(work.asked(clutterCellKey(0, 1, 0))).toBe(false);
+    expect(work.through).toBe(work.last);
+  });
+
+  it("take then reset with no filled leaves nothing asked", () => {
+    const { work, answer } = make();
+    const set = work.ask(strip(0, 0, 0, 0, 0));
+    answer(set, 1);
+    expect(work.take()).not.toBeNull();
+    work.reset();
+    expect(work.asked(clutterCellKey(0, 0, 0))).toBe(false);
+    expect(work.take()).toBeNull();
   });
 });
