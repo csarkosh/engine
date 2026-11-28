@@ -1,9 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runBySlices } from "../../testing/sliceRun.js";
 import {
   SLICE_READ_UNITS, SLICE_TARGET_MS, SYNC_BUDGET_MS, SYNC_PATIENT_MAX_MS, SYNC_PATIENT_WAIT_FRAMES, SYNC_LATE_BUDGET_MS, SYNC_LATE_FRAMES_MAX, SYNC_LATE_MS_MAX, SYNC_OVERDUE_MS,
   SYNC_OVERDUE_BUDGET_MS,
-  SLICE_WAITS, SYNC_SPEED_MIN_S, createCrossing, createSyncJobs, crossingAt, finish, nextCrossing, sliceDue, sortSlices, stepSlices, syncJobsRecord, turn,
+  SLICE_WAITS, SYNC_SPEED_MIN_S, createCrossing, createSyncJobs, crossingAt, finish, jobClockOf, nextCrossing, sliceDue, sortSlices, stepSlices, syncJobsRecord, turn,
   type Slices, type SyncJobs,
 } from "../../src/game/syncJobs.js";
 
@@ -2231,5 +2231,41 @@ describe("a slice that waits", () => {
       owed.push(Math.round(jobs.last.owedMs.forest as number));
     }
     expect(owed).toEqual([6, 12, 18]);
+  });
+});
+
+describe("whether the jobs are busy, and the clock they run on (a film's settle)", () => {
+  it("is busy while a job waits on its worker, which no slice and no load count shows, and not once it applies", () => {
+    let now = 0;
+    const jobs = createSyncJobs(() => now);
+    let answered = false;
+    function* waitsForWorker(): Generator<number | void, void, void> {
+      while (!answered) yield SLICE_WAITS;
+    }
+    expect(jobs.busy()).toBe(false);
+    jobs.begin({}, waitsForWorker(), false, "rings");
+    for (let i = 0; i < 10; i++) {
+      now += 16;
+      jobs.run();
+      expect(jobs.busy()).toBe(true);
+    }
+    answered = true;
+    now += 16;
+    jobs.run();
+    expect(jobs.busy()).toBe(false);
+  });
+
+  it("runs on the job clock handed in, and on performance.now with none, whatever else the options carry", () => {
+    const film = (): number => 1234;
+    expect(jobClockOf({ jobClock: film })).toBe(film);
+    const options: { clock: () => number; jobClock?: () => number } = { clock: () => 5 };
+    const clock = jobClockOf(options);
+    // The page's clock, stood in for: no test reads a real one.
+    const page = vi.spyOn(performance, "now").mockReturnValue(4242);
+    try {
+      expect(clock()).toBe(4242);
+    } finally {
+      page.mockRestore();
+    }
   });
 });

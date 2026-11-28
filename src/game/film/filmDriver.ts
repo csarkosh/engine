@@ -6,10 +6,14 @@
  * path is at the clock's time under the film's hour and weather, and draws. The frame after a
  * seek (and the first frame) does not step: it is drawn at the seek's time exactly (a recorder
  * seeks to i / fps and takes the next frame as that time), with the warm frames a cut is given; then it draws on until the world
- * near the camera is built (`settle`), and resolves on the animation frame after, when the
- * picture has been presented and a screenshot reads it. The clock does not move while it
- * settles: every draw of a frame is of the same moment.
+ * near the camera is built (`settle`). Then the anti-aliasing starts again (its jitter's first
+ * step, a fresh history) and the frame is drawn `FILM_TAA_DRAWS` times more, so the picture kept
+ * depends on the film's time alone, never on how long it settled, in a straight run and in one
+ * resumed at that frame alike. It resolves on the animation frame after, when the picture has
+ * been presented and a screenshot reads it, with whether it settled and how many draws it took.
+ * The clock does not move while it settles: every draw of a frame is of the same moment.
  */
+import { TAA_SAMPLES } from "../postParams.js";
 import type { FreecamView } from "../rendererTypes.js";
 import type { WeatherParams } from "../weather.js";
 import { samplePath, type CameraPath } from "./cameraPath.js";
@@ -20,6 +24,11 @@ import { SETTLE_FRAMES, settle } from "./settle.js";
 export const SETTLE_MAX_FRAMES = 600;
 /** Draws made at a stretch while settling before the page is given a turn: a model lands, and a worker answers, only between two of the page's tasks. */
 export const SETTLE_STRETCH = 8;
+/** The draws after the anti-aliasing restarts: one whole walk of its jitter, averaged evenly (`TaaFrame.restart`). */
+export const FILM_TAA_DRAWS = TAA_SAMPLES;
+
+/** What a film's frame came to: whether the world settled before it was kept, and the draws it took in all. */
+export type FilmFrame = { settled: boolean; draws: number };
 
 export type FilmDriverDeps = {
   clock: FilmClock;
@@ -31,7 +40,10 @@ export type FilmDriverDeps = {
     setView(hour: number, weather: WeatherParams): void;
     setFreecam(view: FreecamView | null): void;
     waitingItems(): number;
+    /** The uploads still streaming, or a rebuild job still pending (one waiting on its worker too). */
     streaming(): boolean;
+    /** Starts the anti-aliasing's walk and history again (`WorldRenderer.restartAntialiasing`). */
+    restartAntialiasing(): void;
   };
   /** Syncs the renderer to the session's state and draws one frame. */
   draw(): void;
@@ -43,7 +55,7 @@ export type FilmDriver = {
   /** Moves the film to `t` seconds; the next frame is drawn at `t` itself, and settles as after a cut. */
   seek(t: number): void;
   /** Steps, draws and settles one frame of the film; resolves once it has been presented. */
-  frame(): Promise<void>;
+  frame(): Promise<FilmFrame>;
   /** The film's time in seconds. */
   time(): number;
   /** Puts the camera where the path is at the clock's time and draws, the clock unmoved: the frames that bring the world in before the first. */
@@ -60,11 +72,19 @@ export function createFilmDriver(deps: FilmDriverDeps): FilmDriver {
   };
   const busy = (): boolean => view.waitingItems() > 0 || view.streaming();
   let stretch = 0;
-  /** One settling draw, with a turn of the page after a stretch of them or while a model is still to land. */
-  const settleDraw = async (): Promise<void> => {
+  let draws = 0;
+  const draw = (): void => {
     deps.draw();
+    draws += 1;
+  };
+  /**
+   * One settling draw, with a turn of the page after a stretch of them, and after every one while anything is still
+   * to come (a model to land, a worker's answer to a job): those arrive only between two of the page's tasks.
+   */
+  const settleDraw = async (): Promise<void> => {
+    draw();
     stretch += 1;
-    if (stretch >= SETTLE_STRETCH || view.waitingItems() > 0) {
+    if (stretch >= SETTLE_STRETCH || busy()) {
       stretch = 0;
       await deps.nextFrame();
     }
@@ -82,12 +102,17 @@ export function createFilmDriver(deps: FilmDriverDeps): FilmDriver {
         clock.step();
         deps.step();
       }
+      draws = 0;
       place();
-      deps.draw();
-      if (after) for (let i = 0; i < SETTLE_FRAMES; i++) deps.draw();
+      draw();
+      if (after) for (let i = 0; i < SETTLE_FRAMES; i++) draw();
       stretch = 0;
-      await settle(settleDraw, busy, SETTLE_MAX_FRAMES);
+      const { settled } = await settle(settleDraw, busy, SETTLE_MAX_FRAMES);
+      // The picture kept is of a fixed run of draws from a fresh start of the anti-aliasing: the same however long it settled.
+      view.restartAntialiasing();
+      for (let i = 0; i < FILM_TAA_DRAWS; i++) draw();
       await deps.nextFrame();
+      return { settled, draws };
     },
     time: () => clock.time(),
     still() {
@@ -97,17 +122,28 @@ export function createFilmDriver(deps: FilmDriverDeps): FilmDriver {
   };
 }
 
-/** What hides everything on the page under a film but its frame: every element that neither is the film's canvas nor holds it. */
-const FILM_ONLY_CSS = "body.film *:not([data-film-canvas]):not(:has([data-film-canvas])) { display: none !important; } body.film [data-film-canvas] { pointer-events: none; }";
+/**
+ * What hides everything on the page under a film but its frame (every element that neither is the film's canvas nor
+ * holds it), takes the body's margin and padding away, and holds the canvas at the viewport's corner at the film's
+ * size, whatever the page's own styles say: the screenshot is the viewport, the film's size at scale 1.
+ */
+export function filmOnlyCss(width: number, height: number): string {
+  return [
+    "body.film *:not([data-film-canvas]):not(:has([data-film-canvas])) { display: none !important; }",
+    "body.film { margin: 0 !important; padding: 0 !important; overflow: hidden !important; }",
+    `body.film [data-film-canvas] { pointer-events: none; position: fixed !important; left: 0 !important; top: 0 !important; margin: 0 !important; width: ${width}px !important; height: ${height}px !important; }`,
+  ].join(" ");
+}
 
 /**
- * Marks the page a film's (`body.film`): nothing shows but `canvas`, and the canvas takes no
- * pointer (so nothing asks for its lock). Returns what puts the page back.
+ * Marks the page a film's (`body.film`): nothing shows but `canvas`, at the corner at `width` x
+ * `height` CSS pixels, and the canvas takes no pointer (so nothing asks for its lock). Returns
+ * what puts the page back.
  */
-export function showFilmOnly(canvas: HTMLCanvasElement): () => void {
+export function showFilmOnly(canvas: HTMLCanvasElement, width: number, height: number): () => void {
   canvas.dataset.filmCanvas = "";
   const style = document.createElement("style");
-  style.textContent = FILM_ONLY_CSS;
+  style.textContent = filmOnlyCss(width, height);
   document.head.append(style);
   document.body.classList.add("film");
   return () => {

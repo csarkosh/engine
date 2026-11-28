@@ -454,7 +454,7 @@ import { SILENT_SURF_SOUND, createSurfSound, fillSurfSound, type SurfSound } fro
 import type { SkyState } from "../skyState.js";
 import { STARE_LENS_REST, stareShadeUnder, type StareLens } from "../stareLens.js";
 import { sunAltitudeDeg, whenSkyHeld } from "../skyWait.js";
-import { createSyncJobs, finish, stepSlices, syncJobsRecord, type SyncJobsLast } from "../syncJobs.js";
+import { createSyncJobs, finish, jobClockOf, stepSlices, syncJobsRecord, type SyncJobsLast } from "../syncJobs.js";
 import { followRoadCentre, terrainTablesFor, type TerrainTables } from "../terrainTables.js";
 import { terrainCoverFor, terrainSurfaceUnder, terrainUniforms, type TerrainUniformInputs } from "../terrainUniforms.js";
 import { createViewBob } from "../viewBob.js";
@@ -830,7 +830,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
 
   // The rebuilds a crossing starts run as jobs over the frames after it, under the game's per-frame budget
   // (`syncJobs.ts`): `sync` runs this frame's share once every shell has seen the view.
-  const jobs = createSyncJobs(clock);
+  const jobs = createSyncJobs(jobClockOf(options));
   // The measurement mode (`?gpuTime`): the jobs' record of the last frame, read out as `window.__syncJobs()`. A copy
   // each time: the record is written in place every frame.
   // `__syncJobsReset()` forgets the longest slices recorded, so a reading's are those since the call.
@@ -1762,7 +1762,10 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
       return loading + (standing?.forest?.waiting() ?? 0) + (standing?.clutter?.waiting() ?? 0) + (standing?.cliffs?.waiting() ?? 0) + side.waiting();
     },
     streaming() {
-      return uploads.last.streamed > 0 || uploads.last.held > 0;
+      return uploads.last.streamed > 0 || uploads.last.held > 0 || jobs.busy();
+    },
+    restartAntialiasing() {
+      standing?.chain?.restartAntialiasing();
     },
     sync(state, localId, alpha, frame = { dt: 0, sprinting: false }) {
       if (disposed) return;

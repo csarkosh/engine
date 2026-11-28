@@ -34,10 +34,10 @@ describe("the hike's sky", () => {
       // there, handed what the world's worker sampled there (`prepared`, taken once), and given the loader of first
       // builds a start under a film has (`firstBuilds`). Every renderer is given the game's look (`look`, `gameLook.ts`)
       // and the session's client of the world's worker for its rock faces (`patchWork`) and its client for the rings (`ringWork`), its client for the clutter (`clutterWork`) and the read of the workers (`worldRead`), the same ones to each in turn.
-      "game.renderer(next, level, forest, { tier: at, look, deferClipmap: options.deferClipmap, start, prepared: options.takePrepared?.() ?? null, patchWork: options.patchWork, ringWork: options.ringWork, clutterWork: options.clutterWork, worldRead: options.worldRead, firstBuilds, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator), ...(options.film ? { clock: sessionClock } : {}) }),",
+      "game.renderer(next, level, forest, { tier: at, look, deferClipmap: options.deferClipmap, start, prepared: options.takePrepared?.() ?? null, patchWork: options.patchWork, ringWork: options.ringWork, clutterWork: options.clutterWork, worldRead: options.worldRead, firstBuilds, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator), ...(options.film ? { clock: sessionClock, jobClock: sessionClock } : {}) }),",
     );
     expect(src).toContain(
-      "build: (next, target) => game.renderer(next, level, forest, { tier: target, look, patchWork: options.patchWork, ringWork: options.ringWork, clutterWork: options.clutterWork, worldRead: options.worldRead, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator), ...(options.film ? { clock: sessionClock } : {}) }),",
+      "build: (next, target) => game.renderer(next, level, forest, { tier: target, look, patchWork: options.patchWork, ringWork: options.ringWork, clutterWork: options.clutterWork, worldRead: options.worldRead, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator), ...(options.film ? { clock: sessionClock, jobClock: sessionClock } : {}) }),",
     );
   });
 

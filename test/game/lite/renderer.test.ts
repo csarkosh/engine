@@ -19,9 +19,15 @@ describe("the hike's renderer on Babylon Lite, before its engine stands", () => 
     expect([...text.matchAll(/\bsurfStepped = false;/g)].length).toBe(2);
   });
 
-  it("hands its own clock to its sync jobs, performance.now when none is given", () => {
+  it("runs its sync jobs on the job clock alone, performance.now when none is given, whatever its own clock is", () => {
     const text = sourceText("game/lite/renderer.ts");
-    expect(text).toContain("  const jobs = createSyncJobs(clock);");
+    expect(text).toContain("  const jobs = createSyncJobs(jobClockOf(options));");
+    expect(text).not.toContain("createSyncJobs(clock)");
     expect(text).toContain("  const clock = options.clock ?? (() => performance.now());");
+  });
+
+  it("counts a rebuild job still pending, one waiting on its worker too, as streaming: a film's settle waits for it", () => {
+    const text = sourceText("game/lite/renderer.ts");
+    expect(text).toContain("      return uploads.last.streamed > 0 || uploads.last.held > 0 || jobs.busy();");
   });
 });

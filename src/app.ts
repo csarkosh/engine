@@ -69,7 +69,7 @@ import { isMode } from "./game/modeList.js";
 import { PLAYER_EYE_OFFSET, PLAYER_HALF } from "./sim/constants.js";
 import { loadBirdBed } from "./game/birdBed.js";
 import { sessionNow as filmSessionNow, type FilmSession } from "./game/film/filmClock.js";
-import { createFilmDriver, showFilmOnly, type FilmDriver } from "./game/film/filmDriver.js";
+import { createFilmDriver, showFilmOnly, type FilmDriver, type FilmFrame } from "./game/film/filmDriver.js";
 import type { Lobby } from "./net/lobby.js";
 import { worldVersionOf, type Fields, type Telemetry } from "./net/telemetry.js";
 /** A frame longer than this counts as a stall in the heartbeat. */
@@ -105,7 +105,7 @@ export type GameHandle = {
    * when a cover lifted beside it shows no pause menu between. */
   engage(): Promise<boolean>;
   /** A film's session (`GameOptions.film`): its frames, drawn one at a time (`filmDriver.ts`). Absent in play. */
-  film?: { seek: (t: number) => void; frame: () => Promise<void>; time: () => number };
+  film?: { seek: (t: number) => void; frame: () => Promise<FilmFrame>; time: () => number };
 };
 
 export type GameOptions = {
@@ -414,7 +414,7 @@ function buildGame<
     options.film ? ["high"] : [options.tier, ...options.fallbackTiers],
     {
       build: (next, at) =>
-        game.renderer(next, level, forest, { tier: at, look, deferClipmap: options.deferClipmap, start, prepared: options.takePrepared?.() ?? null, patchWork: options.patchWork, ringWork: options.ringWork, clutterWork: options.clutterWork, worldRead: options.worldRead, firstBuilds, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator), ...(options.film ? { clock: sessionClock } : {}) }),
+        game.renderer(next, level, forest, { tier: at, look, deferClipmap: options.deferClipmap, start, prepared: options.takePrepared?.() ?? null, patchWork: options.patchWork, ringWork: options.ringWork, clutterWork: options.clutterWork, worldRead: options.worldRead, firstBuilds, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator), ...(options.film ? { clock: sessionClock, jobClock: sessionClock } : {}) }),
       freshCanvas: () => document.createElement("canvas"),
       ...engineBindings,
     },
@@ -536,7 +536,7 @@ function buildGame<
   const input = createInputSampler(canvas, { touch: touchModel, touchMode: touchStart, startYaw: start?.yaw ?? 0, actions: game.actions });
   made(() => input.dispose());
   // A film is no one's to play: the pointer is never locked, and nothing but the frame shows (and, below, the gate holds the controls).
-  const unshowFilm = options.film ? showFilmOnly(canvas) : null;
+  const unshowFilm = options.film ? showFilmOnly(canvas, options.film.def.width, options.film.def.height) : null;
   made(() => unshowFilm?.());
   const accumulator = new FixedStepAccumulator();
   /** The local player's pose as the frame's last tick began, for the eye's blend (`eyeBlend.ts`); null until a tick has run. */
@@ -1369,6 +1369,7 @@ function buildGame<
         setFreecam: (at) => renderer.setFreecam(at),
         waitingItems: () => renderer.waitingItems(),
         streaming: () => renderer.streaming(),
+        restartAntialiasing: () => renderer.restartAntialiasing(),
       },
       draw: () => {
         frame(host, host.world.state, cmd, dt);
@@ -1658,7 +1659,7 @@ function buildGame<
     // The renderer makes its own engine from the canvas it is built on: the
     // one made for the switch (`options.engineFor`), which `freshCanvas`
     // hands out first.
-    build: (next, target) => game.renderer(next, level, forest, { tier: target, look, patchWork: options.patchWork, ringWork: options.ringWork, clutterWork: options.clutterWork, worldRead: options.worldRead, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator), ...(options.film ? { clock: sessionClock } : {}) }),
+    build: (next, target) => game.renderer(next, level, forest, { tier: target, look, patchWork: options.patchWork, ringWork: options.ringWork, clutterWork: options.clutterWork, worldRead: options.worldRead, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator), ...(options.film ? { clock: sessionClock, jobClock: sessionClock } : {}) }),
     freshCanvas: () => document.createElement("canvas"),
     extras: { dispose: side.disposeExtras, build: side.buildExtras },
     rebind: (next) => {

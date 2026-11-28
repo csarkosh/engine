@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PAINT_OILS, PAINT_PALETTES, gradeRecordUnder } from "../../src/game/gradeParams.js";
-import { FAR_SOFT_RADIUS, composeUniforms, createPaletteFade, farSoftUniforms, type PostView } from "../../src/game/postFrame.js";
-import { PAINT_STRENGTH } from "../../src/game/postParams.js";
+import { FAR_SOFT_RADIUS, composeUniforms, createPaletteFade, createTaaFrame, farSoftUniforms, type PostView } from "../../src/game/postFrame.js";
+import { PAINT_STRENGTH, TAA_SAMPLES, taaJitter } from "../../src/game/postParams.js";
 import { WEATHER_PRESETS } from "../../src/game/weather.js";
 import { sourceText } from "../helpers/source.js";
 
@@ -51,5 +51,46 @@ describe("what a game's look changes of the post chain's records", () => {
     const gained = gradeRecordUnder(w, 12, 0, 1, 0, undefined, 0, PAINT_OILS, 1.5);
     expect(gained.exposure).toBe(plain.exposure * 1.5);
     expect({ ...gained, exposure: plain.exposure }).toEqual(plain);
+  });
+});
+
+describe("the anti-aliasing restarted for a film's frame", () => {
+  /** `n` frames through VIEW: each frame's jitter and its share of the history. */
+  function run(taa: ReturnType<typeof createTaaFrame>, n: number): { jitter: { x: number; y: number }; share: number; history: number }[] {
+    return Array.from({ length: n }, () => {
+      const jitter = taa.jitter(1280, 640);
+      const u = taa.step(VIEW, 1280, 640);
+      return { jitter, share: u.taaParams[0], history: u.taaParams[2] };
+    });
+  }
+
+  it("draws the same walk and shares after a restart however many frames came before", () => {
+    const a = createTaaFrame();
+    const b = createTaaFrame();
+    run(a, 3);
+    run(b, 17);
+    a.restart();
+    b.restart();
+    const after = run(a, TAA_SAMPLES);
+    expect(run(b, TAA_SAMPLES)).toEqual(after);
+    // The walk from its first step, and a fresh history: the first frame has none.
+    expect(after.map((f) => f.jitter)).toEqual(Array.from({ length: TAA_SAMPLES }, (_, i) => taaJitter(i, 1280, 640)));
+    expect(after[0]!.history).toBe(0);
+  });
+
+  it("averages the frames after a restart evenly: the k-th with history takes 1/(k+1)", () => {
+    const taa = createTaaFrame();
+    taa.restart();
+    const shares = run(taa, TAA_SAMPLES).slice(1).map((f) => f.share);
+    expect(shares).toEqual(Array.from({ length: TAA_SAMPLES - 1 }, (_, i) => 1 / (i + 2)));
+  });
+
+  it("keeps play's shares where no restart was asked for", () => {
+    const played = run(createTaaFrame(), 4);
+    const reset = createTaaFrame();
+    reset.reset();
+    expect(run(reset, 4)).toEqual(played);
+    // A still camera with a history blends at the still share, far below an even average's.
+    expect(played[3]!.share).toBeLessThan(0.1);
   });
 });

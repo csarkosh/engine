@@ -162,6 +162,8 @@ export type LitePostChain = {
   palette(): PaintPalette;
   /** The haunt's mask to read the shades from, and whether any shade is in it this frame. */
   setShades(mask: Texture2D | null, any: boolean): void;
+  /** Starts the anti-aliasing's walk and history again, the frames after averaged evenly (`TaaFrame.restart`): a film's frame. */
+  restartAntialiasing(): void;
   /**
    * The frame seen through `view`: the jitter's next step on the camera's
    * projection, and every pass's uniforms into the one buffer. `air` holds
@@ -539,6 +541,9 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
     setShades(mask, any) {
       shadeMask = mask;
       shadeAny = any;
+    },
+    restartAntialiasing() {
+      taaFrame.restart();
     },
     setDim(share) {
       dim = share;

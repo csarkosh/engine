@@ -133,6 +133,13 @@ export type TaaFrame = {
   step(view: PostView, width: number, height: number, out?: TaaUniforms): TaaUniforms;
   /** The history is gone (its targets were made again): the next frame starts one. */
   reset(): void;
+  /**
+   * A film's frame (`filmDriver.ts`): the walk starts again at its first step and the next frame starts a history, and
+   * from then each frame's share is at least `1 / (frames in the history + 1)`, so the frames after it are averaged
+   * evenly until the blend's own share is the larger. The picture after a fixed number of frames then depends on
+   * nothing drawn before the call. Play never calls it.
+   */
+  restart(): void;
   /** Whether a history stands. */
   readonly valid: boolean;
 };
@@ -140,6 +147,8 @@ export type TaaFrame = {
 export function createTaaFrame(): TaaFrame {
   let frame = 0;
   let valid = false;
+  /** The frames in the history since the last `restart`, -1 before any: the even average's count. */
+  let sinceRestart = -1;
   const prev = { eye: [0, 0, 0] as V3, f: [0, 0, 0] as V3, r: [0, 0, 0] as V3, u: [0, 0, 0] as V3 };
   return {
     get valid() {
@@ -148,6 +157,11 @@ export function createTaaFrame(): TaaFrame {
     jitter: (width, height) => taaJitter(frame++, width, height),
     reset() {
       valid = false;
+    },
+    restart() {
+      frame = 0;
+      valid = false;
+      sinceRestart = 0;
     },
     step(view, width, height, out = emptyTaaUniforms()) {
       out.texel[0] = 1 / width;
@@ -176,7 +190,9 @@ export function createTaaFrame(): TaaFrame {
       const cross = Math.hypot(ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx);
       const turn = Math.atan2(cross, ax * bx + ay * by + az * bz);
       const move = Math.hypot(prev.eye[0] - out.taaEye[0], prev.eye[1] - out.taaEye[1], prev.eye[2] - out.taaEye[2]);
-      out.taaParams[0] = valid ? taaBlendFor(taaCameraPixels(turn, move, view.fov, height)) : TAA_BLEND;
+      const share = valid ? taaBlendFor(taaCameraPixels(turn, move, view.fov, height)) : TAA_BLEND;
+      out.taaParams[0] = sinceRestart >= 0 && valid ? Math.max(share, 1 / (sinceRestart + 1)) : share;
+      if (sinceRestart >= 0) sinceRestart += 1;
       out.taaParams[1] = TAA_CLIP;
       out.taaParams[2] = valid ? 1 : 0;
       prev.eye = [...out.taaEye];

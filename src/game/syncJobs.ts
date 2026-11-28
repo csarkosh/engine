@@ -429,6 +429,9 @@ export type SyncJobs = {
   cancel(owner: object): void;
   /** Whether `owner` has a job begun and not yet applied, or a request waiting behind one. */
   pending(owner: object): boolean;
+  /** Whether any job is begun and not yet applied: one still slicing, or one waiting on the world's worker
+   * (`SLICE_WAITS`), which no load count shows. A film's settle reads it (`renderer.streaming`). */
+  busy(): boolean;
   /** Sets `owner`'s idle work, replacing any it has (null clears it): slices
    * run only with the budget left while no job is pending but patient ones
    * and ones that waited this frame. */
@@ -469,6 +472,15 @@ export type SyncJobs = {
   /** Records a crossing's verdict (`crossingAt` calls it, while watching). */
   judged(name: string, kind: "now" | "later", rule: CrossingRule, step: number, moved: number, elapsedMs: number, speed: number): void;
 };
+
+/**
+ * The clock a renderer's jobs run on: `jobClock` where one is handed in (a film's, whose time moves only a frame at a
+ * time), `performance.now` otherwise. A renderer's own `clock` (a scene stepped a frame at a time) is not it: the
+ * jobs' slices and budgets are of real time.
+ */
+export function jobClockOf(options: { readonly jobClock?: () => number }): () => number {
+  return options.jobClock ?? (() => performance.now());
+}
 
 /** A queued job: its slices, the frame whose crossing began it and the
  * clock then, what its next slice is expected to take (ms), and whether it
@@ -684,6 +696,7 @@ export function createSyncJobs(clock: () => number): SyncJobs {
     pending(owner) {
       return queue.some((job) => job.owner === owner);
     },
+    busy: () => queue.length > 0,
     idle(owner, slices) {
       const at = idle.findIndex((work) => work.owner === owner);
       if (at >= 0) idle.splice(at, 1)[0]?.slices.return(undefined);

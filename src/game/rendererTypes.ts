@@ -95,6 +95,10 @@ export type WorldRenderer<S> = {
   waitingItems(): number;
   /** Whether the last frame still streamed or held bytes for the GPU (`frameUploads.ts`): the world near the camera is still being built. */
   streaming(): boolean;
+  /** Starts the anti-aliasing's jitter walk again from its first step and its history afresh, the frames after it
+   * averaged evenly (`TaaFrame.restart`): a film's frame, drawn a fixed number of times after it, is then the same
+   * picture however long it settled. Nothing on a tier with no post chain. */
+  restartAntialiasing(): void;
   /**
    * `frame` carries this frame's local, non-simulated view inputs — its
    * duration in seconds and whether sprint is held. Only the walking cue reads
@@ -264,6 +268,9 @@ export type RendererOptions = {
    * with time read; `performance.now` absent. A scene stepped a frame at a
    * time hands in its own, so the grass and the water move in step with it. */
   clock?: () => number;
+  /** The clock (ms) the renderer's rebuild jobs are sliced and budgeted by (`syncJobs.ts`, `jobClockOf`):
+   * `performance.now` absent, whatever `clock` is. Only a film hands one in, its own. */
+  jobClock?: () => number;
   /** Where the hike's player starts (`trailheadStart`): the first terrain
    * rings and the water (its bed and its rings) are made around it, so the
    * player's first frame finds them in place. Absent or null (a world with
