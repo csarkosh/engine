@@ -192,8 +192,8 @@ describe("the clutter's rebuild that asks the worker and waits", () => {
     expect(w.filledSets).toContain(1);
     expect(w.isAsked(10)).toBe(false);
     expect(w.posted.map((p) => p.set)).toEqual([1, 2]);
-    // The job after a bound is behind: it asked for its cells and did not wait, so it looked its own up at once.
-    expect(w.lookedHere).toEqual([10, 11, 12, 20, 21, 22]);
+    // The late answer had come before the job began, so the clutter was not behind: the job asked and waited.
+    expect(w.lookedHere).toEqual([10, 11, 12]);
   });
 
   it("holds a newer crossing behind the job that waits, and runs it after", () => {
@@ -333,6 +333,42 @@ describe("the clutter's rebuild that asks the worker and waits", () => {
     frame();
     expect(w.shown).toEqual([1, 2, 1, 3]);
     expect(w.behind.value).toBe(false);
+  });
+
+  it("after a bound, a late answer arrives: the next job, with a cell never asked, is not behind, asks and waits, and ends on its answer", () => {
+    const w = world();
+    const { jobs, frame } = scheduler(w.clock);
+    const owner = {};
+    jobs.begin(owner, askThenRebuild(w.asking(), 1, 0), false, "clutter");
+    for (let n = 0; n < 30 && w.shown.length === 0; n++) frame();
+    expect(w.behind.value).toBe(true);
+    w.answer(1);
+    jobs.begin(owner, askThenRebuild(w.asking(), 2, 0), false, "clutter");
+    frame();
+    expect(w.behind.value).toBe(false);
+    expect(w.posted.map((p) => p.set)).toEqual([1, 2]);
+    frame();
+    expect(jobs.last.waits).toBe(1);
+    expect(w.shown).toEqual([1]);
+    w.answer(2);
+    frame();
+    expect(w.shown).toEqual([1, 2]);
+    expect(w.lookedHere).toEqual([10, 11, 12]);
+    expect(w.behind.value).toBe(false);
+  });
+
+  it("after a bound, with a request still unanswered when the next job begins, that job is still behind and does not wait", () => {
+    const w = world();
+    const { jobs, frame } = scheduler(w.clock);
+    const owner = {};
+    jobs.begin(owner, askThenRebuild(w.asking(), 1, 0), false, "clutter");
+    for (let n = 0; n < 30 && w.shown.length === 0; n++) frame();
+    expect(w.behind.value).toBe(true);
+    jobs.begin(owner, askThenRebuild(w.asking(), 2, 0), false, "clutter");
+    frame();
+    expect(w.behind.value).toBe(true);
+    expect(jobs.last.waits).toBe(0);
+    expect(w.shown).toEqual([1, 2]);
   });
 
   it("askAhead asks only for cells not asked already", () => {

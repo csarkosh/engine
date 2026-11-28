@@ -8,9 +8,10 @@
  * next frame. It ends when the newest set this job's own ask left out is answered, when the client has failed (a
  * failed client's `through` is its `last`), or `CLUTTER_WAIT_MS` after the job began, by the clock handed in.
  * A job whose own non-empty ask was refused (two sets already out) does not wait: it takes what has arrived and
- * rebuilds at once. When the clutter is behind (the last wait ended at the bound, and no job has since begun with
- * nothing lacking or seen its set answered) a job asks as usual and does not wait, so a worker that has fallen behind
- * costs one bound, not one per job.
+ * rebuilds at once. The clutter is behind once a wait ends at the bound, and stops being behind when a job begins
+ * with nothing lacking at its place, or with everything asked already answered (`through` has reached `last`), or
+ * when a wait ends with its set answered. While it is behind a job asks as usual and does not wait, so a worker that
+ * has fallen behind costs one bound, not one per job.
  * This runs only for a crossing judged "later" (`rebuildJobs.ts`), never on a path `finish` runs.
  */
 import type { ClutterWork } from "../clutterWork.js";
@@ -92,7 +93,7 @@ export function* fillThenAskAhead(
 /**
  * Asks the worker for the cells this job lacks, waits for them (a bounded time, at no cost) where it should, fills
  * them, then rebuilds. The order at its start: with the client failed, rebuild and return; else take and fill every
- * arrived answer; note whether any cell is lacking (none: the worker has caught up, `behind` is cleared); ask for the
+ * arrived answer; clear `behind` where everything asked is answered; note whether any cell is lacking (none: the worker has caught up, `behind` is cleared); ask for the
  * cells not already asked, and for the look-ahead; yield. It then waits only if cells were lacking, its own ask was
  * not refused, and the clutter was not behind when it began.
  */
@@ -105,6 +106,8 @@ export function* askThenRebuild(p: ClutterAsking, x: number, z: number): Slices 
   const began = p.now();
   yield* fillArrived(p, x, z);
   if (p.disposed()) return;
+  // The worker has caught up when it has answered everything asked, or nothing is lacking at this place.
+  if (work.through >= work.last) p.behind.value = false;
   const lacking = p.unknown(x, z, () => false).length > 0;
   if (!lacking) p.behind.value = false;
   const wasBehind = p.behind.value;

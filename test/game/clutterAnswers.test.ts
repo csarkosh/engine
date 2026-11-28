@@ -462,6 +462,9 @@ describe("an answer that does not fit its strips", () => {
   });
 });
 
+/** A place on the shore where drift logs are listed (found by scanning the coast; the stretch below walks from it). */
+const SHORE: Pos = { x: -400, z: 0 };
+
 describe("the frames an answer carries", () => {
   beforeAll(() => { seatDriftLogs(trunk()); });
 
@@ -471,11 +474,11 @@ describe("the frames an answer carries", () => {
     // The first window is answered whole too, so that nothing of it waits for a frame of the page's own.
     const first: number[] = [];
     for (let cls = 0; cls < CLUTTER_CLASS_COUNT; cls++) {
-      const w = clutterWindowAt(cls, 0, 0, SCALE);
+      const w = clutterWindowAt(cls, SHORE.x, SHORE.z, SCALE);
       first.push(cls, w.x0, w.x1, w.z0, w.z1);
     }
     const all = Int32Array.from(first);
-    expect(finish(lists.take(all, answerFor(all), 0, 0))).toBe(true);
+    expect(finish(lists.take(all, answerFor(all), SHORE.x, SHORE.z))).toBe(true);
     // The distinct drift-log instances listed over the stretch, each told by its matrix: one that stays listed over
     // many crossings is counted once, not once a crossing.
     const logged = new Set<string>();
@@ -485,8 +488,8 @@ describe("the frames an answer carries", () => {
         for (let k = 0; k < bucket.list.count; k++) logged.add(Array.from(bucket.list.buf.subarray(k * 16, k * 16 + 16)).join(","));
       }
     };
-    const positions: Pos[] = [{ x: 0, z: 0 }];
-    for (let i = 1; i <= 14; i++) positions.push({ x: i * 3.1, z: i < 8 ? 0.3 * i : i * 3.1 - 21 });
+    const positions: Pos[] = [{ ...SHORE }];
+    for (let i = 1; i <= 14; i++) positions.push({ x: SHORE.x + i * 3.1, z: SHORE.z + (i < 8 ? 0.3 * i : i * 3.1 - 21) });
     positions.forEach((p, i) => {
       const strips = lists.unknown(p.x, p.z, () => false);
       expect(finish(lists.take(strips, answerFor(strips), p.x, p.z))).toBe(true);
@@ -496,6 +499,9 @@ describe("the frames an answer carries", () => {
       expectDrawnSame(lists, ref, `ahead, crossing ${i}`, false);
     });
     const logs = logged.size;
+    // Drift logs are listed here, and their frames are the page's own: computed here, never carried by an answer.
+    expect(logs).toBeGreaterThan(0);
+    expect(lists.framedHere, "frames computed by the page").toBeGreaterThan(0);
     expect(lists.framedHere, "frames computed by the page").toBeLessThanOrEqual(logs);
     expect(ref.framedHere, "frames the unanswered reference computes").toBeGreaterThan(logs + 1000);
   }, timeLimit(120_000));
