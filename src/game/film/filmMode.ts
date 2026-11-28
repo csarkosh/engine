@@ -47,6 +47,9 @@ export type FilmDefinition = {
   hour: number;
   weather: WeatherParams;
   path: CameraPath;
+  /** What the game's look is, as a stable string of its own (a hash, a version): a recorder refuses to resume frames
+   * recorded under another (`EngineFilmDef.digest`). Absent, the look is not told apart. */
+  lookDigest?: string;
 };
 
 /** The height a film's camera must stay clear of at (x, z): the higher of the session's ground and the sea. */

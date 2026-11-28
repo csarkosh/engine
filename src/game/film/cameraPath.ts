@@ -1,6 +1,6 @@
-import { aimAt } from '../freecam';
-import { GAME_FOV } from '../gameLens';
-import type { FreecamView } from '../rendererTypes';
+import { aimAt } from "../freecam.js";
+import { GAME_FOV } from "../gameLens.js";
+import type { FreecamView } from "../rendererTypes.js";
 
 export type Vec3 = readonly [number, number, number];
 /** A place `at` the film time `t` (s), looking at the point `look`; `fov` in radians, default `GAME_FOV`. */
@@ -76,7 +76,7 @@ export function checkPath(
   groundAt: (x: number, z: number) => number,
 ): string[] {
   const keys = path.keys;
-  if (keys.length < 2) return ['the path needs at least two keys'];
+  if (keys.length < 2) return ["the path needs at least two keys"];
   for (let i = 1; i < keys.length; i++) {
     if (!(keys[i]!.t > keys[i - 1]!.t)) {
       return [`keys must be in strictly increasing order of t: key ${i} (t=${keys[i]!.t}) does not follow key ${i - 1} (t=${keys[i - 1]!.t})`];

@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { COMFORT, checkPath, samplePath, type CameraPath } from '../../../src/game/film/cameraPath';
-import { GAME_FOV } from '../../../src/game/gameLens';
+import { describe, expect, it } from "vitest";
+import { COMFORT, checkPath, samplePath, type CameraPath } from "../../../src/game/film/cameraPath.js";
+import { GAME_FOV } from "../../../src/game/gameLens.js";
 
 const path: CameraPath = {
   keys: [
