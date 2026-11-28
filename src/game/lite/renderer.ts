@@ -1310,6 +1310,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
       // The ground clutter, which lands as its models do. The tiers that draw the blade field draw it over the
       // meadow's near cards and cut the grass class's cards to the view; low draws the cards alone, whole.
       clutter = createClutterMeshes(engine, scene, forest.seed, {
+        tier,
         radiusScale: clutterReachFor(tier),
         nearBlades: tier !== "low",
         cull: tier !== "low",
@@ -1361,6 +1362,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     const wildlife = !hasWildlife || forest === null || cloudMap === null || disposed
       ? null
       : createLiteWildlifeMeshes(engine, scene, forest.seed, {
+        tier,
         radiusScale: tier === "low" ? 0.6 : undefined, firstBuilds: options.firstBuilds, jobs, air, shared, clock: skinClock,
         planes: () => planes, uploads,
       });

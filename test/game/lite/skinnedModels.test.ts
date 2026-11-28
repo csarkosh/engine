@@ -21,3 +21,14 @@ describe("a skinned model's clip table", () => {
     expect(src).toContain("clipLayout?: VatLayout;");
   });
 });
+
+describe("a skinned model's textures", () => {
+  it("are loaded with the options the game gives and no others, and each held is held and let go once", () => {
+    expect(src).toContain("textures?: LoadGltfOptions;");
+    expect(src).toContain("await loadGltf(engine, file, options.textures);");
+    expect(src).toContain("if (held.has(texture)) continue;");
+    expect(src).toContain("for (const texture of held) releaseTexture(texture);");
+    expect(src.split("acquireTexture(").length).toBe(2);
+    expect(src.split("releaseTexture(").length).toBe(2);
+  });
+});

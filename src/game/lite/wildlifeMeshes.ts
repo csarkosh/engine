@@ -52,6 +52,8 @@ import {
 import type { WeatherParams } from "../weather.js";
 import { DRAW_ORDER, createDrawOrders } from "./drawOrder.js";
 import { loadModel } from "./forestModels.js";
+import { modelTextureOptions } from "./modelLoadOptions.js";
+import type { QualityTier } from "../quality.js";
 import { oneSidedLightPlugin } from "./forestPlugins.js";
 import type { FrameUploads } from "./frameUploads.js";
 import { MATRIX_BYTES } from "./listMeshes.js";
@@ -79,6 +81,8 @@ export type LiteWildlifeMeshes = {
 };
 
 export type LiteWildlifeOptions = {
+  /** The quality tier: the size its models' textures are held at (`modelTextureOptions`). */
+  tier: QualityTier;
   /** The species' discs scaled, as the tier asks. */
   radiusScale?: number;
   firstBuilds?: FirstBuilds;
@@ -145,6 +149,7 @@ export function createLiteWildlifeMeshes(engine: EngineContext, scene: SceneCont
         return true;
       },
       uploads: options.uploads,
+      textures: modelTextureOptions(options.tier),
     }).then(
       (model) => {
         waiting--;
@@ -221,7 +226,7 @@ export function createLiteWildlifeMeshes(engine: EngineContext, scene: SceneCont
       if (output === null) continue;
       waiting++;
       try {
-        const model = await loadModel(engine, modelUrl(output), [BIRD_LOD], loads.signal);
+        const model = await loadModel(engine, modelUrl(output), [BIRD_LOD], loads.signal, modelTextureOptions(options.tier));
         waiting--;
         if (disposed) return;
         const parts = model.get(BIRD_LOD) ?? [];

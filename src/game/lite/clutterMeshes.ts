@@ -67,6 +67,8 @@ import type { Slices, SyncJobs } from "../syncJobs.js";
 import { WET_PLANT_COUNT, wetPlantGeometry } from "../wetPlantClump.js";
 import type { WetUniforms } from "../wetSurface.js";
 import { loadModel, type LoadedModel, type ModelPart } from "./forestModels.js";
+import { modelTextureOptions } from "./modelLoadOptions.js";
+import type { QualityTier } from "../quality.js";
 import {
   baseColourPlugin, oneSidedLightPlugin, surfaceWetPlugin, vegetationInstanceLayout, vegetationPlugin, type Vegetation,
 } from "./forestPlugins.js";
@@ -94,6 +96,8 @@ export type ClutterMeshes = {
 };
 
 export type ClutterMeshOptions = {
+  /** The quality tier: the size its models' textures are held at (`modelTextureOptions`). */
+  tier: QualityTier;
   /** Scales every class radius together: the quality tier's knob. */
   radiusScale: number;
   /** The blade field draws over the meadow's near cards on this tier. */
@@ -172,7 +176,7 @@ export function createClutterMeshes(engine: EngineContext, scene: SceneContext, 
     let pending = models.get(key);
     if (pending === undefined) {
       waiting++;
-      pending = loadModel(engine, modelUrl(`models/${id}.glb`), lods, loads.signal).finally(() => {
+      pending = loadModel(engine, modelUrl(`models/${id}.glb`), lods, loads.signal, modelTextureOptions(options.tier)).finally(() => {
         waiting--;
       });
       models.set(key, pending);

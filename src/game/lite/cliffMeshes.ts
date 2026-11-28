@@ -30,6 +30,7 @@ import type { InstanceList } from "../instanceLists.js";
 import type { QualityTier } from "../quality.js";
 import type { WetUniforms } from "../wetSurface.js";
 import { loadModel, type ModelPart } from "./forestModels.js";
+import { modelTextureOptions } from "./modelLoadOptions.js";
 import { baseColourPlugin, surfaceWetPlugin, vegetationInstanceLayout, vegetationPlugin, type Vegetation } from "./forestPlugins.js";
 import { DRAW_ORDER, createDrawOrders } from "./drawOrder.js";
 import type { FrameUploads } from "./frameUploads.js";
@@ -135,7 +136,7 @@ export function createCliffMeshes(engine: EngineContext, scene: SceneContext, se
     if ((options.density ?? CLIFF_DENSITY) === 0) return;
     waiting = CLIFF_MODELS.length;
     const settled = await Promise.allSettled(CLIFF_MODELS.map((output) =>
-      loadModel(engine, modelUrl(output), CLIFF_LOD_NODES, loads.signal).finally(() => {
+      loadModel(engine, modelUrl(output), CLIFF_LOD_NODES, loads.signal, modelTextureOptions(options.quality)).finally(() => {
         waiting--;
       }),
     ));

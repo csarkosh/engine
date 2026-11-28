@@ -56,8 +56,10 @@ export type QualitySettings = {
    * (2026-10-15): the forest's and the cover's radii are their own
    * (`forestField.ts`, `clutterField.ts`), and the tier scales them there. */
   lodBias: number;
-  /** Largest mip dimension to keep. Zero means no cap. Read by nothing
-   * (2026-10-15): the bark sets pick their size by tier (`barkSize`). */
+  /** Largest side of a model's texture (texels): the loader starts a texture from the first stored level
+   * that fits, so a map stored at 1024 is held at 512 on low. Zero means no cap. Read by `modelTextureOptions`
+   * (`lite/modelLoadOptions.ts`), which every model load takes it through; the bark sets pick their size by
+   * tier on their own (`barkSize`). */
   textureMipCap: number;
 };
 

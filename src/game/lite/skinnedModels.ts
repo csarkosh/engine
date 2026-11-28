@@ -38,7 +38,7 @@ import {
   acquireTexture, addToScene, attachVat, bakeVatMany, disposeMeshGpu, getContainerMeshes, getGpuDevice, loadGltf, releaseTexture, removeFromScene, setMeshVisible,
   setThinInstanceCount, setThinInstances,
   type AssetContainer, type EngineContext, type Mesh, type PbrMaterialProps, type SceneContext, type SceneNode, type Texture2D, type VatHandle,
-  type VatLayout, type VatTableOptions,
+  type LoadGltfOptions, type VatLayout, type VatTableOptions,
 } from "@babylonjs/lite";
 import { glbEmissive } from "../glbParts.js";
 import { CLIP_FLOATS, SKIN_CLOCK_FOLD, type BakedClip } from "../skinInstances.js";
@@ -166,6 +166,11 @@ export type SkinnedModelOptions = {
    * `"rows"` (three, exact) or `"matrix"` (four). Unset is the table as it has always been.
    */
   clipLayout?: VatLayout;
+  /**
+   * How the model's maps are loaded (`modelTextureOptions`). A map shared with another model is a texture each holds and
+   * lets go of with its own model: this one holds each of its own and releases each once, as it did unshared. Unset, as it was.
+   */
+  textures?: LoadGltfOptions;
 };
 
 /** What the bake is told of the table: nothing where the layout is unset, so the bake is the one it has always been. */
@@ -196,7 +201,7 @@ async function makeSkinnedModel(
   const file = await fetchRetried(url, options.signal, (response) => response.arrayBuffer());
   fetched(file.byteLength);
   const emissive = glbEmissive(file);
-  const container: AssetContainer = await loadGltf(engine, file);
+  const container: AssetContainer = await loadGltf(engine, file, options.textures);
   const meshes = getContainerMeshes(container);
   const groups = container.animationGroups ?? [];
   // The clips are baked, not played: the scene's own mixer never hears of them.

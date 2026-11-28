@@ -107,6 +107,7 @@ import type { QualityTier } from "../quality.js";
 import { finish, nextCrossing, type Slices, type SyncJobs } from "../syncJobs.js";
 import type { WetUniforms } from "../wetSurface.js";
 import { loadKtx2Map, loadModel, type LoadedModel, type ModelPart } from "./forestModels.js";
+import { modelTextureOptions } from "./modelLoadOptions.js";
 import {
   baseColourPlugin, directOcclusionPlugin, impostorBakePlugin, oneSidedLightPlugin, surfaceSplitPlugin, surfaceWetPlugin, vegetationInstanceLayout,
   vegetationPlugin,
@@ -904,7 +905,7 @@ export function createForestMeshes(engine: EngineContext, scene: SceneContext, s
   async function load(): Promise<void> {
     const one = async (output: string, lods: readonly string[]): Promise<LoadedModel> => {
       try {
-        return await loadModel(engine, modelUrl(output), lods, loads.signal);
+        return await loadModel(engine, modelUrl(output), lods, loads.signal, modelTextureOptions(options.tier));
       } finally {
         waiting--;
       }

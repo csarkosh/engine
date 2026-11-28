@@ -16,7 +16,7 @@
  */
 import {
   disposeMeshGpu, enableKtx2WorkerDecoding, getContainerMeshes, getMeshGeometry, loadGltf, loadKtx2Texture2D, setKtx2DecoderUrl,
-  type EngineContext, type Mesh, type PbrMaterialProps, type SceneNode, type Texture2D,
+  type EngineContext, type LoadGltfOptions, type Mesh, type PbrMaterialProps, type SceneNode, type Texture2D,
 } from "@babylonjs/lite";
 import { glbParts, type GlbPart } from "../glbParts.js";
 import { bakeGeometry, boundsOf, chainMatrix, type PlacedNode } from "../modelBake.js";
@@ -77,10 +77,12 @@ function meshesUnder(node: SceneNode, above: readonly SceneNode[], meshes: Reado
  * The model at `url`, the LODs under its nodes named `lods`. A node the file
  * does not name is a LOD of no parts. It throws where the file cannot be
  * fetched (after `fetchRetried`'s tries) or read, or where the loader's meshes are not the file's
- * primitives vertex for vertex.
+ * primitives vertex for vertex. `textures` is how its maps are loaded
+ * (`modelTextureOptions`): capped for the tier, and shared with every other
+ * model that carries the same image.
  */
-export async function loadModel(engine: EngineContext, url: string, lods: readonly string[], signal: AbortSignal): Promise<LoadedModel> {
-  return (await loadModelFile(engine, url, lods, signal)).model;
+export async function loadModel(engine: EngineContext, url: string, lods: readonly string[], signal: AbortSignal, textures?: LoadGltfOptions): Promise<LoadedModel> {
+  return (await loadModelFile(engine, url, lods, signal, textures)).model;
 }
 
 /**
@@ -89,19 +91,21 @@ export async function loadModel(engine: EngineContext, url: string, lods: readon
  * it starts, as its bytes are in and as the model is made or fails
  * (`modelLoadTold`).
  */
-export function loadModelFile(engine: EngineContext, url: string, lods: readonly string[], signal: AbortSignal): Promise<{ model: LoadedModel; file: ArrayBuffer }> {
-  return modelLoadTold(url, signal, (fetched) => readModelFile(engine, url, lods, signal, fetched));
+export function loadModelFile(
+  engine: EngineContext, url: string, lods: readonly string[], signal: AbortSignal, textures?: LoadGltfOptions,
+): Promise<{ model: LoadedModel; file: ArrayBuffer }> {
+  return modelLoadTold(url, signal, (fetched) => readModelFile(engine, url, lods, signal, fetched, textures));
 }
 
 async function readModelFile(
-  engine: EngineContext, url: string, lods: readonly string[], signal: AbortSignal, fetched: (bytes: number) => void,
+  engine: EngineContext, url: string, lods: readonly string[], signal: AbortSignal, fetched: (bytes: number) => void, textures: LoadGltfOptions | undefined,
 ): Promise<{ model: LoadedModel; file: ArrayBuffer }> {
   // The copy asked for at the session's start, where the game named this file among its first (`filesAhead.ts`).
   const file = await fetchedOrAhead(url, signal, (response) => response.arrayBuffer());
   fetched(file.byteLength);
   // A model's textures are KTX2 (`KHR_texture_basisu`): Lite reads them with the decoder, which must know where its files are.
   pointKtx2Decoder();
-  const container = await loadGltf(engine, file);
+  const container = await loadGltf(engine, file, textures);
   const all = getContainerMeshes(container);
   const meshes = new Set<SceneNode>(all);
   const model = new Map<string, ModelPart[]>();
