@@ -20,6 +20,7 @@ import type { GpuTimeReport } from "./gpuTimeReport.js";
 import type { PaintPaletteName } from "./gradeParams.js";
 import type { ImpostorBake } from "./impostorBake.js";
 import type { PatchWork } from "./patchWork.js";
+import type { RingWork } from "./ringWork.js";
 import type { PreparedScene } from "./preparedScene.js";
 import type { QualityTier } from "./quality.js";
 import type { SkyTable } from "./skyTable.js";
@@ -277,6 +278,11 @@ export type RendererOptions = {
    * and ended by the session, never by a renderer. Absent or null, they are built on the page's thread. In the
    * measurement mode its record is read out as `window.__patchWork()`. */
   patchWork?: PatchWork | null;
+  /** The session's client of the world's worker for the terrain rings (`ringWork.ts`): given it, the rings are
+   * built by it (`TerrainMeshOptions.ringWork`). The session's, handed and ended as `patchWork` is. Absent or
+   * null, they are built on the page's thread. In the measurement mode its record is read out as
+   * `window.__ringWork()`. */
+  ringWork?: RingWork | null;
   /** The loader of first builds, for a start whose intro's film covers the
    * hike (`firstBuilds.ts`): the forest, the ground cover, the blades, the
    * duff and the props hand it the builds that cannot wait, and it steps

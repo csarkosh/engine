@@ -25,6 +25,7 @@ import { worldInputs } from "./game/worldInputs.js";
 import { sceneLine, startWorldPrep, worldPrepLine, type WorldPrep, type WorldPrepOutcome } from "./game/worldPrep.js";
 import { createWorldAhead, type WorldMadeFrom } from "./game/worldAhead.js";
 import { createPatchWork, type PatchWork } from "./game/patchWork.js";
+import { createRingWork, type RingWork } from "./game/ringWork.js";
 import { createWorldLink, type WorldLink } from "./game/worldLink.js";
 import { loadNet, timedProgress, type TimedProgress } from "./game/loadTimes.js";
 import { ENGINE_WORKER_SCRIPTS } from "./game/engineWorkerScripts.js";
@@ -1132,8 +1133,8 @@ export function startShell<
       return scene;
     };
     /** The session's link to the world's worker (`worldLink.ts`), from the build until `launch` has returned: a start
-     * that throws in between ends the worker here; after, the session's client of the link (for its rock faces,
-     * `patchWork.ts`) releases its hold on dispose, which ends it. */
+     * that throws in between ends the worker here; after, the session's two clients of the link (for its rock
+     * faces and its rings, `patchWork.ts`, `ringWork.ts`) release their holds on dispose, which ends it. */
     let unlaunched: WorldLink | null = null;
     // Each probe step is measured on the session's own renderer, which makes its
     // engine from the step's own canvas and lets both go with the step
@@ -1224,14 +1225,15 @@ export function startShell<
         lap("engine");
         telemetry.mark("start:build");
         building = true;
-        // The worker stays for the session's rock faces: the one that made the scene the build is about to take,
+        // The worker stays for the session's rock faces and rings: the one that made the scene the build is about to take,
         // else the session's own. None to be had (it failed, ran out of time, or was never started) is no client,
-        // and the rock faces are built on this thread.
+        // and the rock faces and rings are built on this thread.
         const worker = (again !== null && sampled !== null ? again.handOver() : null) ?? prep.handOver();
         const link = worker === null ? null : createWorldLink(worker);
         const patchWork = link === null ? null : createPatchWork(link, madeFrom);
+        const ringWork = link === null ? null : createRingWork(link, madeFrom);
         unlaunched = link;
-        launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled, patchWork);
+        launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled, patchWork, ringWork);
         unlaunched = null;
         lap("build");
         // The build has what it wanted of the workers: one not handed over ends, and the scene is let go of.
@@ -1277,8 +1279,8 @@ export function startShell<
    * or a rebuild later builds on. `takeSampled` gives up the session's first
    * scene from the world's worker, once: the first renderer made takes its
    * arrays, and one made after it samples the ground for itself. `patchWork`
-   * is the session's client of that worker for its rock faces, or null: the
-   * session's every renderer is handed it, and the session ends it.
+   * is the session's client of that worker for its rock faces, and `ringWork` its client for its rings, each or
+   * null: the session's every renderer is handed them, and the session ends them.
    */
   function launch(
     onCanvas: EngineOnCanvas,
@@ -1288,6 +1290,7 @@ export function startShell<
     opening: Opening | null,
     takeSampled: () => PreparedScene | null,
     patchWork: PatchWork | null,
+    ringWork: RingWork | null,
   ): void {
     const handle = startGame(onCanvas.canvas, worldToken, {
       lobby,
@@ -1304,6 +1307,7 @@ export function startShell<
       deferClipmap: opening !== null,
       takePrepared: takeSampled,
       patchWork,
+      ringWork,
       engineFor: engineForGame,
       engineFailed,
       losses,

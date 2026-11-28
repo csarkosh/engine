@@ -477,6 +477,7 @@ import { createForestMeshes, type ForestMeshes } from "./forestMeshes.js";
 import { FADE_ROWS_NAME, FRAME_BLOCK, FRAME_FIELDS, FRAME_PROJECTION_NAME, movedWords, writeFrameBlock, type FrameValues, type StageRecord } from "./frameBlock.js";
 import { createFrameUploads, uploadCountsCopy, type FrameUploadCounts } from "./frameUploads.js";
 import type { PatchWorkRecord } from "../patchWork.js";
+import type { RingWorkRecord } from "../ringWork.js";
 import { createLiteGpuTime } from "./gpuTimeReadout.js";
 import { GROUND_IMAGES, cloudMapTexture, loadGroundArrays, tableTexture, type CloudMapTexture, type TableTexture } from "./groundTextures.js";
 import { createLiteLakes, type LakeFrame, type LiteLakes } from "./lakeMeshes.js";
@@ -832,10 +833,10 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
   // each time: the record is written in place every frame.
   // `__syncJobsReset()` forgets the longest slices recorded, so a reading's are those since the call.
   // `__patchWork()` beside them: the counts of the rock faces asked of the world's worker (`PatchWork.record`), or
-  // null where the session has no client of it.
+  // null where the session has no client of it. `__ringWork()` likewise for the rings (`RingWork.record`).
   const measured = globalThis as {
     __syncJobs?: () => SyncJobsLast; __syncJobsReset?: () => void; __frameUploads?: () => FrameUploadCounts;
-    __patchWork?: () => PatchWorkRecord | null;
+    __patchWork?: () => PatchWorkRecord | null; __ringWork?: () => RingWorkRecord | null;
   };
   if (options.gpuTime === true) {
     // The read-out of what is built at once and how each crossing was judged is on with it (`SyncJobs.watch`).
@@ -843,6 +844,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     measured.__syncJobs = () => syncJobsRecord(jobs.last);
     measured.__syncJobsReset = () => jobs.resetLongest();
     measured.__patchWork = () => options.patchWork?.record() ?? null;
+    measured.__ringWork = () => options.ringWork?.record() ?? null;
   }
   // What each frame hands to the GPU, and the budget its streamed part is held to (`frameUploads.ts`); the last
   // frame's record is read out beside the jobs', a copy each time too.
@@ -1248,6 +1250,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
           firstBuilds: options.firstBuilds,
           uploads,
           patchWork: options.patchWork,
+          ringWork: options.ringWork,
           cover: coverAs("terrain"),
           reflections: mirror?.ground ?? panorama?.ground,
         },
@@ -1480,6 +1483,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
         if (measured.__syncJobs !== undefined) delete measured.__syncJobs;
         if (measured.__syncJobsReset !== undefined) delete measured.__syncJobsReset;
         if (measured.__patchWork !== undefined) delete measured.__patchWork;
+        if (measured.__ringWork !== undefined) delete measured.__ringWork;
         if (measured.__frameUploads !== undefined) delete measured.__frameUploads;
       }
     },

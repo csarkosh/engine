@@ -37,6 +37,7 @@ import { isTouchDevice } from "./game/platform.js";
 import { isMobile } from "./game/gpuSignals.js";
 import type { PreparedScene } from "./game/preparedScene.js";
 import type { PatchWork } from "./game/patchWork.js";
+import type { RingWork } from "./game/ringWork.js";
 import { afterNextPaint } from "./game/paint.js";
 import type { QualityTier } from "./game/quality.js";
 import { settingsModel, type AutoSummary } from "./game/settings.js";
@@ -137,6 +138,10 @@ export type GameOptions = {
    * disposes the old renderer before it builds the new), and the session's dispose ends it; a renderer never does.
    * Absent or null, the rock faces are built on the page's thread, as always. */
   patchWork?: PatchWork | null;
+  /** The session's client of the same worker for the terrain rings (`ringWork.ts`), handed and ended the same way:
+   * every renderer the session makes is handed it, and only the session's dispose ends it. Absent or null, the
+   * rings are built on the page's thread, as always. */
+  ringWork?: RingWork | null;
   /** A fresh canvas for a renderer at `tier` (`shell.ts`'s `sessionCanvasNow`):
    * what a switch of tier, and a rebuild after a failure, builds on. It
    * carries no engine: the renderer makes its own from it. It throws where
@@ -393,7 +398,7 @@ function buildGame<
     [options.tier, ...options.fallbackTiers],
     {
       build: (next, at) =>
-        game.renderer(next, level, forest, { tier: at, look, deferClipmap: options.deferClipmap, start, prepared: options.takePrepared?.() ?? null, patchWork: options.patchWork, firstBuilds, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator) }),
+        game.renderer(next, level, forest, { tier: at, look, deferClipmap: options.deferClipmap, start, prepared: options.takePrepared?.() ?? null, patchWork: options.patchWork, ringWork: options.ringWork, firstBuilds, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator) }),
       freshCanvas: () => document.createElement("canvas"),
       ...engineBindings,
     },
@@ -1581,7 +1586,7 @@ function buildGame<
     // The renderer makes its own engine from the canvas it is built on: the
     // one made for the switch (`options.engineFor`), which `freshCanvas`
     // hands out first.
-    build: (next, target) => game.renderer(next, level, forest, { tier: target, look, patchWork: options.patchWork, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator) }),
+    build: (next, target) => game.renderer(next, level, forest, { tier: target, look, patchWork: options.patchWork, ringWork: options.ringWork, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator) }),
     freshCanvas: () => document.createElement("canvas"),
     extras: { dispose: side.disposeExtras, build: side.buildExtras },
     rebind: (next) => {
@@ -1927,6 +1932,7 @@ function buildGame<
       }
       // The world's worker goes with the session, after the renderer that asked it for rock faces.
       options.patchWork?.dispose();
+      options.ringWork?.dispose();
       skySource.dispose();
       wildlifeAudio?.dispose();
       waterLifeAudio?.dispose();

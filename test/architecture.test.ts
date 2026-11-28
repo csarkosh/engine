@@ -173,7 +173,7 @@ describe("layer boundaries", () => {
     expect([...main.matchAll(/\bstartSession</g)].length).toBe(1);
     // A hike's canvas carries no engine: its renderer makes its own from it, at the start and for every switch after.
     expect(main).toContain("      engine: () => sessionCanvas(),");
-    expect(main).toContain("launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled, patchWork);");
+    expect(main).toContain("launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled, patchWork, ringWork);");
     // The scene route is drawn by the same renderer, on a canvas of the same kind: the one other caller.
     expect(main).toContain("      void sessionCanvas().then(");
     expect(main).toContain("page.scene({ canvas, container, tier }, parseSceneSearch(location.search), route.name);");
@@ -1091,16 +1091,24 @@ describe("layer boundaries", () => {
     const dispose = app.slice(app.lastIndexOf("    dispose() {\n      disposed = true;"));
     expect(dispose).toMatch(/unwatchCompiles\?\.\(\);\s+renderer\.dispose\(\);\s+\}/);
     // The world's worker goes with the session, after the renderer that asked it: its one end once the session runs.
-    expect(dispose).toMatch(/renderer\.dispose\(\);\s+\}\s+options\.patchWork\?\.dispose\(\);\n/);
+    expect(dispose).toMatch(/renderer\.dispose\(\);\s+\}\s+options\.patchWork\?\.dispose\(\);\s+options\.ringWork\?\.dispose\(\);\n/);
     // The page makes a canvas and nothing more, and the swap holds it as that.
     // A switch is handed its canvas at once, and one the page refuses is a throw; a start's chain takes the same canvas as a promise.
     const main = code("shell.ts");
     expect(main).toContain('  function sessionCanvasNow(): EngineOnCanvas {\n    if (verdict !== null && !verdict.play) throw new Error(`this browser cannot draw a ${page.identity.session} (${verdict.reason})`);\n    return { canvas: document.createElement("canvas") };\n  }');
     expect(main).toContain("    return new Promise((resolve) => resolve(sessionCanvasNow()));");
-    expect(main).toContain("        launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled, patchWork);");
+    expect(main).toContain("        launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled, patchWork, ringWork);");
     // The session's worker is the one that made the scene the build takes, else the prep's; a start that fails before
     // the session holds it ends it.
-    expect(main).toContain("        const worker = (again !== null && sampled !== null ? again.handOver() : null) ?? prep.handOver();\n        const link = worker === null ? null : createWorldLink(worker);\n        const patchWork = link === null ? null : createPatchWork(link, madeFrom);\n        unlaunched = link;\n");
+    expect(main).toContain("        const worker = (again !== null && sampled !== null ? again.handOver() : null) ?? prep.handOver();\n        const link = worker === null ? null : createWorldLink(worker);\n        const patchWork = link === null ? null : createPatchWork(link, madeFrom);\n        const ringWork = link === null ? null : createRingWork(link, madeFrom);\n        unlaunched = link;\n");
+    expect(app).toContain("  ringWork?: RingWork | null;");
+    expect(app).toContain("patchWork: options.patchWork, ringWork: options.ringWork,");
+    expect(main).toContain("    ringWork: RingWork | null,\n  ): void {");
+    expect(main).toContain("      patchWork,\n      ringWork,\n");
+    expect(code("game/rendererTypes.ts")).toContain("  ringWork?: RingWork | null;");
+    expect(code("game/lite/renderer.ts")).toContain("    measured.__ringWork = () => options.ringWork?.record() ?? null;");
+    expect(code("game/lite/renderer.ts")).toContain("        if (measured.__ringWork !== undefined) delete measured.__ringWork;");
+    expect(code("game/lite/renderer.ts")).toContain("          ringWork: options.ringWork,\n");
     expect(main).toContain("        endPrep();\n        unlaunched?.dispose();\n        unlaunched = null;\n");
     expect(app).toContain("  engineFor(tier: QualityTier): EngineOnCanvas;");
     const swap = code("game/rendererSwap.ts");
