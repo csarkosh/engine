@@ -33,7 +33,7 @@ A release attaches a packed tarball. A game depends on that and not on the Git r
 the shipped files are in Git LFS and a git dependency would get pointers in place of them:
 
 ```json
-"@csarkosh/engine": "https://github.com/csarkosh/engine/releases/download/v0.2.41/csarkosh-engine-0.2.41.tgz"
+"@csarkosh/engine": "https://github.com/csarkosh/engine/releases/download/v0.2.42/csarkosh-engine-0.2.42.tgz"
 ```
 
 The game imports the engine's modules by path under the package name, for example
@@ -93,7 +93,7 @@ A game's server is a package of the engine's, released as a second tarball besid
 that running a server needs none of the engine's 116 MB of game files:
 
 ```json
-"@csarkosh/engine-server": "https://github.com/csarkosh/engine/releases/download/v0.2.41/csarkosh-engine-server-0.2.41.tgz"
+"@csarkosh/engine-server": "https://github.com/csarkosh/engine/releases/download/v0.2.42/csarkosh-engine-server-0.2.42.tgz"
 ```
 
 It holds compiled JavaScript and is told which game it serves by the game's own `game.json`. A game's
@@ -124,6 +124,16 @@ Run from a checkout of this repository. It writes the empty game into the folder
 In the new folder, the first install is `npm install --legacy-peer-deps`: with no lockfile, npm 10.9.9 fails in its own peer resolution without the flag. That install writes the game's `package-lock.json`, and a plain `npm install` works after it. Then `npm run dev`.
 
 The new game also comes with a server for development and the files for its image: `game.json` (the server's settings, allowing the dev server's origin), `server.package.json` and a `Dockerfile` that install only the server's release tarball, and a `.dockerignore`; its `package.json` depends on the server's release and has `dev:server` and `dev:client` scripts. For two players on one machine, run `npm run dev:server` in one terminal and `npm run dev` in another.
+
+## Recording a film
+
+A film is a camera path through a world, recorded a frame at a time. A game describes one as a `FilmDefinition` (`src/game/film/filmMode.ts`): its `name`, the world's `token`, `fps`, the frame's `width` and `height`, its length in `seconds`, a `loop` (`{ blend }` seconds recorded past the end to blend into the start, or `null`), the `hour`, the `weather` and the camera `path`. It is drawn at the high tier.
+
+The game adds a development-only page (not part of its build) that makes the canvas and calls `startFilm(canvas, def, game, workers)`, where `game` and `workers` are what the game's own page hands the shell (`PageGame`, `PageGame.worldWorker`). It starts a host session with no lobby, sets `window.engineFilm` and resolves once the world is in. `window.engineFilm` holds the film's `def` (with `recordSeconds`), `ready`, `seek(t)`, `frame()`, `time()` and `problems`, what breaks the camera's comfort limits along the path; `body.film-ready` is set when the world is in.
+
+`tools/film/record.mjs` drives that page over the Chrome DevTools Protocol, on this Mac or through a rig's forwarded DevTools port, and writes the frames; `tools/film/encode.mjs` makes the video and a still from them. `tools/film/README.md` has the flags and what each needs (`ffmpeg`, `sharp`).
+
+A film's look is the game's `GameLook`; `GameLook.glow` (`LookGlow`: `threshold`, `strength`, `radius`, `mist`) turns on the halation chain so that lit windows throw a soft halo, at the medium tier too.
 
 ## Scripts
 
