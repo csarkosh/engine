@@ -62,3 +62,14 @@ export function stripCells(strips: Int32Array): number {
   }
   return total;
 }
+
+// Cell keys pack a class and a cell's two indices into one number; the indices stay well inside +-2^20 (a cell
+// index is a position over the cell's size, and no camera stands far enough out), same idiom as forestField's.
+export const CELL_KEY_HALF = 1 << 20;
+export const CELL_KEY_SPAN = 1 << 21;
+export const CELL_KEY_CLASS_SPAN = CELL_KEY_SPAN * CELL_KEY_SPAN;
+
+/** The numeric key of cell (cx, cz) of class `cls` in the collector's cache. */
+export function clutterCellKey(cls: number, cx: number, cz: number): number {
+  return cls * CELL_KEY_CLASS_SPAN + (cx + CELL_KEY_HALF) * CELL_KEY_SPAN + (cz + CELL_KEY_HALF);
+}

@@ -19,7 +19,9 @@ import type { FadeBands } from "./distanceFade.js";
 import {
   clutterInCell, clutterCell, CLUTTER_CLASS_COUNT, CLUTTER_GRASS_CELL, CLUTTER_MEADOW, type ClutterInstance, CLUTTER_GRASS, CLUTTER_BUSH, CLUTTER_FLOWER, CLUTTER_LITTER, CLUTTER_FERN, CLUTTER_SHRUB, CLUTTER_WETPLANT, CLUTTER_HIGHPLANT,
 } from "../sim/clutter.js";
-import { CLUTTER_STRIP_INTS, CLUTTER_WIRE_VALUES, instanceAt, type ClutterAnswer } from "./clutterWire.js";
+import {
+  CELL_KEY_CLASS_SPAN, CELL_KEY_HALF, CELL_KEY_SPAN, CLUTTER_STRIP_INTS, CLUTTER_WIRE_VALUES, clutterCellKey, instanceAt, type ClutterAnswer,
+} from "./clutterWire.js";
 import { KEPT_STRIDE } from "./instanceLists.js";
 import { finish, nextCrossing, sliceDue, type Slices } from "./syncJobs.js";
 import {
@@ -629,17 +631,9 @@ export type ClutterCollector = {
   ): Slices<boolean>;
 };
 
-// Numeric cell key, class-prefixed since fourteen grids share one cache: exact
-// for |cell index| < 2^20 per class (±12,582 km — far beyond anywhere a
-// camera can stand), same packing idiom as forestField's CELL_KEY constants.
-const CELL_KEY_HALF = 1 << 20;
-const CELL_KEY_SPAN = 1 << 21;
-const CELL_KEY_CLASS_SPAN = CELL_KEY_SPAN * CELL_KEY_SPAN;
-
-/** The numeric key of cell (cx, cz) of class `cls` in the collector's cache. */
-export function clutterCellKey(cls: number, cx: number, cz: number): number {
-  return cls * CELL_KEY_CLASS_SPAN + (cx + CELL_KEY_HALF) * CELL_KEY_SPAN + (cz + CELL_KEY_HALF);
-}
+// The numeric cell key, class-prefixed since fourteen grids share one cache, lives in `clutterWire.ts` so the page's
+// client can use it without reaching the terrain.
+export { clutterCellKey };
 
 /** Cells whose nearest point sits this far past a class's own radius are
  * evicted from the collector cache — mirrors forestField's
