@@ -336,7 +336,7 @@ describe("a shell's rebuilds on the renderer's scheduler", () => {
 
 describe("a shell's at-once builds and verdicts in the scheduler's read-out", () => {
   it("records a build made at once under the shell's name, with the first-build rule, and a job as no at-once build", () => {
-    const { jobs, frame } = scheduler();
+    const { jobs, frame, time } = scheduler();
     jobs.watch(true);
     const s = shell({ jobs, slices: 4, ms: 1 });
     s.rebuilds.update(1, 1);
@@ -345,7 +345,9 @@ describe("a shell's at-once builds and verdicts in the scheduler's read-out", ()
     expect(jobs.last.atOnceMs["stand-in"]).toBeGreaterThanOrEqual(0);
     expect(jobs.last.crossings[0]).toMatchObject({ owner: "stand-in", kind: "now", rule: "first" });
     expect(jobs.last.crossingCount).toBe(1);
-    // A crossing at a walk is a job: judged "later", and nothing built at once.
+    // A crossing at a walk is a job: judged "later", and nothing built at once. The view is brought to the line over
+    // a second, so the speed read over the window is the walk's and not the move's.
+    time.now += 1000;
     s.rebuilds.update(2.95, 1);
     frame();
     s.rebuilds.update(3.0375, 1);

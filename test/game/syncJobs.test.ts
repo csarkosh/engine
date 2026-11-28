@@ -1015,8 +1015,9 @@ describe("crossingAt", () => {
     at(c, 11.95, 10.5);
     // Walking, 5.25 m/s at 60 frames a second: 0.0875 m a frame.
     expect(at(c, 12.0375, 10.5)).toBe("later");
-    // Running along the diagonal, both lines crossed in one frame.
-    at(c, 13.95, 13.95);
+    // Running along the diagonal, both lines crossed in one frame; the view brought to them over a second, so the
+    // speed read over the window is the run's and not the move's.
+    at(c, 13.95, 13.95, true, 1000);
     expect(at(c, 14.03, 14.03)).toBe("later");
   });
 
@@ -1033,12 +1034,13 @@ describe("crossingAt", () => {
     at(c, 515.9, 10.5);
     expect(at(c, 516.0, 10.5, false)).toBe("now");
     // A cell of 10 m: the boost's 2.4 m a frame is under half a cell, and
-    // still more than a metre.
+    // still over 60 m/s.
     const wide = createCrossing();
-    const on10 = (x: number) => crossingAt(wide, x, 0, Math.floor(x / 10) * 10, 0, 10, true, (clock += 1000 / 60));
+    const on10 = (x: number, frameMs = 1000 / 60) => crossingAt(wide, x, 0, Math.floor(x / 10) * 10, 0, 10, true, (clock += frameMs));
     on10(18.5);
     expect(on10(20.9)).toBe("now");
-    on10(29.95);
+    // A second on, at 9 m/s: a walk's step across a line of the wide grid is a job.
+    on10(29.95, 1000);
     expect(on10(30.04)).toBe("later");
   });
 
@@ -1049,12 +1051,13 @@ describe("crossingAt", () => {
     // that step is the free camera's (below); over 200 ms it is 0.117 m a frame, a run.
     expect(at(c, 11.9, 10.5, true, 200)).toBe("none");
     expect(at(c, 13.3, 10.5, true, 200)).toBe("later");
-    // The same 1.4 m in one frame of 60 a second: at once.
+    // The same 1.4 m in one frame of 60 a second, after the sprint: one frame's step is not the view's speed, which
+    // over the window is about 15 m/s. A job.
     at(c, 13.9, 10.5);
-    expect(at(c, 15.3, 10.5)).toBe("now");
-    // The free camera's boost in a frame shorter than one of 60 a second is still a burst: 1.8 m in 12.5 ms.
+    expect(at(c, 15.3, 10.5)).toBe("later");
+    // Nor is 1.8 m in a frame of 12.5 ms: about 21 m/s over the window.
     at(c, 15.5, 10.5);
-    expect(at(c, 17.3, 10.5, true, 12.5)).toBe("now");
+    expect(at(c, 17.3, 10.5, true, 12.5)).toBe("later");
     // Several lines crossed over one slow frame is travel (13.2 m in 5 s), and a job like any other step.
     expect(at(c, 30.5, 10.5, true, 5000)).toBe("later");
     // A step no travel makes is a teleport, however long the frame.
@@ -1105,6 +1108,158 @@ describe("crossingAt", () => {
     expect(Number.isNaN(c.lastAt)).toBe(true);
     expect(at(c, 10.5, 10.5, true, 5000)).toBe("now");
     expect(c.lastAt).toBe(clock);
+  });
+
+  it("with no clock, judges a step as it is, against half a cell or a metre", () => {
+    const on = (c: ReturnType<typeof createCrossing>, x: number, cell: number) => crossingAt(c, x, 0, Math.floor(x / cell) * cell, 0, cell, true);
+    const narrow = createCrossing();
+    on(narrow, 0.7, 1);
+    // Over half of a 1 m cell: at once; under it: a job.
+    expect(on(narrow, 1.3, 1)).toBe("now");
+    expect(on(narrow, 1.7, 1)).toBe("none");
+    expect(on(narrow, 2.1, 1)).toBe("later");
+    const wide = createCrossing();
+    on(wide, 15.5, 16);
+    // Over a metre on a 16 m cell: at once; under it: a job.
+    expect(on(wide, 16.55, 16)).toBe("now");
+    on(wide, 31.5, 16);
+    expect(on(wide, 32.4, 16)).toBe("later");
+    expect(Number.isNaN(wide.lastAt)).toBe(true);
+  });
+
+  /** A view's verdict as `drive` hands it: the verdict, the rule the read-out recorded (none for "none"), the clock (ms) and where it was. */
+  type Judged = { kind: string; rule: string | undefined; speed: number | undefined; t: number; x: number };
+
+  /**
+   * One shell's record on a grid of `cell` metres, driven from `x0` at the clock's 1000 ms through `views`, each
+   * [ms since the last view, metres on along x]. Each verdict comes with the rule and speed the read-out recorded.
+   */
+  function drive(cell: number, x0: number, views: readonly (readonly [number, number])[]): Judged[] {
+    const c = createCrossing();
+    let rule: string | undefined;
+    let speed: number | undefined;
+    const record = {
+      watching: true,
+      judged(_name: string, _kind: string, r: string, _step: number, _moved: number, _elapsedMs: number, s: number) {
+        rule = r;
+        speed = s;
+      },
+    } as unknown as SyncJobs;
+    let t = 1000;
+    let x = x0;
+    const out: Judged[] = [];
+    const view = () => {
+      rule = undefined;
+      speed = undefined;
+      const kind = crossingAt(c, x, 0, Math.floor(x / cell) * cell, 0, cell, true, t, record, "test");
+      out.push({ kind, rule, speed, t, x });
+    };
+    view();
+    for (const [ms, dx] of views) {
+      t += ms;
+      x += dx;
+      view();
+    }
+    return out;
+  }
+  /** `seconds` of views at 60 a second, at `mps`. */
+  const steady = (seconds: number, mps: number): [number, number][] =>
+    Array.from({ length: Math.round(seconds * 60) }, () => [1000 / 60, mps / 60] as [number, number]);
+  /** The crossings among `judged` after the first view. */
+  const crossings = (judged: Judged[]) => judged.slice(1).filter((j) => j.kind !== "none");
+
+  it("a steady 30 m/s on a 1 m cell is never fast, however its ticks fall", () => {
+    // The simulation moves the view a tick of 0.5 m each sixtieth of the clock; a view sees the ticks run before it.
+    for (const fps of [30, 60, 67, 120, 144]) {
+      const views: [number, number][] = [];
+      let ticks = 0;
+      for (let i = 1; i <= 20 * fps; i++) {
+        const now = Math.floor((i * 60) / fps + 1e-9);
+        views.push([1000 / fps, (now - ticks) * 0.5]);
+        ticks = now;
+      }
+      const judged = crossings(drive(1, 0.25, views));
+      expect(judged.length, `${fps} a second`).toBeGreaterThan(500);
+      expect(judged.filter((j) => j.kind === "now"), `${fps} a second`).toEqual([]);
+    }
+  });
+
+  it("the loop's catch-up after a long frame is not fast", () => {
+    // 30 m/s at sixty views a second; then a view 500 ms after the last, carrying the most ticks the loop makes up in
+    // one frame (`game/loop.ts`, MAX_TICKS_PER_FRAME: 15 ticks of 0.5 m); then steady again.
+    for (const cell of [1, 2, 16]) {
+      const judged = crossings(drive(cell, 0.25, [...steady(1, 30), [500, 15 * 0.5], ...steady(2, 30)]));
+      expect(judged.length, `cell ${cell}`).toBeGreaterThan(3);
+      expect(judged.filter((j) => j.kind === "now"), `cell ${cell}`).toEqual([]);
+    }
+  });
+
+  it("ticks bunched by an uneven view time are not fast", () => {
+    // A steady 30 m/s; the view's time is read at another point of a frame, so a view 40 ms after the last carries one
+    // tick and the next, 10 ms after it, three, across a line of every grid here (30.75 m to 32.25 m); then steady.
+    for (const cell of [1, 2, 16]) {
+      const judged = drive(cell, 0.25, [...steady(1, 30), [40, 0.5], [10, 1.5], ...steady(2, 30)]);
+      const bunched = judged[62];
+      expect(bunched?.x, `cell ${cell}`).toBe(32.25);
+      expect(bunched?.kind, `cell ${cell}`).toBe("later");
+      expect(crossings(judged).filter((j) => j.kind === "now"), `cell ${cell}`).toEqual([]);
+    }
+  });
+
+  it("a real 144 m/s is fast within a quarter of a second", () => {
+    for (const cell of [1, 2, 16]) {
+      // From rest: half a second of views that do not move, then 2.4 m a sixtieth.
+      const judged = drive(cell, 0.5, [...steady(0.5, 0), ...steady(1, 144)]);
+      const start = 1000 + 500;
+      // The first view is the first build, not "fast": no sixtieth of travel is in the window before it.
+      expect(judged[0]).toMatchObject({ kind: "now", rule: "first" });
+      expect(judged.slice(1).filter((j) => j.rule === "fast" && j.t <= start)).toEqual([]);
+      const late = crossings(judged).filter((j) => j.t - start >= 250 - 1e-6);
+      expect(late.length, `cell ${cell}`).toBeGreaterThan(5);
+      expect(late.filter((j) => j.rule !== "fast"), `cell ${cell}`).toEqual([]);
+    }
+  });
+
+  it("a view that really covers 90 m/s for a quarter of a second is fast", () => {
+    for (const cell of [1, 2]) {
+      const judged = drive(cell, 0.25, [...steady(1, 30), ...steady(0.3, 90)]);
+      const start = 1000 + 1000;
+      const late = crossings(judged).filter((j) => j.t - start >= 250 - 1e-6);
+      expect(late.length, `cell ${cell}`).toBeGreaterThan(0);
+      expect(late.filter((j) => j.kind !== "now"), `cell ${cell}`).toEqual([]);
+    }
+  });
+
+  it("a jump is a jump once", () => {
+    // 10 m/s, a step of 500 m in one frame, then 10 m/s.
+    const judged = drive(2, 0.5, [...steady(1, 10), [1000 / 60, 500], ...steady(1, 10)]);
+    const now = judged.slice(1).filter((j) => j.kind === "now");
+    expect(now).toHaveLength(1);
+    expect(now[0]).toMatchObject({ rule: "jump", t: judged[61]?.t });
+    const after = crossings(judged.slice(61));
+    expect(after.length).toBeGreaterThan(3);
+    expect(after.filter((j) => j.kind !== "later")).toEqual([]);
+    // And the window begins again from it: from 144 m/s, a jump, then 10 m/s, the frames after it are judged by the
+    // travel after it.
+    const fromFast = drive(1, 0.5, [...steady(1, 144), [1000 / 60, 500], ...steady(0.5, 10)]);
+    expect(fromFast[61]).toMatchObject({ kind: "now", rule: "jump" });
+    const afterFast = crossings(fromFast.slice(61));
+    expect(afterFast.length).toBeGreaterThan(3);
+    expect(afterFast.filter((j) => j.kind !== "later")).toEqual([]);
+  });
+
+  it("a pause does not count as travel time", () => {
+    // 144 m/s for a second, no view for 5 s, then 30 m/s: the window keeps none of the speed before the pause.
+    const slow = drive(1, 0.25, [...steady(1, 144), [5000, 0.5], ...steady(1, 30)]);
+    const afterSlow = crossings(slow.slice(60));
+    expect(afterSlow.length).toBeGreaterThan(5);
+    expect(afterSlow.filter((j) => j.kind === "now")).toEqual([]);
+    // And a view that resumes at 144 m/s is fast within a quarter of a second of it.
+    const quick = drive(2, 0.25, [...steady(1, 144), [5000, 2.4], ...steady(1, 144)]);
+    const resumed = quick[61]?.t ?? Number.NaN;
+    const late = crossings(quick.slice(61)).filter((j) => j.t - resumed >= 250 - 1e-6);
+    expect(late.length).toBeGreaterThan(5);
+    expect(late.filter((j) => j.rule !== "fast")).toEqual([]);
   });
 });
 
@@ -1577,6 +1732,27 @@ describe("the read-out of what is built at once and how crossings were judged", 
     expect(judged?.elapsedMs).toBeCloseTo(120, 9);
   });
 
+  it("the read-out says the speed", () => {
+    const { jobs } = watched();
+    const c = createCrossing();
+    let t = 1000;
+    let x = 0.25;
+    // A steady 30 m/s on a 1 m cell, a tick of 0.5 m each sixtieth: a crossing every other view.
+    for (let i = 0; i < 120; i++) {
+      crossingAt(c, x, 0, Math.floor(x), 0, 1, true, t, jobs, "blades");
+      t += 1000 / 60;
+      x += 0.5;
+    }
+    jobs.run();
+    // The crossings of the last second, once the window has a quarter of a second of travel in it.
+    const judged = jobs.last.crossings.slice(0, jobs.last.crossingCount).slice(-25);
+    expect(judged).toHaveLength(25);
+    for (const j of judged) {
+      expect(j.kind).toBe("later");
+      expect(Math.abs(j.speed - 30) / 30).toBeLessThan(0.01);
+    }
+  });
+
   it("records the crossings of each frame in the record of the frame, not the one after", () => {
     const { jobs } = watched();
     const c = createCrossing();
@@ -1762,7 +1938,7 @@ describe("the read-out of what is built at once and how crossings were judged", 
     const at = off.jobs.atOnceStart();
     expect(Number.isNaN(at)).toBe(true);
     off.jobs.atOnceEnd("clipmap", at);
-    off.jobs.judged("ring", "now", "first", 0, 0, 0);
+    off.jobs.judged("ring", "now", "first", 0, 0, 0, 0);
     expect(off.reads()).toBe(0);
     off.jobs.run();
     expect(off.jobs.last.atOnce).toEqual({});

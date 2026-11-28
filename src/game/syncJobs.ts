@@ -45,7 +45,7 @@
  *
  * Which crossings wait and which do not is each shell's `crossingAt`: the
  * first build, a teleport (a step no travel makes in one frame) and a view moving
- * more than half a cell or a metre a frame (the free camera's boost) all
+ * faster than 60 m/s over the last quarter of a second (the free camera's boost) all
  * build at once, or are stepped by the loader of first builds
  * (`firstBuilds.ts`), so at those the picture is exactly what it was.
  *
@@ -333,8 +333,9 @@ export async function stepSlices<T>(
 }
 
 /** The rule that decided a crossing (`crossingAt`): "first" the shell's first build, "jump" a step of more than
- * `SYNC_TELEPORT_M` in one frame (a teleport), "fast" a step over `min(cell / 2, SYNC_FAST_STEP_M)` a sixtieth of a
- * second, "unscheduled" a shell given no scheduler, and "none" no rule: the crossing waits as a job. */
+ * `SYNC_TELEPORT_M` in one frame (a teleport), "fast" a view whose speed over the last `SYNC_SPEED_WINDOW_S` of the
+ * clock is over `SYNC_FAST_MPS` (with no clock, a step over `min(cell / 2, SYNC_FAST_STEP_M)`), "unscheduled" a shell
+ * given no scheduler, and "none" no rule: the crossing waits as a job. */
 export type CrossingRule = "first" | "jump" | "fast" | "unscheduled" | "none";
 
 /** One crossing as `crossingAt` judged it, for the read-out (`SyncJobs.watch`). */
@@ -346,10 +347,13 @@ export type CrossingJudgement = {
   rule: CrossingRule;
   /** The view's step since its last frame (m), as it moved. */
   step: number;
-  /** The step as judged (m): `step` scaled to a sixtieth of a second where the frame was longer; NaN for a first view, which has no step. */
+  /** The step scaled to a sixtieth of a second where the frame was longer (m), one frame's measure of the speed; NaN for a first view, which has no step. */
   moved: number;
-  /** The time since the shell's last view that the step was judged against (ms); NaN with no clock (a first view). */
+  /** The time since the shell's last view (ms); NaN with no clock (a first view). */
   elapsedMs: number;
+  /** The view's speed as judged (m/s): over the window of `SYNC_SPEED_WINDOW_S`, or with under a sixtieth of a second in it
+   * the step over a sixtieth; with no clock, the step over a sixtieth; NaN for a first view. */
+  speed: number;
 };
 
 /** What `SyncJobs.last` carries: the last `run`'s slices, and the counts since the last `resetLongest`. */
@@ -462,7 +466,7 @@ export type SyncJobs = {
   /** After it: counts the build and its milliseconds to `name` in this frame's record. */
   atOnceEnd(name: string, startedAt: number): void;
   /** Records a crossing's verdict (`crossingAt` calls it, while watching). */
-  judged(name: string, kind: "now" | "later", rule: CrossingRule, step: number, moved: number, elapsedMs: number): void;
+  judged(name: string, kind: "now" | "later", rule: CrossingRule, step: number, moved: number, elapsedMs: number, speed: number): void;
 };
 
 /** A queued job: its slices, the frame whose crossing began it and the
@@ -713,11 +717,11 @@ export function createSyncJobs(clock: () => number): SyncJobs {
       madeAtOnce[name] = (madeAtOnce[name] ?? 0) + 1;
       madeAtOnceMs[name] = (madeAtOnceMs[name] ?? 0) + ms;
     },
-    judged(name, kind, rule, step, moved, elapsedMs) {
+    judged(name, kind, rule, step, moved, elapsedMs, speed) {
       if (!watching) return;
       let entry = judgements[judgedCount];
       if (entry === undefined) {
-        entry = { owner: name, kind, rule, step, moved, elapsedMs };
+        entry = { owner: name, kind, rule, step, moved, elapsedMs, speed };
         judgements.push(entry);
       } else {
         entry.owner = name;
@@ -726,6 +730,7 @@ export function createSyncJobs(clock: () => number): SyncJobs {
         entry.step = step;
         entry.moved = moved;
         entry.elapsedMs = elapsedMs;
+        entry.speed = speed;
       }
       judgedCount++;
     },
@@ -955,13 +960,12 @@ export function syncJobsRecord(last: SyncJobsLast): SyncJobsLast {
   };
 }
 
-/** A view that moved more than this between two frames (m) — 60 m/s at 60
- * frames a second, past any speed on foot or on wheels — builds at once whatever its
- * shell's cell: the free camera's boost moves 2.4 m a frame. */
+/** The step a fast view moves in a sixtieth of a second (m): `SYNC_FAST_MPS`, 60 m/s, past any speed on foot or on
+ * wheels; the free camera's boost moves 2.4 m a sixtieth. With no clock, a step over it, or over half a cell, is fast. */
 export const SYNC_FAST_STEP_M = 1;
 
 /** A view that moved more than this in one frame (m) was moved, not carried: a teleport, built at once however long
- * the frame was. It is the most a view under the speed of `SYNC_FAST_STEP_M` moves in the longest stretch of
+ * the frame was. It is the most a view under `SYNC_FAST_MPS` moves in the longest stretch of
  * simulation one frame steps (`game/loop.ts`: 15 ticks of a sixtieth of a second), so nothing that travels reaches it. */
 export const SYNC_TELEPORT_M = 15;
 
@@ -1008,44 +1012,74 @@ export function turn(h: Heading, dx: number, dz: number): boolean {
 export type CrossingKind = "none" | "now" | "later";
 
 /** A shell's record of the views it has been handed: the origin on its
- * rebuild grid it last built or began building for, and last frame's view. */
-export type Crossing = { originX: number; originZ: number; lastX: number; lastZ: number; lastAt: number };
+ * rebuild grid it last built or began building for, last frame's view, and
+ * the window its speed is read over (`SYNC_SPEED_WINDOW_S`): the distance (m)
+ * and the seconds of its newer half and of its older. */
+export type Crossing = {
+  originX: number;
+  originZ: number;
+  lastX: number;
+  lastZ: number;
+  lastAt: number;
+  newerM: number;
+  newerS: number;
+  olderM: number;
+  olderS: number;
+};
 
 export function createCrossing(): Crossing {
-  return { originX: NaN, originZ: NaN, lastX: NaN, lastZ: NaN, lastAt: NaN };
+  return { originX: NaN, originZ: NaN, lastX: NaN, lastZ: NaN, lastAt: NaN, newerM: 0, newerS: 0, olderM: 0, olderS: 0 };
+}
+
+/** Empties a record's window. */
+function emptyWindow(c: Crossing): void {
+  c.newerM = 0;
+  c.newerS = 0;
+  c.olderM = 0;
+  c.olderS = 0;
 }
 
 /** The frame a view's step is reckoned against (s): 60 a second. */
 export const SYNC_FRAME_S = 1 / 60;
+
+/** The stretch of the clock a view's speed is read over (s), in two halves: the older is dropped when the newer is
+ * half of it long. A view more than this after the last (a hidden tab, a pause) begins the window again. */
+export const SYNC_SPEED_WINDOW_S = 0.25;
+
+/** A view faster than this over the window (m/s) is fast: its crossings build at once. 60 m/s, whatever the shell's cell. */
+export const SYNC_FAST_MPS = SYNC_FAST_STEP_M / SYNC_FRAME_S;
 
 /**
  * Classifies this frame's view (x, z), whose origin on the shell's rebuild
  * grid of `cell` metres is (ox, oz), and records both. "none" while the origin
  * holds. Otherwise "now" — build at once, as before there were jobs — for the
  * first build, for a step of more than `SYNC_TELEPORT_M` in one frame (a
- * teleport), for a view that moved more than half a cell a frame (so the next
- * crossing is at most a frame or two away) or more than `SYNC_FAST_STEP_M`,
- * and for a shell given no scheduler (`deferrable` false). "later" for
- * everything else, which becomes a job: a step at a walk, a run or a drive,
- * across one line or, after a slow frame, across several.
+ * teleport), for a view moving faster than `SYNC_FAST_MPS` (the free camera's
+ * boost), and for a shell given no scheduler (`deferrable` false). "later"
+ * for everything else, which becomes a job: a step at a walk, a run or a
+ * drive, across one line or, after a slow frame, across several.
  *
- * The step since last frame is read as it would be at 60 frames a second:
- * over a frame longer than `SYNC_FRAME_S` it is scaled to one, so it is the
- * view's speed that says a burst, not a slow frame. A sprint moves 0.12 m a
- * frame at 60; after one frame of 150 ms (a collection, a buffer's upload) it
- * had moved 1.05 m, was taken for the free camera's boost, and every shell
- * crossing a line that frame rebuilt at once: the face patches' set in one
- * frame of 1.1 to 1.3 s on the rig that measured it (2026-11-09), three times
- * in six runs, each after a frame of 0.18 to 0.26 s.
+ * A view's speed is read over the last `SYNC_SPEED_WINDOW_S` of the clock,
+ * not over one frame, and against one threshold for every shell. Every view
+ * with a clock, crossing or not, adds its step and the time since the last
+ * view to the window's newer half; once that half is half the window long it
+ * becomes the older, and the older is dropped. The speed is the two halves'
+ * distance over their seconds; with under `SYNC_FRAME_S` in them (the first
+ * views, after a teleport or a pause) it is the step over `SYNC_FRAME_S`. The
+ * simulation moves the view in ticks of a sixtieth of a second, so one
+ * frame's travel comes in whole ticks: read over one frame, at 30 m/s a frame
+ * that ran two ticks read as 60 m/s, and the blades and the duff, on a cell
+ * of 1 m, built over half their crossings at once (the rig, 2026-11-27).
+ * A step judged a teleport is not travel: it adds nothing and empties the
+ * window. A view more than `SYNC_SPEED_WINDOW_S` after the last (a hidden
+ * tab) empties it before its step is added with that time, so no speed from
+ * before the pause is kept, and a slow frame's made-up ticks are read against
+ * the slow frame they were made up for.
  *
  * `now` is the clock as this frame's first view was judged
- * (`SyncJobs.viewedAt`; no clock, no scaling), so the time a step is reckoned
- * against is the time between the two views it lies between: the frame the
- * step was made over. Reckoned against the frame before that one, as it was,
- * the step a slow frame's simulation makes up (a quarter of a second of
- * travel) read as a burst in the short frame before it: at 12 m/s, 3 m "in
- * 19 ms", and the face patches' set built at once in a frame of 5 s, which
- * made the next slow frame (the rig, 2026-11-26).
+ * (`SyncJobs.viewedAt`). With no clock (a shell given no scheduler, a first
+ * view) there is no window: the step stands as it is, and is fast over
+ * `min(cell / 2, SYNC_FAST_STEP_M)`.
  *
  * A step of more than a cell since the last origin is not by itself a reason
  * to build at once: a view that travels crosses several lines in one slow
@@ -1053,7 +1087,8 @@ export const SYNC_FRAME_S = 1 / 60;
  * makes is a teleport.
  *
  * `record`, the scheduler, and `name`, the shell's, are for the read-out: while it is watching, each verdict is recorded
- * with the rule that decided it, the step, and the time it was judged against (`SyncJobs.judged`). They change no verdict.
+ * with the rule that decided it, the step, the time since the last view and the speed (`SyncJobs.judged`). They change
+ * no verdict.
  */
 export function crossingAt(
   c: Crossing,
@@ -1069,19 +1104,38 @@ export function crossingAt(
 ): CrossingKind {
   const step = Math.hypot(x - c.lastX, z - c.lastZ);
   const seconds = (now - c.lastAt) / 1000;
-  // With no clock (a shell given no scheduler, a first view), the step stands as it is.
+  const jump = step > SYNC_TELEPORT_M;
+  // The step as it would be in a sixtieth of a second, for the read-out; with no clock, as it is.
   const moved = seconds > SYNC_FRAME_S ? (step * SYNC_FRAME_S) / seconds : step;
+  const clocked = !Number.isNaN(seconds);
+  let speed = step / SYNC_FRAME_S;
+  if (clocked) {
+    if (jump || seconds > SYNC_SPEED_WINDOW_S) emptyWindow(c);
+    if (!jump) {
+      c.newerM += step;
+      c.newerS += Math.max(0, seconds);
+      const held = c.olderS + c.newerS;
+      if (held >= SYNC_FRAME_S) speed = (c.olderM + c.newerM) / held;
+      if (c.newerS >= SYNC_SPEED_WINDOW_S / 2) {
+        c.olderM = c.newerM;
+        c.olderS = c.newerS;
+        c.newerM = 0;
+        c.newerS = 0;
+      }
+    }
+  }
   c.lastAt = now;
   c.lastX = x;
   c.lastZ = z;
   if (ox === c.originX && oz === c.originZ) return "none";
   const first = Number.isNaN(c.originX) || Number.isNaN(c.originZ);
-  const jump = step > SYNC_TELEPORT_M;
   c.originX = ox;
   c.originZ = oz;
-  const rule: CrossingRule = !deferrable ? "unscheduled" : first ? "first" : jump ? "jump" : moved > Math.min(cell / 2, SYNC_FAST_STEP_M) ? "fast" : "none";
+  // With no clock there is no window: the step as it is, against half a cell or `SYNC_FAST_STEP_M`.
+  const fast = clocked ? speed > SYNC_FAST_MPS : step > Math.min(cell / 2, SYNC_FAST_STEP_M);
+  const rule: CrossingRule = !deferrable ? "unscheduled" : first ? "first" : jump ? "jump" : fast ? "fast" : "none";
   const kind = rule === "none" ? "later" : "now";
-  // With the read-out on, the verdict and what it judged: the step and the time it was reckoned against.
-  if (record?.watching === true) record.judged(name, kind, rule, step, moved, seconds * 1000);
+  // With the read-out on, the verdict and what it judged: the step, the time since the last view and the speed.
+  if (record?.watching === true) record.judged(name, kind, rule, step, moved, seconds * 1000, speed);
   return kind;
 }
