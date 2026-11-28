@@ -895,6 +895,7 @@ describe("layer boundaries", () => {
     const ENGINE_FREE = [
       "clutterInstances.ts", "clutterLists.ts", "instanceLists.ts", "bladeInstances.ts", "duffInstances.ts", "cliffInstances.ts", "clutterField.ts", "bladeField.ts", "bladeClump.ts", "duffField.ts", "duffClump.ts", "cliffField.ts",
       "shrubClump.ts", "wetPlantClump.ts", "highPlantClump.ts", "rockRelief.ts", "grassCull.ts", "keptValues.ts", "propBoxes.ts",
+      "clutterFrame.ts", "clutterWire.ts", "clutterServe.ts",
     ];
     const stack = ENGINE_FREE.map((name) => at("game", name));
     for (const file of stack) expect(existsSync(file), file).toBe(true);

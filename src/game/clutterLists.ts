@@ -15,19 +15,15 @@ import { CLUTTER_CLASS_COUNT, CLUTTER_MEADOW, type ClutterInstance } from "../si
 import {
   CLUTTER_MEADOW_NEAR_IN, COVER_RAMP_CLASSES, clutterFadeEdges, clutterSeamEdges, coverBands, coverFarBand, createClutterCollector,
 } from "./clutterField.js";
-import { CLUTTER_CULLED, FAR_LOD, FOLIAGE_BY_CLASS, NEAR_LOD, cutOf, cutsFor, instanceMatrixFor, trampleFrame, writeFoliage } from "./clutterInstances.js";
+import { clutterFrameInto } from "./clutterFrame.js";
+import { CLUTTER_CULLED, FAR_LOD, FOLIAGE_BY_CLASS, NEAR_LOD, cutOf, cutsFor } from "./clutterInstances.js";
 import { fadeBands, writeFadeBands, type FadeBands } from "./distanceFade.js";
 import type { CullPose } from "./grassCull.js";
 import {
-  KEPT_FOLIAGE, KEPT_STRIDE, commitStaged, createInstanceList, createViewCut, cutList, ensureStaging, stageKept, type InstanceList,
+  KEPT_STRIDE, commitStaged, createInstanceList, createViewCut, cutList, ensureStaging, stageKept, type InstanceList,
 } from "./instanceLists.js";
 import { createKeptValues } from "./keptValues.js";
 import { sliceDue, type Slices } from "./syncJobs.js";
-
-/** One matrix's worth of scratch floats, so an instance's matrix can be
- * composed and copied into the kept values at any offset without a
- * per-instance subarray view. */
-const scratchMat = new Float32Array(16);
 
 /** Instances' worth of work a slice of the clutter's fill does before it
  * yields: an instance whose values are copied counts 1, one computed for the
@@ -145,10 +141,7 @@ export function createClutterLists(seed: number, options: ClutterListsOptions): 
    * the wind.
    */
   function computeInstance(inst: ClutterInstance, out: Float32Array, offset: number): void {
-    const frame = trampleFrame(seed, inst);
-    instanceMatrixFor(inst, frame, scratchMat);
-    out.set(scratchMat, offset);
-    if (FOLIAGE_BY_CLASS.has(inst.cls)) writeFoliage(seed, inst, out, offset + KEPT_FOLIAGE, frame);
+    clutterFrameInto(seed, inst, out, offset);
   }
   const kept = createKeptValues<ClutterInstance>(KEPT_STRIDE, computeInstance);
   // Memoizing collector, not the pure `collectClutter`: a rebuild happens on

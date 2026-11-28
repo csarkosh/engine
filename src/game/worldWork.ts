@@ -44,6 +44,7 @@ import type { TrailGraph } from "../sim/trail.js";
 import {
   PATCH_FAR_SPACING, PATCH_NEAR_SPACING, PATCH_WIDE_SPACING, facePatchGeometry, type FacePatch, type PatchStitch, type PavedGround,
 } from "./facePatches.js";
+import type { ClutterAnswer } from "./clutterWire.js";
 import { prepareScene, sceneTransfer, type PreparedScene } from "./preparedScene.js";
 import type { QualityTier } from "./quality.js";
 import type { RingDrawn } from "./ringBuild.js";
@@ -69,6 +70,7 @@ export type WorldPrepReply =
   | { id: number; kind: "patchesDone"; set: number }
   | { id: number; kind: "ring"; set: number; level: number; drawn: RingDrawn; ring: RingSent; ms: number }
   | { id: number; kind: "ringsDone"; set: number; ms: number }
+  | ({ id: number; kind: "clutterCells" } & ClutterAnswer)
   | { id: number; kind: "done" }
   | { id: number; kind: "failed"; message: string };
 
