@@ -39,15 +39,42 @@ export function askAhead(p: Pick<ClutterAsking, "work" | "unknown">, x: number, 
   p.work.ask(p.unknown(x, z, p.work.asked));
 }
 
-/** Takes every answer that has arrived and fills the page's memory from it, each set marked filled after; returns how many were taken. */
+/** Takes every answer that has arrived and fills the page's memory from it; each set is marked filled even when the job is ended inside the fill. Returns how many were taken. */
 export function* fillArrived(p: Pick<ClutterAsking, "work" | "take">, x: number, z: number): Slices<number> {
   let n = 0;
   for (let held = p.work.take(); held !== null; held = p.work.take()) {
-    yield* p.take(held.strips, held.answer, x, z);
-    p.work.filled(held.answer.set);
+    try {
+      yield* p.take(held.strips, held.answer, x, z);
+    } finally {
+      p.work.filled(held.answer.set);
+    }
     n++;
   }
   return n;
+}
+
+/**
+ * The idle work: fills each arrived answer whole, with no yield between taking it and marking it filled (an answer is
+ * a few thousand cells, a moment to remember, so it is not sliced), a yield after each, so none is held across one, then asks for the cells of
+ * `ahead` (the next crossing), if any.
+ */
+export function* fillThenAskAhead(
+  p: Pick<ClutterAsking, "work" | "unknown" | "take">,
+  x: number,
+  z: number,
+  ahead: { x: number; z: number } | null,
+): Slices {
+  for (let held = p.work.take(); held !== null; held = p.work.take()) {
+    try {
+      // The fill is run to its end here; it does not wait.
+      const fill = p.take(held.strips, held.answer, x, z);
+      while (fill.next().done !== true);
+    } finally {
+      p.work.filled(held.answer.set);
+    }
+    yield;
+  }
+  if (ahead !== null) askAhead(p, ahead.x, ahead.z);
 }
 
 /** Asks the worker for the cells this job lacks, waits for them (a bounded time, at no cost), fills them, then rebuilds. */

@@ -77,7 +77,7 @@ import {
 import { DRAW_ORDER, createDrawOrders } from "./drawOrder.js";
 import type { FrameUploads } from "./frameUploads.js";
 import { listBytes, listMesh, showList, type ListMesh } from "./listMeshes.js";
-import { askAhead, askThenRebuild, fillArrived } from "./clutterJob.js";
+import { askThenRebuild, fillThenAskAhead } from "./clutterJob.js";
 import { cellOrigin, createRebuilds } from "./rebuildJobs.js";
 
 /** What showing the clutter's lists is expected to take (ms): every bucket handed its list, one step. The scheduler
@@ -373,8 +373,8 @@ export function createClutterMeshes(engine: EngineContext, scene: SceneContext, 
     return work !== null && !work.failed ? work : null;
   };
   /** Fills the page's memory from an answer, counting one the lists refused. */
-  function* takeAnswer(strips: Int32Array, answer: ClutterAnswer, x: number, z: number): Slices<boolean> {
-    const taken = yield* (lists as ClutterLists).take(strips, answer, x, z);
+  function* takeAnswer(made: ClutterLists, strips: Int32Array, answer: ClutterAnswer, x: number, z: number): Slices<boolean> {
+    const taken = yield* made.take(strips, answer, x, z);
     if (!taken) refusedAnswers++;
     return taken;
   }
@@ -390,7 +390,7 @@ export function createClutterMeshes(engine: EngineContext, scene: SceneContext, 
     const ahead = nextCrossing(x, z, hx, hz, CLUTTER_GRASS_CELL, next) ? { x: next[0] as number, z: next[1] as number } : null;
     yield* askThenRebuild(
       {
-        work, unknown: (px, pz, asked) => made.unknown(px, pz, asked), take: takeAnswer, rebuild, ahead,
+        work, unknown: (px, pz, asked) => made.unknown(px, pz, asked), take: (strips, answer, px, pz) => takeAnswer(made, strips, answer, px, pz), rebuild, ahead,
         now: () => performance.now(), disposed: () => disposed,
         waited(ms) {
           waits++;
@@ -400,14 +400,13 @@ export function createClutterMeshes(engine: EngineContext, scene: SceneContext, 
       x, z,
     );
   }
-  /** The idle work: with a live client, takes the answers that have arrived and asks for the next crossing's cells; else the lists' prefetch. */
-  function* askedAhead(work: ClutterWork, x: number, z: number, hx: number, hz: number): Slices {
+  /** The idle work: with a live client, fills the answers that have arrived and asks for the next crossing's cells; else the lists' prefetch. */
+  function askedAhead(work: ClutterWork, x: number, z: number, hx: number, hz: number): Slices | null {
     const made = lists;
-    if (made === null) return;
-    const p = { work, unknown: (px: number, pz: number, asked: (key: number) => boolean) => made.unknown(px, pz, asked), take: takeAnswer };
-    yield* fillArrived(p, x, z);
+    if (made === null) return null;
     const next = new Float64Array(2);
-    if (nextCrossing(x, z, hx, hz, CLUTTER_GRASS_CELL, next)) askAhead(p, next[0] as number, next[1] as number);
+    const ahead = nextCrossing(x, z, hx, hz, CLUTTER_GRASS_CELL, next) ? { x: next[0] as number, z: next[1] as number } : null;
+    return fillThenAskAhead({ work, unknown: (px, pz, asked) => made.unknown(px, pz, asked), take: (strips, answer, px, pz) => takeAnswer(made, strips, answer, px, pz) }, x, z, ahead);
   }
   // One snap for every class, on the smallest cell.
   const rebuilds = createRebuilds({

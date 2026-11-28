@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CLUTTER_STRIP_INTS, clutterCellKey, type ClutterAnswer } from "../../../src/game/clutterWire.js";
-import { CLUTTER_WAIT_MS, askAhead, askThenRebuild, type ClutterAsking } from "../../../src/game/lite/clutterJob.js";
+import { CLUTTER_WAIT_MS, askAhead, askThenRebuild, fillThenAskAhead, type ClutterAsking } from "../../../src/game/lite/clutterJob.js";
 import { createRebuilds, cellOrigin } from "../../../src/game/lite/rebuildJobs.js";
 import { SLICE_WAITS, createSyncJobs, type Slices } from "../../../src/game/syncJobs.js";
 
@@ -21,6 +21,8 @@ function world() {
   const lookedHere: number[] = [];
   const shown: number[] = [];
   const waited: number[] = [];
+  const filledSets: number[] = [];
+  const takeOpts = { yields: 0, refuse: false, cost: 0 };
   const work: ClutterAsking["work"] = {
     ask(s) {
       if (state.failed || s.length < CLUTTER_STRIP_INTS || state.out >= 2) return 0;
@@ -44,6 +46,7 @@ function world() {
     },
     take: () => waiting.shift() ?? null,
     filled(set) {
+      filledSets.push(set);
       for (const c of posted.find((p) => p.set === set)?.cells ?? []) asked.delete(keyOf(c));
     },
     get failed() {
@@ -56,6 +59,11 @@ function world() {
     work,
     unknown,
     *take(s): Slices<boolean> {
+      for (let n = 0; n < takeOpts.yields; n++) {
+        clock.now += takeOpts.cost;
+        yield;
+      }
+      if (takeOpts.refuse) return false;
       for (let i = 0; i < s.length; i += CLUTTER_STRIP_INTS) known.add(keyOf(s[i + 1] as number));
       return true;
     },
@@ -79,7 +87,7 @@ function world() {
     state.out--;
     waiting.push({ strips: strips.get(set) as Int32Array, answer: { set } as unknown as ClutterAnswer });
   };
-  return { clock, known, posted, state, lookedHere, shown, waited, asking, answer, work };
+  return { clock, known, posted, state, lookedHere, shown, waited, asking, answer, work, filledSets, takeOpts, isAsked: (cx: number) => asked.has(keyOf(cx)) };
 }
 
 /** A scheduler on the world's clock, and a frame of it. */
@@ -131,6 +139,7 @@ describe("the clutter's rebuild that asks the worker and waits", () => {
     expect(jobs.last.waits).toBe(1);
     frame();
     expect(jobs.last.waits).toBe(1);
+    expect(jobs.last.slices).toBe(0);
     expect(w.shown).toEqual([]);
     w.answer(1);
     frame();
@@ -178,6 +187,8 @@ describe("the clutter's rebuild that asks the worker and waits", () => {
     jobs.begin(owner, askThenRebuild(w.asking(), 2, 0), false, "clutter");
     frame();
     expect(w.known.has(keyOf(10))).toBe(true);
+    expect(w.filledSets).toContain(1);
+    expect(w.isAsked(10)).toBe(false);
     expect(w.posted.map((p) => p.set)).toEqual([1, 2]);
     expect(w.lookedHere).toEqual([10, 11, 12]);
   });
@@ -297,5 +308,86 @@ describe("the clutter's rebuild that asks the worker and waits", () => {
     expect(rebuilds.update(2.9, 0)).toBe("now");
     expect(rebuilt).toEqual([2.9]);
     expect(scheduledCalls).toEqual([]);
+  });
+
+  it("a later job whose answer has arrived runs the same frame and waits no frame", () => {
+    const w = world();
+    const { jobs, frame } = scheduler(w.clock);
+    const owner = {};
+    w.work.ask(stripsOf(needed(1)));
+    w.answer(1);
+    jobs.begin(owner, askThenRebuild(w.asking(), 1, 0), false, "clutter");
+    frame();
+    expect(jobs.last.waits).toBe(0);
+    expect(w.shown).toEqual([1]);
+    expect(w.lookedHere).toEqual([]);
+  });
+
+  it("releases an answer taken when the job is cancelled while the take is suspended", () => {
+    const w = world();
+    const { jobs, frame } = scheduler(w.clock);
+    const owner = {};
+    w.takeOpts.yields = 5;
+    // Each slice of the take spends the frame's share, so the job is suspended inside it when the frame ends.
+    w.takeOpts.cost = 50;
+    jobs.begin(owner, askThenRebuild(w.asking(), 1, 0), false, "clutter");
+    frame();
+    w.answer(1);
+    frame();
+    expect(w.filledSets).toEqual([]);
+    jobs.cancel(owner);
+    expect(w.filledSets).toEqual([1]);
+    expect(w.isAsked(10)).toBe(false);
+  });
+});
+
+describe("the idle work that fills and asks ahead", () => {
+  it("fills a taken answer whole in one step, however sliced the take is", () => {
+    const w = world();
+    w.takeOpts.yields = 3;
+    w.work.ask(stripsOf(needed(1)));
+    w.answer(1);
+    const job = fillThenAskAhead(w.asking(), 0, 0, null);
+    // The one step filled it and released it; the yield after it holds nothing.
+    expect(job.next().done).toBe(false);
+    expect(w.filledSets).toEqual([1]);
+    expect(w.known.has(keyOf(10))).toBe(true);
+    expect(job.next().done).toBe(true);
+  });
+
+  it("fills answers in arrival order with a yield between, then asks ahead once", () => {
+    const w = world();
+    w.work.ask(stripsOf(needed(1)));
+    w.work.ask(stripsOf(needed(3)));
+    w.answer(1);
+    w.answer(2);
+    const job = fillThenAskAhead(w.asking(), 0, 0, { x: 2, z: 0 });
+    expect(job.next().done).toBe(false);
+    expect(w.filledSets).toEqual([1]);
+    expect(w.posted).toHaveLength(2);
+    expect(job.next().done).toBe(false);
+    expect(w.filledSets).toEqual([1, 2]);
+    expect(w.posted).toHaveLength(2);
+    expect(job.next().done).toBe(true);
+    expect(w.posted.map((p) => p.cells)).toEqual([[10, 11, 12], [30, 31, 32], [20, 21, 22]]);
+  });
+
+  it("does nothing with nothing arrived and no look-ahead", () => {
+    const w = world();
+    const job = fillThenAskAhead(w.asking(), 0, 0, null);
+    expect(job.next().done).toBe(true);
+    expect(w.posted).toEqual([]);
+    expect(w.filledSets).toEqual([]);
+  });
+
+  it("releases a refused answer all the same", () => {
+    const w = world();
+    w.takeOpts.refuse = true;
+    w.work.ask(stripsOf(needed(1)));
+    w.answer(1);
+    const job = fillThenAskAhead(w.asking(), 0, 0, null);
+    job.next();
+    expect(w.filledSets).toEqual([1]);
+    expect(w.known.size).toBe(0);
   });
 });
