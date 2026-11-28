@@ -93,6 +93,8 @@ export type WorldRenderer<S> = {
   whenReady(maxMs: number): Promise<void>;
   /** How many of the scene's loads (models, textures) are still in flight. */
   waitingItems(): number;
+  /** Whether the last frame still streamed or held bytes for the GPU (`frameUploads.ts`): the world near the camera is still being built. */
+  streaming(): boolean;
   /**
    * `frame` carries this frame's local, non-simulated view inputs — its
    * duration in seconds and whether sprint is held. Only the walking cue reads

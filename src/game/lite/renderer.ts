@@ -1761,6 +1761,9 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
     waitingItems() {
       return loading + (standing?.forest?.waiting() ?? 0) + (standing?.clutter?.waiting() ?? 0) + (standing?.cliffs?.waiting() ?? 0) + side.waiting();
     },
+    streaming() {
+      return uploads.last.streamed > 0 || uploads.last.held > 0;
+    },
     sync(state, localId, alpha, frame = { dt: 0, sprinting: false }) {
       if (disposed) return;
       const now = clock();
