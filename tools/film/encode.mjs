@@ -8,7 +8,6 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import sharp from "sharp";
 import { encodeArgs } from "./lib/encodeArgs.mjs";
 import { writeAtomic } from "./lib/frames.mjs";
 import { seamReport } from "./lib/seam.mjs";
@@ -44,6 +43,12 @@ function ffmpeg(args, what) {
 
 /** The first frame of `video` as WebP bytes under STILL_LIMIT, lowering the quality in steps (this ffmpeg has no libwebp, so sharp encodes). */
 async function still(video) {
+  let sharp;
+  try {
+    sharp = (await import("sharp")).default;
+  } catch {
+    throw new Error("encode.mjs needs `sharp` for the WebP still: add it to the game as a devDependency (npm install -D sharp@0.34.5)");
+  }
   const png = ffmpeg(["-i", video, "-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "pipe:1"], "still");
   for (let q = 90; q >= 10; q -= 10) {
     const bytes = await sharp(png).webp({ quality: q }).toBuffer();

@@ -15,6 +15,12 @@ node tools/film/record.mjs --url <film page> [--out <dir>] [--remote <port>] [--
 - `--stills` writes `still-<t>.png` at those times only. `film.json` holds the definition, the page URL,
   the build's tag and the start time.
 
+## Requirements
+
+`encode.mjs` needs `ffmpeg` and `ffprobe` on the PATH, and `sharp` for the WebP still. `sharp` is a
+devDependency of the engine, so a game adds it itself: `npm install -D sharp@0.34.5`. Without it the
+script stops with that message.
+
 ## Locally
 
 Without `--remote`, the script starts Chrome on this Mac from a fresh profile (`tools/frame-budget/lib/cdp.mjs`).

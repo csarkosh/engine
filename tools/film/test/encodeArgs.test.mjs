@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { encodeArgs } from "../lib/encodeArgs.mjs";
 
 const paths = { frames: "/f", out: "/o.mp4" };
-const ffmpeg = spawnSync("ffmpeg", ["-version"]).status === 0;
+const ffmpeg = spawnSync("ffmpeg", ["-version"]).status === 0 && spawnSync("ffprobe", ["-version"]).status === 0;
 
 describe("encodeArgs", () => {
   it("dissolves the end into the start when the film loops", () => {
