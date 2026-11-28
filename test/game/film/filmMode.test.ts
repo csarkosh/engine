@@ -43,15 +43,21 @@ function rig(busyDraws = 0) {
 }
 
 describe("film driver", () => {
-  it("steps the clock and the ticks, then sets the view and the camera from the def, before the draw", async () => {
+  it("draws the frame after a seek at the seek's time, then steps the clock and the ticks before each later frame", async () => {
     const r = rig();
     const film = createFilmDriver(r.deps);
     film.seek(2);
     await film.frame();
+    expect(film.time()).toBe(2);
+    // No step: the view, the camera at 2, then the draw.
+    expect(r.calls.slice(0, 3)).toEqual(["setView 7.5 def", "setFreecam", "draw"]);
+    expect(r.views[0]).toEqual(samplePath(path, 2));
+    r.calls.length = 0;
+    await film.frame();
     const t = 2 + 1 / 24;
+    expect(film.time()).toBe(t);
     expect(r.calls.slice(0, 4)).toEqual([`step@${t.toFixed(4)}`, "setView 7.5 def", "setFreecam", "draw"]);
-    expect(r.views[0]).toEqual(samplePath(path, t));
-    expect(film.time()).toBeCloseTo(t, 12);
+    expect(r.views[1]).toEqual(samplePath(path, t));
   });
 
   it("draws SETTLE_FRAMES warm frames on the first frame after a seek only, then settles", async () => {
@@ -64,8 +70,8 @@ describe("film driver", () => {
     const before = r.draws();
     await film.frame();
     expect(r.draws() - before).toBe(1 + SETTLE_FRAMES);
-    // One step and one camera per frame, however many draws settle it.
-    expect(r.calls.filter((c) => c.startsWith("step")).length).toBe(2);
+    // One camera per frame, however many draws settle it; a step only for the frame that is not the seek's.
+    expect(r.calls.filter((c) => c.startsWith("step")).length).toBe(1);
     expect(r.calls.filter((c) => c === "setFreecam").length).toBe(2);
   });
 

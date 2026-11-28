@@ -3,8 +3,9 @@
  * (`app.ts`), and what a recorder drives through `window.engineFilm` (`filmApi.ts`).
  *
  * A frame steps the clock one frame, runs the ticks that step gives, puts the camera where the
- * path is at the clock's time under the film's hour and weather, and draws. After a seek (and
- * on the first frame) it draws the warm frames a cut is given; then it draws on until the world
+ * path is at the clock's time under the film's hour and weather, and draws. The frame after a
+ * seek (and the first frame) does not step: it is drawn at the seek's time exactly (a recorder
+ * seeks to i / fps and takes the next frame as that time), with the warm frames a cut is given; then it draws on until the world
  * near the camera is built (`settle`), and resolves on the animation frame after, when the
  * picture has been presented and a screenshot reads it. The clock does not move while it
  * settles: every draw of a frame is of the same moment.
@@ -39,7 +40,7 @@ export type FilmDriverDeps = {
 };
 
 export type FilmDriver = {
-  /** Moves the film to `t` seconds; the next frame is one frame on from it, and settles as after a cut. */
+  /** Moves the film to `t` seconds; the next frame is drawn at `t` itself, and settles as after a cut. */
   seek(t: number): void;
   /** Steps, draws and settles one frame of the film; resolves once it has been presented. */
   frame(): Promise<void>;
@@ -74,14 +75,16 @@ export function createFilmDriver(deps: FilmDriverDeps): FilmDriver {
       cut = true;
     },
     async frame() {
-      clock.step();
-      deps.step();
+      // The frame after a seek (and the first) is of the seek's time itself; every later one is a frame on.
+      const after = cut;
+      cut = false;
+      if (!after) {
+        clock.step();
+        deps.step();
+      }
       place();
       deps.draw();
-      if (cut) {
-        cut = false;
-        for (let i = 0; i < SETTLE_FRAMES; i++) deps.draw();
-      }
+      if (after) for (let i = 0; i < SETTLE_FRAMES; i++) deps.draw();
       stretch = 0;
       await settle(settleDraw, busy, SETTLE_MAX_FRAMES);
       await deps.nextFrame();
