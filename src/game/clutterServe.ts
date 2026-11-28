@@ -81,14 +81,24 @@ export function createClutterServer(
   const queue: WorldClutterRequest[] = [];
   let run: Run | null = null;
 
-  const fail = (id: number, error: unknown): void => {
+  /** Takes the head off the queue: the one place a request leaves it, whatever happens to it after. */
+  const leave = (): void => {
     run = null;
     queue.shift();
-    post({ id, kind: "failed", message: error instanceof Error ? error.message : String(error) }, []);
+  };
+
+  /** Posts `failed` for a request already off the queue; a post that throws too is let go. */
+  const postFailed = (id: number, error: unknown): void => {
+    try {
+      post({ id, kind: "failed", message: error instanceof Error ? error.message : String(error) }, []);
+    } catch {
+      // Nothing more can be told of this request.
+    }
   };
 
   const finish = (current: Run): void => {
     const { found } = current;
+    const { id } = current.request;
     const answer: ClutterAnswer = {
       set: current.request.set,
       cells: current.cells.slice(0, found * 3),
@@ -97,9 +107,12 @@ export function createClutterServer(
       framed: current.framed.slice(0, found),
       ms: now() - current.start,
     };
-    run = null;
-    queue.shift();
-    post({ id: current.request.id, kind: "clutterCells", ...answer }, clutterTransfer(answer));
+    leave();
+    try {
+      post({ id, kind: "clutterCells", ...answer }, clutterTransfer(answer));
+    } catch (error) {
+      postFailed(id, error);
+    }
   };
 
   return {
@@ -163,7 +176,8 @@ export function createClutterServer(
         }
         if (current.strip >= count) finish(current);
       } catch (error) {
-        fail(head.id, error);
+        leave();
+        postFailed(head.id, error);
       }
       return true;
     },

@@ -166,6 +166,48 @@ describe("the world's worker serving the clutter's cells", () => {
     expect((posted[0]?.reply as Cells).cells.length / 3).toBe(expected(big).length);
   });
 
+  it("a post that throws for an answer is one failed for that request, and the next request is still served", () => {
+    const posted: WorldPrepReply[] = [];
+    let throwing = true;
+    const server = createClutterServer((reply) => {
+      if (throwing && reply.kind === "clutterCells") { throwing = false; throw new Error("cannot be cloned"); }
+      posted.push(reply);
+    }, () => ({ seed: SEED, variant: VARIANT }));
+    const b = strips([CLUTTER_ROCK, -9, 9, -9, 9]);
+    server.ask(request(1, strips([CLUTTER_GRASS, -6, 6, -6, 6])));
+    server.ask(request(2, b));
+    while (server.step()) { /* served */ }
+    expect(posted.map((r) => [r.id, r.kind])).toEqual([[1, "failed"], [2, "clutterCells"]]);
+    expect((posted[1] as Cells).cells.length / 3).toBe(expected(b).length);
+    expect(server.working).toBe(false);
+  });
+
+  it("a post that throws for the failed too is swallowed, and the next request is still served", () => {
+    const posted: WorldPrepReply[] = [];
+    let calls = 0;
+    const server = createClutterServer((reply) => {
+      if (calls++ < 2) throw new Error("cannot be cloned");
+      posted.push(reply);
+    }, () => ({ seed: SEED, variant: VARIANT }));
+    server.ask(request(1, strips([CLUTTER_ROCK, 0, 3, 0, 3])));
+    server.ask(request(2, strips([CLUTTER_ROCK, 0, 3, 0, 3])));
+    while (server.step()) { /* served */ }
+    expect(posted.map((r) => [r.id, r.kind])).toEqual([[2, "clutterCells"]]);
+    expect(server.working).toBe(false);
+  });
+
+  it("an instance whose hash a float cannot hold comes through the server's packing to the bit", () => {
+    const wide = strips([CLUTTER_GRASS, -30, 30, -30, 30]);
+    const hit = expected(wide).filter((w) => Math.fround(w.inst.hash) !== w.inst.hash);
+    expect(hit.length).toBeGreaterThan(0);
+    const { posted, server, run } = collect();
+    server.ask(request(1, wide));
+    run();
+    const reply = posted[0]?.reply as Cells;
+    const all = expected(wide);
+    all.forEach((w, i) => { expect(Object.is(instanceAt(reply, i).hash, w.inst.hash)).toBe(true); });
+  });
+
   it("two requests asked back to back are both answered, in the order asked", () => {
     const a = strips([CLUTTER_GRASS, -6, 6, -6, 6]);
     const b = strips([CLUTTER_ROCK, -9, 9, -9, 9], [CLUTTER_MEADOW, 0, 5, 0, 5]);
