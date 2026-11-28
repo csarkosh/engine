@@ -11,8 +11,8 @@
  * rebuild waits to begin after it (`SyncJobs.begin`): a fast view's jobs,
  * replaced at every crossing, were a second old before they were shown, and
  * then run whole in one frame. The first build, a teleport
- * and a view moving fast (over 60 m/s across the last quarter of a second
- * of the clock, whatever the shell's cell) build at once, or are stepped by the
+ * and a view moving fast (over 60 m/s across the last eighth to quarter of
+ * a second of the clock, whatever the shell's cell) build at once, or are stepped by the
  * loader of first builds while the intro's film covers the hike
  * (`firstBuilds.ts`). While the view holds its cell and nothing is pending,
  * the shell's idle work is aimed once at the next crossing on the view's

@@ -423,8 +423,10 @@ What a phone run is, against the Mac's and the rig's:
   picture has owed a rebuild as the frame's share began (`owedMs`, the time since the oldest request
   the drawn picture does not answer yet; an owner that owes none is left out), and each crossing as
   `crossingAt` judged it (`crossings`: `owner`, `kind` `now` or `later`, `rule` `first`, `jump`,
-  `fast` or `none`, `step` in metres, `moved` the step as judged per sixtieth of a second, and
-  `elapsedMs` it was judged against). The harness rows do not sum these; a script reads them from
+  `fast`, `unscheduled` or `none`, `step` in metres, `moved` the step scaled to a sixtieth of a second
+  where the frame was longer (one frame's measure, which no longer decides), `elapsedMs` the time since
+  the shell's last view, and `speed` in m/s, the view's speed over the window the rule `fast` reads,
+  an eighth to a quarter of a second). The harness rows do not sum these; a script reads them from
   the page each frame.
 - Windows, not a settle and one sample: `--windows 3` times three consecutive 10 s windows from
   the first, so a moment that passes (the summit scene, the reveal, the death) is seen in turn. A

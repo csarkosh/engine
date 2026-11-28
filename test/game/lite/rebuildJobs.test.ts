@@ -230,8 +230,11 @@ describe("a shell's rebuilds on the renderer's scheduler", () => {
   it("builds a view that moves faster than any travel at once, and drops the rebuild it overtakes", () => {
     const { jobs, frame } = scheduler();
     const s = shell({ jobs, slices: 40, ms: 0 });
-    s.rebuilds.update(0.5, 0);
-    frame();
+    // 150 m/s from the first view: 2.5 m a sixtieth, so the window holds a fifteenth of a second of it by 3 m.
+    for (const x of [-9.5, -7.0, -4.5, -2.0, 0.5]) {
+      s.rebuilds.update(x, 0);
+      frame();
+    }
     expect(s.rebuilds.update(3.0, 0)).toBe("now");
     frame();
     expect(s.rebuilds.update(3.05, 0)).toBe("none");
@@ -241,7 +244,7 @@ describe("a shell's rebuilds on the renderer's scheduler", () => {
     expect(s.shown.at(-1)).toEqual({ x: 9.5, z: 0 });
     expect(s.rebuilds.pending()).toBe(false);
     frame();
-    // Past a metre in one frame of a sixtieth of a second: the free camera's boost.
+    // Over 60 m/s across the window: the free camera's boost.
     expect(s.rebuilds.update(12.0, 0)).toBe("now");
     expect(s.shown.at(-1)).toEqual({ x: 12.0, z: 0 });
   });
@@ -346,7 +349,7 @@ describe("a shell's at-once builds and verdicts in the scheduler's read-out", ()
     expect(jobs.last.crossings[0]).toMatchObject({ owner: "stand-in", kind: "now", rule: "first" });
     expect(jobs.last.crossingCount).toBe(1);
     // A crossing at a walk is a job: judged "later", and nothing built at once. The view is brought to the line over
-    // a second, so the speed read over the window is the walk's and not the move's.
+    // a second, so the speed read over the window is about 2 m/s and not the move's.
     time.now += 1000;
     s.rebuilds.update(2.95, 1);
     frame();
