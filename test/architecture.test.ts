@@ -1175,10 +1175,16 @@ describe("layer boundaries", () => {
     expect([...meshes.matchAll(/\baskRings\(/g)].length).toBe(2);
     // Handing the samples over lets go of them, of the moves prepared from them and of the idle work.
     expect(meshes).toContain("  function handOver(): RingSamples[] {\n    samplesAway = true;\n    prepared.fill(null);\n    spare.length = 0;\n    jobs?.idle(ringOwner, null);\n    return rings.splice(0);\n  }");
-    // A build on this thread while the page holds no samples stops the worker and samples the seven anew, a ring a slice.
-    expect(meshes).toContain("    if (samplesAway) {\n      yield* sampleAnew(camX, camZ);\n      if (disposed) return;\n    }\n    covered = uncovered ? null : patchCover;");
-    expect(meshes).toContain("  function* sampleAnew(camX: number, camZ: number): Slices {\n    ringWork?.stop();\n");
-    expect(meshes).toContain("      fresh.push(createRingSamples(seed, level, camX, camZ, base));\n      yield;\n");
+    // A build on this thread while the page holds no samples stops the worker and samples the seven anew: a build at
+    // once a ring a step, a job's in slices by the scheduler's clock. The builds at once say so, and the jobs' do not.
+    expect(meshes).toContain("  function* build(camX: number, camZ: number, uncovered = false, atOnce = false): Slices {\n    if (samplesAway) {\n      yield* sampleAnew(camX, camZ, atOnce);\n      if (disposed) return;\n    }\n    covered = uncovered ? null : patchCover;");
+    expect(meshes).toContain("  function* sampleAnew(camX: number, camZ: number, atOnce: boolean): Slices {\n    ringWork?.stop();\n");
+    expect(meshes).toContain("      if (atOnce) fresh.push(createRingSamples(seed, level, camX, camZ, base));\n      else fresh.push(yield* createRingSamplesSlices(seed, level, camX, camZ, base));\n      yield;\n");
+    expect([...meshes.matchAll(/\bcreateRingSamplesSlices\(/g)].length).toBe(1);
+    expect([...meshes.matchAll(/buildAtOnce\(firstBuilds, ringOwner, build\(camX, camZ, false, true\), "clipmap", jobs\);/g)].length).toBe(2);
+    expect([...meshes.matchAll(/\bbuild\(/g)].length).toBe(7);
+    // A ring's write from the worker is announced to the scheduler as `build`'s is, before the hold for the budget.
+    expect(meshes).toContain("      *holdWrite(ring): Slices {\n        yield CLIPMAP_UPLOAD_MS;\n        if (uploads !== undefined) yield* uploads.hold(sentBytes(ring));\n      },");
     // The worker failing while the job waits leaves the set to today's build, for the job's place.
     expect(meshes).toContain("      finishHere: () => build(camX, camZ),\n");
     // Nothing is prepared ahead while the worker is used, nor while the page holds no samples; the idle work is aimed

@@ -97,7 +97,7 @@ import {
 } from "@babylonjs/lite";
 import type { TrailGraph } from "../../sim/trail.js";
 import {
-  BASE_SPACING_BY_TIER, RING_COUNT, commitRingMove, coversRing, createRingSamples, prepareRingMove,
+  BASE_SPACING_BY_TIER, RING_COUNT, commitRingMove, coversRing, createRingSamples, createRingSamplesSlices, prepareRingMove,
   ringSampleSlices, snapOrigin,
   type CoveredGround, type RingArrays, type RingGeometry, type RingMove, type RingSamples,
 } from "../clipmap.js";
@@ -1008,10 +1008,12 @@ export function createTerrainMeshes(
 
   /** The rings for a camera at (camX, camZ): every ring's samples moved, then each stale ring made again, in slices
    * of its own, and written to its hidden mesh once the frame's upload budget has room for it, then all of them
-   * shown in the last slice. Without `uncovered` the rings leave out the ground the patches now drawn cover. */
-  function* build(camX: number, camZ: number, uncovered = false): Slices {
+   * shown in the last slice. Without `uncovered` the rings leave out the ground the patches now drawn cover. With
+   * `atOnce` it is a build at once (`buildAtOnce`), and a ring it samples anew is sampled whole; a job's samples anew in
+   * slices (`sampleAnew`). */
+  function* build(camX: number, camZ: number, uncovered = false, atOnce = false): Slices {
     if (samplesAway) {
-      yield* sampleAnew(camX, camZ);
+      yield* sampleAnew(camX, camZ, atOnce);
       if (disposed) return;
     }
     covered = uncovered ? null : patchCover;
@@ -1054,14 +1056,16 @@ export function createTerrainMeshes(
     if (!Number.isNaN(ringCrossing.lastX)) aimRings(ringCrossing.lastX, ringCrossing.lastZ, true);
   }
 
-  /** The seven rings sampled anew for a camera at (camX, camZ), a ring a slice, where their samples went to the worker:
-   * the worker is stopped first, so it holds them no more, and the page holds the new ones once all seven are. */
-  function* sampleAnew(camX: number, camZ: number): Slices {
+  /** The seven rings sampled anew for a camera at (camX, camZ), where their samples went to the worker: at once a ring
+   * a step, and in a job in slices by the scheduler's clock (`createRingSamplesSlices`). The worker is stopped first,
+   * so it holds them no more, and the page holds the new ones once all seven are. */
+  function* sampleAnew(camX: number, camZ: number, atOnce: boolean): Slices {
     ringWork?.stop();
     const fresh: RingSamples[] = [];
     for (let level = 0; level < RING_COUNT; level++) {
       if (disposed) return;
-      fresh.push(createRingSamples(seed, level, camX, camZ, base));
+      if (atOnce) fresh.push(createRingSamples(seed, level, camX, camZ, base));
+      else fresh.push(yield* createRingSamplesSlices(seed, level, camX, camZ, base));
       yield;
     }
     rings.push(...fresh);
@@ -1097,7 +1101,9 @@ export function createTerrainMeshes(
       done: () => work.done,
       failed: () => work.failed,
       disposed: () => disposed,
+      // A ring's write is one step, and a long one, as `build`'s.
       *holdWrite(ring): Slices {
+        yield CLIPMAP_UPLOAD_MS;
         if (uploads !== undefined) yield* uploads.hold(sentBytes(ring));
       },
       write(ring) {
@@ -1182,7 +1188,7 @@ export function createTerrainMeshes(
         } else {
           // Nothing is prepared ahead beside a build the loader steps: the build aims it again as it ends.
           jobs?.idle(ringOwner, null);
-          buildAtOnce(firstBuilds, ringOwner, build(camX, camZ), "clipmap", jobs);
+          buildAtOnce(firstBuilds, ringOwner, build(camX, camZ, false, true), "clipmap", jobs);
         }
         return;
       }
@@ -1197,7 +1203,7 @@ export function createTerrainMeshes(
     }
     jobs?.cancel(ringOwner);
     // At once, or stepped by the loader while the film covers the hike.
-    buildAtOnce(firstBuilds, ringOwner, build(camX, camZ), "clipmap", jobs);
+    buildAtOnce(firstBuilds, ringOwner, build(camX, camZ, false, true), "clipmap", jobs);
   }
 
   return {

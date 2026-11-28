@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import "../../src/sim/montane.js";
 import { registerOlympic } from "../../src/sim/olympic.js";
-import { RING_COUNT, createRingSamples, holeCellsFor, ringGeometryBuffers, ringGeometrySlices, type CoveredGround, type RingSamples } from "../../src/game/clipmap.js";
+import {
+  RING_COUNT, createRingSamples, createRingSamplesSlices, holeCellsFor, ringGeometryBuffers, ringGeometrySlices,
+  type CoveredGround, type RingSamples,
+} from "../../src/game/clipmap.js";
 import { PATCH_CELL, PATCH_REACH, facePatchCover } from "../../src/game/facePatches.js";
 import { ringBuildSlices, ringDrawnOf, ringStale, type RingBuffers, type RingDrawn } from "../../src/game/ringBuild.js";
-import { finish } from "../../src/game/syncJobs.js";
+import { SLICE_READ_UNITS, SLICE_TARGET_MS, createSyncJobs, finish, type Slices } from "../../src/game/syncJobs.js";
+import { activeTerrainVariant } from "../../src/sim/terrain.js";
 import { terrainVertexData as fromPlugins } from "../../src/game/lite/terrainPlugins.js";
 import { terrainVertexData } from "../../src/game/terrainVertexData.js";
 import { ringVertices } from "../../src/game/terrainVertices.js";
@@ -73,6 +77,58 @@ describe("ringBuildSlices", () => {
     expect(to.geometry).toBe(once.geometry);
     expect(to.indices).toBe(once.indices);
     expect(to.plugin).toBe(once.plugin);
+  });
+});
+
+/** Every sample array of `a` and `b` the same by `Object.is`, and the rest of them equal. */
+function sameSamples(a: RingSamples, b: RingSamples): void {
+  for (const name of ["h", "hh", "dx", "dz", "colors", "weights", "weights2", "cover", "normals", "lift"] as const) {
+    expect(same(a[name], b[name]), name).toBe(true);
+  }
+  expect([a.level, a.spacing, a.originX, a.originZ, a.lifted, a.moves]).toEqual([b.level, b.spacing, b.originX, b.originZ, b.lifted, b.moves]);
+}
+
+describe("createRingSamplesSlices", () => {
+  it("is createRingSamples to the bit, for a coarse ring", () => {
+    sameSamples(finish(createRingSamplesSlices(SEED, 5, CAM_X, CAM_Z, 2)), rings[5] as RingSamples);
+  });
+
+  it("is createRingSamples to the bit for the finest ring under the scheduler, no slice past the target by more than one reading's interval of samples", () => {
+    // The test clock moves only with the terrain's samples, a hundredth of a millisecond each.
+    const SAMPLE_MS = 0.01;
+    let now = 0;
+    const variant = activeTerrainVariant();
+    const sample = variant.sample;
+    variant.sample = (seed, x, z) => {
+      now += SAMPLE_MS;
+      return sample(seed, x, z);
+    };
+    try {
+      const jobs = createSyncJobs(() => now);
+      const spans: number[] = [];
+      const got: { ring: RingSamples | null } = { ring: null };
+      const inner = createRingSamplesSlices(SEED, 0, CAM_X, CAM_Z, 2);
+      jobs.begin({}, (function* (): Slices {
+        for (;;) {
+          const at = now;
+          const step = inner.next();
+          spans.push(now - at);
+          if (step.done === true) {
+            got.ring = step.value;
+            return;
+          }
+          yield step.value;
+        }
+      })());
+      for (let frames = 0; got.ring === null && frames < 100_000; frames++) jobs.run();
+      if (got.ring === null) throw new Error("the ring was not sampled");
+      sameSamples(got.ring, rings[0] as RingSamples);
+      // Sliced: a whole ring is more than 80,000 samples, some 800 ms of this clock.
+      expect(spans.length).toBeGreaterThan(400);
+      expect(Math.max(...spans)).toBeLessThanOrEqual(SLICE_TARGET_MS + SLICE_READ_UNITS * SAMPLE_MS + 1e-9);
+    } finally {
+      variant.sample = sample;
+    }
   });
 });
 

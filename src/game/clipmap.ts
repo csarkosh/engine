@@ -238,6 +238,39 @@ const VERTEX_SAMPLE_COST = 5;
 const MOVE_SLICE_COST = 80;
 /** Lifts a slice computes before it yields: about as long. */
 const LIFT_SLICE = 1024;
+/** The units of work (`sliceDue`) a row of lifts counts: `LIFT_SLICE` lifts are `MOVE_SLICE_COST` samples' worth. */
+const LIFT_ROW_UNITS = (SIDE * MOVE_SLICE_COST) / LIFT_SLICE;
+
+/**
+ * `createRingSamples` in slices: the same samples in the same order, and the
+ * lifts after all of them, so the ring is the same to the bit. A slice ends
+ * where the scheduler's clock says (`sliceDue`), a vertex's sample counted as
+ * `VERTEX_SAMPLE_COST` half-lattice heights and the lifts a row at a time;
+ * outside a scheduler's slice it runs through.
+ */
+export function* createRingSamplesSlices(seed: number, level: number, camX: number, camZ: number, base = BASE_SPACING): Slices<RingSamples> {
+  const spacing = ringSpacing(level, base);
+  const originX = snapOrigin(camX, spacing);
+  const originZ = snapOrigin(camZ, spacing);
+  const target: Target = { a: ringArrays(), originX, originZ, spacing };
+  for (let jz = 0; jz < HALF_SIDE; jz++) {
+    for (let jx = 0; jx < HALF_SIDE; jx++) {
+      if ((jx & 1) === 0 && (jz & 1) === 0) {
+        sampleInto(target, seed, jx >> 1, jz >> 1);
+        if (sliceDue(VERTEX_SAMPLE_COST)) yield;
+      } else {
+        sampleHalfInto(target, seed, jx, jz);
+        if (sliceDue()) yield;
+      }
+    }
+  }
+  const { a } = target;
+  for (let iz = 0; iz < SIDE; iz++) {
+    for (let ix = 0; ix < SIDE; ix++) a.lift[iz * SIDE + ix] = liftOf(a.h, a.hh, ix, iz);
+    if (sliceDue(LIFT_ROW_UNITS)) yield;
+  }
+  return { level, spacing, originX, originZ, ...a, lifted: SIDE * SIDE, moves: 0 };
+}
 
 /**
  * Re-centres the ring on the camera if its snapped origin moved. Samples are
