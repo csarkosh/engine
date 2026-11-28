@@ -96,7 +96,7 @@ export type ClutterMeshes = {
   /** What is drawn now: the buckets' meshes with an instance, and their instances. */
   drawn(): { meshes: number; instances: number };
   /** What the jobs that asked the worker spent and what the lists looked up themselves; null before the lists exist. */
-  clutterRecord(): { waits: number; waitMs: number; refusedAnswers: number; looked: number; framedHere: number } | null;
+  clutterRecord(): { waits: number; waitMs: number; refusedAnswers: number; looked: number; framedHere: number; behind: boolean; bounds: number } | null;
   dispose(): void;
 };
 
@@ -305,11 +305,14 @@ export function createClutterMeshes(engine: EngineContext, scene: SceneContext, 
     });
   }
 
+  /** Whether the worker is behind, shared by every job; false when the lists are made. */
+  const behind = { value: false };
   /** The buckets of every class from their rows, each mesh hidden until its first list, and the lists that fill them. */
   function adopt(rows: readonly Row[][]): void {
     lists = createClutterLists(seed, { radiusScale, nearBlades, cull: options.cull, rows: rows.map((of) => of.length) });
     // A new renderer's lists start with nothing asked.
     options.clutterWork?.reset();
+    behind.value = false;
     rows.forEach((ofClass, cls) =>
       ofClass.forEach((row, r) =>
         row.levels.forEach((parts, lod) => {
@@ -367,6 +370,8 @@ export function createClutterMeshes(engine: EngineContext, scene: SceneContext, 
   let waits = 0;
   let waitMs = 0;
   let refusedAnswers = 0;
+  /** How many waits ended at the bound. */
+  let bounds = 0;
   /** The client while it is live: absent, or failed, the page looks the cells up as it always did. */
   const liveWork = (): ClutterWork | null => {
     const work = options.clutterWork ?? null;
@@ -390,7 +395,10 @@ export function createClutterMeshes(engine: EngineContext, scene: SceneContext, 
     const ahead = nextCrossing(x, z, hx, hz, CLUTTER_GRASS_CELL, next) ? { x: next[0] as number, z: next[1] as number } : null;
     yield* askThenRebuild(
       {
-        work, unknown: (px, pz, asked) => made.unknown(px, pz, asked), take: (strips, answer, px, pz) => takeAnswer(made, strips, answer, px, pz), rebuild, ahead,
+        work, unknown: (px, pz, asked) => made.unknown(px, pz, asked), take: (strips, answer, px, pz) => takeAnswer(made, strips, answer, px, pz), rebuild, ahead, behind,
+        bounds() {
+          bounds++;
+        },
         now: () => performance.now(), disposed: () => disposed,
         waited(ms) {
           waits++;
@@ -510,7 +518,7 @@ export function createClutterMeshes(engine: EngineContext, scene: SceneContext, 
       return { meshes: shown, instances };
     },
     clutterRecord() {
-      return lists === null ? null : { waits, waitMs, refusedAnswers, looked: lists.looked, framedHere: lists.framedHere };
+      return lists === null ? null : { waits, waitMs, refusedAnswers, looked: lists.looked, framedHere: lists.framedHere, behind: behind.value, bounds };
     },
     dispose() {
       if (disposed) return;

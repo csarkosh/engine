@@ -240,7 +240,7 @@ describe("what the world's requests report", () => {
     expect(kinds(bad)).toEqual(["failed"]);
   });
 
-  it("a quiet prepare posts only done, prepares once and generates no chunk; an ordinary one is as it was", () => {
+  it("a quiet prepare posts only done, prepares once, reads the spawn cells once to make the game's world, and posts no chunk; an ordinary one is as it was", () => {
     const variant = terrainVariant(VARIANT) as TerrainVariant;
     const before = variant.prepare;
     let prepares = 0;
@@ -250,14 +250,15 @@ describe("what the world's requests report", () => {
     try {
       const quiet: WorldPrepReply[] = [];
       expect(prepareWorld({ id: 1, seed: SEED, variant: VARIANT, quiet: true }, (r) => quiet.push(r), counting)).toBe(true);
+      // Exactly one reply, `done`: no `chunks` reply, so no chunk was posted (generateChunk itself is not observable here).
       expect(quiet).toEqual([{ id: 1, kind: "done" }]);
       expect(prepares).toBe(1);
-      expect(spawns).toBe(0);
+      expect(spawns).toBe(1);
       const loud: WorldPrepReply[] = [];
       expect(prepareWorld({ id: 2, seed: SEED, variant: VARIANT }, (r) => loud.push(r), counting)).toBe(true);
       expect(kinds(loud)).toEqual(["prepared", "passHash", "chunks", "done"]);
       expect(prepares).toBe(2);
-      expect(spawns).toBe(1);
+      expect(spawns).toBe(2);
       const bad: WorldPrepReply[] = [];
       expect(prepareWorld({ id: 3, seed: SEED, variant: "nowhere", quiet: true }, (r) => bad.push(r), counting)).toBe(false);
       expect(kinds(bad)).toEqual(["failed"]);

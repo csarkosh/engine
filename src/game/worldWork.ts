@@ -32,8 +32,9 @@
  * (`ringServe.ts`), of the same world: the worker holds the rings' samples
  * the page gave it, re-centres them, and builds and posts each ring that is
  * stale against what the page has drawn, a ring at a time, with its arrays
- * transferred. The rings go before the rock faces, and between two sets of
- * rings one rock-face cell is built where any is asked for.
+ * transferred. The rings go first, then the clutter's cells (`clutterServe.ts`),
+ * then the rock faces; between two sets of rings the clutter in hand and one
+ * rock-face cell are served where any is asked for.
  */
 import { generateChunk, type Chunk } from "../sim/chunk.js";
 import { PLAYER_HALF } from "../sim/constants.js";
@@ -92,7 +93,10 @@ export type WorldWorkGame = {
  * The request's results, posted in order: what the variant prepares for the
  * seed (where it prepares anything), the pass hash, the chunks the first
  * spawn reads, then `done`; either of the first two left out where the
- * request says the page holds it. A terrain
+ * request says the page holds it. A `quiet` request (a second worker) makes
+ * the world for itself and posts only `done`: the variant's prepare, then one
+ * read of the spawn cells, which makes whatever the game makes lazily, with
+ * no chunk generated, no pass hash and no `prepared`. A terrain
  * the sim does not know, a computation that throws or a result that cannot be
  * posted ends the run with one `failed`, and nothing after it. Returns true
  * where the run ended with `done`, false where it ended with `failed`.
@@ -103,6 +107,9 @@ export function prepareWorld(request: WorldPrepRequest, post: (reply: WorldPrepR
     setActiveTerrainVariant(variant);
     if (request.quiet === true) {
       activeTerrainVariant().prepare?.(seed);
+      // A game's world may be made lazily, the first time something reads it (its site, its town plan): the spawn
+      // cells are read once and what they say discarded, so this worker holds the world before it answers `done`.
+      game.spawnCells(seed, PLAYER_HALF);
       post({ id, kind: "done" });
       return true;
     }

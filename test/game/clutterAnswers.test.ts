@@ -179,6 +179,9 @@ function drive(way: Way, positions: Pos[], keptEqual: boolean): { lists: Clutter
       pending = { strips };
     }
     expectDrawnSame(lists, ref, `${way}, crossing ${i}`, keptEqual);
+    // Every instance with kept values is one the collector remembers: the store never outlives the memory.
+    expect(lists.kept, `${way}, crossing ${i} kept against held`).toBeLessThanOrEqual(lists.held);
+    if (way === "late" || way === "never") expect(lists.held, `${way}, crossing ${i} held`).toBe(ref.held);
     if (once !== null) {
       expectDrawnSame(lists, once, `${way}, crossing ${i} against one take`, true);
       // Taken before the rebuild, an answer also stores frames for cells the disc's corners and the budget leave unlisted.
@@ -347,6 +350,39 @@ describe("the collector's unknown and take", () => {
   });
 });
 
+describe("what the collector lets go", () => {
+  beforeAll(() => { seatDriftLogs(trunk()); });
+
+  it("releases each instance taken from an answer exactly once, the same object, when the sweep forgets it, and none still in reach", () => {
+    // A threshold of one cell: every collect sweeps, so the sweep is what the test moves the camera through.
+    const released: ClutterInstance[] = [];
+    const collector = createClutterCollector(SEED, (inst) => released.push(inst), 1);
+    collector.collect(0, 0, SCALE);
+    const strips = collector.unknown(3.2, 0.2, SCALE, () => false);
+    const given: ClutterInstance[] = [];
+    finish(collector.take(strips, answerFor(strips), 3.2, 0.2, (inst) => given.push(inst)));
+    expect(given.length).toBeGreaterThan(0);
+    expect(collector.held).toBeGreaterThanOrEqual(given.length);
+    const inReach = (): Set<ClutterInstance> => new Set(collector.collect(3.2, 0.2, SCALE).flatMap((band) => [...band.near, ...band.far]));
+    // While the camera stays, nothing the answer gave is let go.
+    const drawn = inReach();
+    expect(released.filter((inst) => given.includes(inst))).toEqual([]);
+    expect(released.filter((inst) => drawn.has(inst))).toEqual([]);
+    // Short moves: whatever is let go meanwhile is never one still in the bands.
+    for (const step of [[10, 0], [20, 5], [40, 10]] as [number, number][]) {
+      const bands = collector.collect(3.2 + step[0], 0.2 + step[1], SCALE).flatMap((band) => [...band.near, ...band.far]);
+      for (const inst of bands) expect(released.includes(inst), "an instance in the bands is released").toBe(false);
+    }
+    const heldBefore = collector.held;
+    // Far away: the whole neighbourhood is out of reach and swept.
+    collector.collect(5000, 0, SCALE);
+    for (const inst of given) expect(released.filter((r) => r === inst).length, "released once").toBe(1);
+    expect(new Set(released).size, "no instance released twice").toBe(released.length);
+    expect(collector.held).toBeLessThan(heldBefore);
+    expect(collector.held + released.length).toBeGreaterThanOrEqual(given.length);
+  }, timeLimit(120_000));
+});
+
 describe("an answer that does not fit its strips", () => {
   beforeAll(() => { seatDriftLogs(trunk()); });
 
@@ -440,8 +476,15 @@ describe("the frames an answer carries", () => {
     }
     const all = Int32Array.from(first);
     expect(finish(lists.take(all, answerFor(all), 0, 0))).toBe(true);
-    let logs = 0;
-    const countLogs = (): number => lists.all.reduce((n, bucket) => n + (bucket.cls === CLUTTER_DRIFTLOG ? bucket.list.count : 0), 0);
+    // The distinct drift-log instances listed over the stretch, each told by its matrix: one that stays listed over
+    // many crossings is counted once, not once a crossing.
+    const logged = new Set<string>();
+    const noteLogs = (): void => {
+      for (const bucket of lists.all) {
+        if (bucket.cls !== CLUTTER_DRIFTLOG) continue;
+        for (let k = 0; k < bucket.list.count; k++) logged.add(Array.from(bucket.list.buf.subarray(k * 16, k * 16 + 16)).join(","));
+      }
+    };
     const positions: Pos[] = [{ x: 0, z: 0 }];
     for (let i = 1; i <= 14; i++) positions.push({ x: i * 3.1, z: i < 8 ? 0.3 * i : i * 3.1 - 21 });
     positions.forEach((p, i) => {
@@ -449,9 +492,10 @@ describe("the frames an answer carries", () => {
       expect(finish(lists.take(strips, answerFor(strips), p.x, p.z))).toBe(true);
       finish(lists.rebuild(p.x, p.z));
       finish(ref.rebuild(p.x, p.z));
-      logs += countLogs();
+      noteLogs();
       expectDrawnSame(lists, ref, `ahead, crossing ${i}`, false);
     });
+    const logs = logged.size;
     expect(lists.framedHere, "frames computed by the page").toBeLessThanOrEqual(logs);
     expect(ref.framedHere, "frames the unanswered reference computes").toBeGreaterThan(logs + 1000);
   }, timeLimit(120_000));

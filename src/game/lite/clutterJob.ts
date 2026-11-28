@@ -7,6 +7,10 @@
  * The wait costs no slice: a turn that has nothing to take yields `SLICE_WAITS`, and the scheduler tries again the
  * next frame. It ends when the newest set this job's own ask left out is answered, when the client has failed (a
  * failed client's `through` is its `last`), or `CLUTTER_WAIT_MS` after the job began, by the clock handed in.
+ * A job whose own non-empty ask was refused (two sets already out) does not wait: it takes what has arrived and
+ * rebuilds at once. When the clutter is behind (the last wait ended at the bound, and no job has since begun with
+ * nothing lacking or seen its set answered) a job asks as usual and does not wait, so a worker that has fallen behind
+ * costs one bound, not one per job.
  * This runs only for a crossing judged "later" (`rebuildJobs.ts`), never on a path `finish` runs.
  */
 import type { ClutterWork } from "../clutterWork.js";
@@ -24,12 +28,20 @@ export type ClutterAsking = {
   take(strips: Int32Array, answer: ClutterAnswer, x: number, z: number): Slices<boolean>;
   /** The lists' own rebuild, which looks up whatever is still unknown. */
   rebuild(x: number, z: number): Slices;
+  /**
+   * Whether the worker is behind: one object for the renderer's life, shared by every job. A wait that ends at the
+   * bound sets it; one that ends with its set answered clears it, and so does a job that begins with nothing lacking.
+   * A job that begins while it is set asks as usual and does not wait.
+   */
+  behind: { value: boolean };
   /** The next crossing's place, or null for none. */
   ahead: { x: number; z: number } | null;
   /** The clock (ms). */
   now(): number;
   /** Whether the meshes are gone. */
   disposed(): boolean;
+  /** Told each time a wait ended at the bound. */
+  bounds?(): void;
   /** Told how long the job waited, when it waited at least a frame. */
   waited?(ms: number): void;
 };
@@ -77,7 +89,13 @@ export function* fillThenAskAhead(
   if (ahead !== null) askAhead(p, ahead.x, ahead.z);
 }
 
-/** Asks the worker for the cells this job lacks, waits for them (a bounded time, at no cost), fills them, then rebuilds. */
+/**
+ * Asks the worker for the cells this job lacks, waits for them (a bounded time, at no cost) where it should, fills
+ * them, then rebuilds. The order at its start: with the client failed, rebuild and return; else take and fill every
+ * arrived answer; note whether any cell is lacking (none: the worker has caught up, `behind` is cleared); ask for the
+ * cells not already asked, and for the look-ahead; yield. It then waits only if cells were lacking, its own ask was
+ * not refused, and the clutter was not behind when it began.
+ */
 export function* askThenRebuild(p: ClutterAsking, x: number, z: number): Slices {
   const { work } = p;
   if (work.failed) {
@@ -85,17 +103,31 @@ export function* askThenRebuild(p: ClutterAsking, x: number, z: number): Slices 
     return;
   }
   const began = p.now();
+  yield* fillArrived(p, x, z);
+  if (p.disposed()) return;
   const lacking = p.unknown(x, z, () => false).length > 0;
-  work.ask(p.unknown(x, z, work.asked));
+  if (!lacking) p.behind.value = false;
+  const wasBehind = p.behind.value;
+  const own = p.unknown(x, z, work.asked);
+  const refused = own.length > 0 && work.ask(own) === 0;
   const waitFor = work.last;
   if (p.ahead !== null) askAhead(p, p.ahead.x, p.ahead.z);
   yield;
   let waitedAFrame = false;
-  if (lacking) {
+  if (lacking && !refused && !wasBehind) {
     for (;;) {
       const got = yield* fillArrived(p, x, z);
       if (p.disposed()) return;
-      if (work.through >= waitFor || work.failed || p.now() - began >= CLUTTER_WAIT_MS) break;
+      if (work.through >= waitFor) {
+        p.behind.value = false;
+        break;
+      }
+      if (work.failed) break;
+      if (p.now() - began >= CLUTTER_WAIT_MS) {
+        p.behind.value = true;
+        p.bounds?.();
+        break;
+      }
       waitedAFrame = true;
       if (got > 0) yield;
       else yield SLICE_WAITS;

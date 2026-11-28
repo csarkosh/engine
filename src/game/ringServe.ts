@@ -244,8 +244,9 @@ export function createRingServer(
  * Which of the worker's three kinds of work goes next. A set of rings in hand goes first, a ring a step. The moment a
  * set ends the worker owes the clutter and the rock faces a turn: the steps that follow work the clutter until it has
  * nothing queued or in hand (requests that arrive meanwhile included), then one rock-face cell, and only then the
- * rings again, even where a new set arrived meanwhile. With no rings in hand and nothing owed, the clutter while it
- * has work, else a rock-face cell. A step returns false only where it did nothing.
+ * rings again, even where a new set arrived meanwhile. A clutter kept busy holds the next set of rings and the rock
+ * faces back only as far as the page's two requests out allow (it has at most two out, so its queue runs dry).
+ * With no rings in hand and nothing owed, the clutter while it has work, else a rock-face cell. A step returns false only where it did nothing.
  */
 export function createWorkOrder(
   rings: Pick<RingServer, "step" | "working">, clutter: Pick<ClutterServer, "step" | "working">, patches: Pick<PatchServer, "step">,

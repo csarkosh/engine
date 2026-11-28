@@ -593,6 +593,8 @@ export type ClutterCollector = {
   /** Cached cell count — exposed so tests can pin the eviction bound (the
    * `forestField.ts` `BandCollector.size` idiom). */
   readonly size: number;
+  /** Instances (non-empty cells) the collector remembers now, as many as `release` has not been told of. */
+  readonly held: number;
   /** Cells the last collect looked up, over every class: the cells its
    * squares added and those a sweep had let go inside them. For the tests. */
   readonly walked: number;
@@ -624,7 +626,8 @@ export type ClutterCollector = {
    * answer's instance or as holding nothing. `found` is told of each instance newly remembered, with its index in
    * the answer, in the same step. An answer that does not fit its strips (its arrays not exactly as long as its instances, or an instance
    * whose cell is in no strip or out of the strips' order) is dropped whole: nothing is remembered, `found` is never
-   * called and the result is false; true where the answer was taken.
+   * called and the result is false; true where the answer was taken. The strips must not overlap (`unknown` never
+   * returns overlapping strips): an answer for overlapping strips may be taken wrongly.
    */
   take(
     strips: Int32Array, answer: ClutterAnswer, camX: number, camZ: number, found?: (inst: ClutterInstance, i: number) => void,
@@ -722,8 +725,12 @@ const SWEEP_SLICE = 2048;
  * up again at the next collect, as a walk of every cell would, so the cache
  * and the lists stay exactly what that walk makes of them.
  */
-export function createClutterCollector(seed: number, release?: (inst: ClutterInstance) => void): ClutterCollector {
+export function createClutterCollector(
+  seed: number, release?: (inst: ClutterInstance) => void, sweepSize: number = COLLECTOR_SWEEP_SIZE,
+): ClutterCollector {
   const cache = new Map<number, ClutterInstance | null>();
+  /** Instances (non-empty cells) the cache holds: up as one is remembered, down as the sweep lets one go. */
+  let held = 0;
   const windows = Array.from({ length: CLUTTER_CLASS_COUNT }, () => createCellWindow<ClutterInstance>());
   const fresh = { count: 0 };
   let looked = 0;
@@ -733,6 +740,7 @@ export function createClutterCollector(seed: number, release?: (inst: ClutterIns
     if (inst === undefined) {
       inst = clutterInCell(seed, cls, cx, cz);
       cache.set(key, inst);
+      if (inst !== null) held++;
       fresh.count++;
       looked++;
     }
@@ -750,7 +758,7 @@ export function createClutterCollector(seed: number, release?: (inst: ClutterIns
     const bands = yield* collectClutterSlices(camX, camZ, radiusScale, CLUTTER_BUDGETS, rowsOf);
     // Evict everything every class's disc can no longer reach, but only
     // once enough stale growth has accumulated — see COLLECTOR_SWEEP_SIZE.
-    if (cache.size > COLLECTOR_SWEEP_SIZE) {
+    if (cache.size > sweepSize) {
       // Hoisted out of the per-key loop below:
       // `clutterOrigin` is a pure function of (camX, camZ, cell), and cell
       // takes only CLUTTER_CLASS_COUNT (14) distinct values, so computing it
@@ -771,7 +779,10 @@ export function createClutterCollector(seed: number, release?: (inst: ClutterIns
         const { x: ax, z: az } = originByClass[cls]!;
         if (outOfReach(cls, cx, cz, ax, az)) {
           cache.delete(key);
-          if (inst !== null) release?.(inst);
+          if (inst !== null) {
+            held--;
+            release?.(inst);
+          }
           // A corner cell of the square can lie past the eviction radius and
           // still be held: the next collect looks it up again.
           const w = windows[cls] as CellWindow<ClutterInstance>;
@@ -914,6 +925,7 @@ export function createClutterCollector(seed: number, release?: (inst: ClutterIns
             if (mine) {
               const inst = instanceAt(answer, i);
               cache.set(key, inst);
+              held++;
               found?.(inst, i);
             } else {
               cache.set(key, null);
@@ -939,6 +951,9 @@ export function createClutterCollector(seed: number, release?: (inst: ClutterIns
     prefetchSlices,
     get size(): number {
       return cache.size;
+    },
+    get held(): number {
+      return held;
     },
     get walked(): number {
       return walked;

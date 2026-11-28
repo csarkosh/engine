@@ -140,6 +140,8 @@ export type ClutterLists = {
   readonly framedHere: number;
   /** Cells the collector remembers (`ClutterCollector.size`). */
   readonly cells: number;
+  /** Instances the collector remembers (`ClutterCollector.held`). */
+  readonly held: number;
   /** The camera position the buffers were last built for. */
   readonly view: { readonly x: number; readonly z: number };
   /** Instances whose matrix and tint are kept (`keptValues.ts`). */
@@ -294,6 +296,9 @@ export function createClutterLists(seed: number, options: ClutterListsOptions): 
     },
     get cells() {
       return collector.size;
+    },
+    get held() {
+      return collector.held;
     },
     cut(pose, changed) {
       if (culledBuckets.length === 0) return;

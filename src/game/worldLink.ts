@@ -1,6 +1,6 @@
 /**
  * The page's end of the world's worker, shared by the clients that talk to
- * it (the rock faces' `patchWork.ts`). The link owns the worker's handlers and
+ * it (the rock faces' `patchWork.ts`, the rings' `ringWork.ts` and the clutter's `clutterWork.ts`). The link owns the worker's handlers and
  * its end; a client takes an id of its own, listens for the replies that carry
  * it, and holds the worker while it has use for it.
  *

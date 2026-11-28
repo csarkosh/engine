@@ -17,6 +17,7 @@ function world() {
   const posted: { set: number; cells: number[] }[] = [];
   const waiting: { strips: Int32Array; answer: ClutterAnswer }[] = [];
   const strips = new Map<number, Int32Array>();
+  const behind = { value: false };
   const state = { last: 0, through: 0, failed: false, disposed: false, out: 0 };
   const lookedHere: number[] = [];
   const shown: number[] = [];
@@ -77,6 +78,7 @@ function world() {
       shown.push(x);
     },
     ahead,
+    behind,
     now: () => clock.now,
     disposed: () => state.disposed,
     waited: (ms) => waited.push(ms),
@@ -87,7 +89,7 @@ function world() {
     state.out--;
     waiting.push({ strips: strips.get(set) as Int32Array, answer: { set } as unknown as ClutterAnswer });
   };
-  return { clock, known, posted, state, lookedHere, shown, waited, asking, answer, work, filledSets, takeOpts, isAsked: (cx: number) => asked.has(keyOf(cx)) };
+  return { clock, behind, known, posted, state, lookedHere, shown, waited, asking, answer, work, filledSets, takeOpts, isAsked: (cx: number) => asked.has(keyOf(cx)) };
 }
 
 /** A scheduler on the world's clock, and a frame of it. */
@@ -190,7 +192,8 @@ describe("the clutter's rebuild that asks the worker and waits", () => {
     expect(w.filledSets).toContain(1);
     expect(w.isAsked(10)).toBe(false);
     expect(w.posted.map((p) => p.set)).toEqual([1, 2]);
-    expect(w.lookedHere).toEqual([10, 11, 12]);
+    // The job after a bound is behind: it asked for its cells and did not wait, so it looked its own up at once.
+    expect(w.lookedHere).toEqual([10, 11, 12, 20, 21, 22]);
   });
 
   it("holds a newer crossing behind the job that waits, and runs it after", () => {
@@ -247,7 +250,7 @@ describe("the clutter's rebuild that asks the worker and waits", () => {
     expect(w.lookedHere).toEqual([]);
   });
 
-  it("with two sets already out, asks nothing, waits for what is out, and goes on at the bound", () => {
+  it("with two sets out that do not name its cells, its ask is refused, it does not wait, and rebuilds in the frame it begins", () => {
     const w = world();
     w.work.ask(stripsOf([90]));
     w.work.ask(stripsOf([91]));
@@ -256,16 +259,35 @@ describe("the clutter's rebuild that asks the worker and waits", () => {
     jobs.begin(owner, askThenRebuild(w.asking(), 1, 0), false, "clutter");
     frame();
     expect(w.posted).toHaveLength(2);
+    expect(jobs.last.waits).toBe(0);
+    expect(w.shown).toEqual([1]);
+    expect(w.lookedHere).toEqual([10, 11, 12]);
+    expect(w.clock.now).toBeLessThan(CLUTTER_WAIT_MS);
+    // A refusal is not the worker being behind.
+    expect(w.behind.value).toBe(false);
+  });
+
+  it("with two sets out that name its cells, its own ask is empty, it waits for them, and goes on at the bound", () => {
+    const w = world();
+    w.work.ask(stripsOf([10, 11]));
+    w.work.ask(stripsOf([12]));
+    const { jobs, frame } = scheduler(w.clock);
+    const owner = {};
+    jobs.begin(owner, askThenRebuild(w.asking(), 1, 0), false, "clutter");
+    frame();
+    expect(w.posted).toHaveLength(2);
+    expect(w.shown).toEqual([]);
     for (let n = 0; n < 30 && w.shown.length === 0; n++) frame();
     expect(w.clock.now).toBeGreaterThanOrEqual(CLUTTER_WAIT_MS);
     expect(w.shown).toEqual([1]);
     expect(w.lookedHere).toEqual([10, 11, 12]);
+    expect(w.behind.value).toBe(true);
   });
 
-  it("with two sets out, goes on as soon as what is out is answered", () => {
+  it("with two sets out that name its cells, goes on as soon as what is out is answered", () => {
     const w = world();
-    w.work.ask(stripsOf([90]));
-    w.work.ask(stripsOf([91]));
+    w.work.ask(stripsOf([10, 11]));
+    w.work.ask(stripsOf([12]));
     const { jobs, frame } = scheduler(w.clock);
     jobs.begin({}, askThenRebuild(w.asking(), 1, 0), false, "clutter");
     frame();
@@ -275,6 +297,42 @@ describe("the clutter's rebuild that asks the worker and waits", () => {
     w.answer(2);
     frame();
     expect(w.shown).toEqual([1]);
+    expect(w.lookedHere).toEqual([]);
+    expect(w.behind.value).toBe(false);
+  });
+
+  it("a wait that ends at the bound sets behind; the next job asks and rebuilds without waiting; one with nothing lacking clears it; the one after waits again", () => {
+    const w = world();
+    const { jobs, frame } = scheduler(w.clock);
+    const owner = {};
+    jobs.begin(owner, askThenRebuild(w.asking(), 1, 0), false, "clutter");
+    for (let n = 0; n < 30 && w.shown.length === 0; n++) frame();
+    expect(w.shown).toEqual([1]);
+    expect(w.behind.value).toBe(true);
+    // The next job, at another place, asks for its cells and does not wait.
+    jobs.begin(owner, askThenRebuild(w.asking(), 2, 0), false, "clutter");
+    frame();
+    expect(w.posted.map((p) => p.set)).toEqual([1, 2]);
+    expect(jobs.last.waits).toBe(0);
+    expect(w.shown).toEqual([1, 2]);
+    expect(w.behind.value).toBe(true);
+    // A job that begins with nothing lacking: the worker has caught up.
+    jobs.begin(owner, askThenRebuild(w.asking(), 1, 0), false, "clutter");
+    frame();
+    expect(w.shown).toEqual([1, 2, 1]);
+    expect(w.behind.value).toBe(false);
+    // And the job after waits again when it must (the late answers have come, so its ask is not refused).
+    w.answer(1);
+    w.answer(2);
+    jobs.begin(owner, askThenRebuild(w.asking(), 3, 0), false, "clutter");
+    frame();
+    frame();
+    expect(w.shown).toEqual([1, 2, 1]);
+    expect(jobs.last.waits).toBe(1);
+    w.answer(3);
+    frame();
+    expect(w.shown).toEqual([1, 2, 1, 3]);
+    expect(w.behind.value).toBe(false);
   });
 
   it("askAhead asks only for cells not asked already", () => {
