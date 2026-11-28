@@ -830,7 +830,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
 
   // The rebuilds a crossing starts run as jobs over the frames after it, under the game's per-frame budget
   // (`syncJobs.ts`): `sync` runs this frame's share once every shell has seen the view.
-  const jobs = createSyncJobs(() => performance.now());
+  const jobs = createSyncJobs(clock);
   // The measurement mode (`?gpuTime`): the jobs' record of the last frame, read out as `window.__syncJobs()`. A copy
   // each time: the record is written in place every frame.
   // `__syncJobsReset()` forgets the longest slices recorded, so a reading's are those since the call.

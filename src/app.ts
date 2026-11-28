@@ -68,6 +68,7 @@ import type { HostSession } from "./net/host.js";
 import { isMode } from "./game/modeList.js";
 import { PLAYER_EYE_OFFSET, PLAYER_HALF } from "./sim/constants.js";
 import { loadBirdBed } from "./game/birdBed.js";
+import { sessionNow as filmSessionNow, type FilmSession } from "./game/film/filmClock.js";
 import type { Lobby } from "./net/lobby.js";
 import { worldVersionOf, type Fields, type Telemetry } from "./net/telemetry.js";
 /** A frame longer than this counts as a stall in the heartbeat. */
@@ -105,6 +106,8 @@ export type GameHandle = {
 };
 
 export type GameOptions = {
+  /** Film mode: the session runs on this clock, not the page's. Absent, play is as it always was. */
+  film?: FilmSession;
   lobby: Lobby | null;
   /**
    * This page's peer id on the signaling server, the same for the whole
@@ -394,6 +397,8 @@ function buildGame<
   // A start under the intro's film steps its first builds rather than running each whole
   // (`firstBuilds.ts`): the film's captions and bar keep moving while the forest, the ground cover
   // and the props fill. With no film there is nothing to keep moving, and they build as always.
+  /** The session's clock (ms): the film's when one is given, the page's otherwise. */
+  const sessionClock = filmSessionNow(options.film);
   const firstBuilds = options.deferClipmap === true ? createFirstBuilds() : undefined;
   made(() => firstBuilds?.dispose());
   // The scene the world's worker sampled goes to the first renderer made, the ladder's first
@@ -405,7 +410,7 @@ function buildGame<
     [options.tier, ...options.fallbackTiers],
     {
       build: (next, at) =>
-        game.renderer(next, level, forest, { tier: at, look, deferClipmap: options.deferClipmap, start, prepared: options.takePrepared?.() ?? null, patchWork: options.patchWork, ringWork: options.ringWork, clutterWork: options.clutterWork, worldRead: options.worldRead, firstBuilds, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator) }),
+        game.renderer(next, level, forest, { tier: at, look, deferClipmap: options.deferClipmap, start, prepared: options.takePrepared?.() ?? null, patchWork: options.patchWork, ringWork: options.ringWork, clutterWork: options.clutterWork, worldRead: options.worldRead, firstBuilds, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator), ...(options.film ? { clock: sessionClock } : {}) }),
       freshCanvas: () => document.createElement("canvas"),
       ...engineBindings,
     },
@@ -1120,11 +1125,11 @@ function buildGame<
     if (filmDraw.due(performance.now())) renderer.drawFrame(filmDraw.asks());
   }
 
-  let last = performance.now();
+  let last = sessionClock();
   function frameSeconds(): number {
-    const now = performance.now();
-    const delta = (now - last) / 1000;
-    last = now;
+    const at = sessionClock();
+    const delta = (at - last) / 1000;
+    last = at;
     // For the heartbeat: the worst frame and the stalls since the last one.
     const ms = delta * 1000;
     if (ms > worstFrameMs) worstFrameMs = ms;
@@ -1265,7 +1270,7 @@ function buildGame<
   function runAsHost(): void {
     // `hostPeerId` stamps the host's own Named pairing, so a follower can
     // match it against the lobby.
-    const host = game.host(level, seed, () => performance.now(), {
+    const host = game.host(level, seed, sessionClock, {
       forest,
       hostPeerId: selfPeerId,
       mode,
@@ -1364,7 +1369,7 @@ function buildGame<
       transport.close();
       return;
     }
-    const client = game.join(level, seed, transport, () => performance.now(), {
+    const client = game.join(level, seed, transport, sessionClock, {
       expectedLevelId: forest.levelId,
       forest,
       mode,
@@ -1593,7 +1598,7 @@ function buildGame<
     // The renderer makes its own engine from the canvas it is built on: the
     // one made for the switch (`options.engineFor`), which `freshCanvas`
     // hands out first.
-    build: (next, target) => game.renderer(next, level, forest, { tier: target, look, patchWork: options.patchWork, ringWork: options.ringWork, clutterWork: options.clutterWork, worldRead: options.worldRead, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator) }),
+    build: (next, target) => game.renderer(next, level, forest, { tier: target, look, patchWork: options.patchWork, ringWork: options.ringWork, clutterWork: options.clutterWork, worldRead: options.worldRead, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator), ...(options.film ? { clock: sessionClock } : {}) }),
     freshCanvas: () => document.createElement("canvas"),
     extras: { dispose: side.disposeExtras, build: side.buildExtras },
     rebind: (next) => {

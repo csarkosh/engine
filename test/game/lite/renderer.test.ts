@@ -18,4 +18,10 @@ describe("the hike's renderer on Babylon Lite, before its engine stands", () => 
     expect([...text.matchAll(/\bsurfStepped = true;/g)].length).toBe(1);
     expect([...text.matchAll(/\bsurfStepped = false;/g)].length).toBe(2);
   });
+
+  it("hands its own clock to its sync jobs, performance.now when none is given", () => {
+    const text = sourceText("game/lite/renderer.ts");
+    expect(text).toContain("  const jobs = createSyncJobs(clock);");
+    expect(text).toContain("  const clock = options.clock ?? (() => performance.now());");
+  });
 });
