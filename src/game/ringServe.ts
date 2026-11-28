@@ -8,8 +8,14 @@
  *
  * A ring's positions, normals, plugin vertex data and triangles go to the page transferred, and the worker does not
  * touch them again; the page gives them back with a later request, and the worker builds its next rings into them.
- * Its other vertex arrays never leave the worker and are kept, one set for each shape of ring. Once warm, nothing is
- * made new. This module loads nothing of the renderer.
+ * Its other vertex arrays never leave the worker and are kept, one set for each shape of ring. Arrays are made new
+ * only until as many circulate as the page keeps and gives back. The page holds at most two rings of a level, one in
+ * each of its meshes, and gives the one a newer ring replaces back with its next request, so while a ring is built at
+ * most three of its level are away from the pools, four arrays each: 3 × 7 × 4 = 84 for the seven levels. With the
+ * five arrays each of the two shapes keeps and the one spare set of ten sample arrays the moves share, the worker
+ * makes at most 104 arrays until the first stop, while the page gives back every ring it lets go. A stop forgets the
+ * spare samples with the samples, and the rings the page holds then are not given back, so later sets make some
+ * anew. A failure lets the pools go. This module loads nothing of the renderer.
  */
 import {
   RING_COUNT, coversRing, ringGeometryBuffers, ringSampleSlices, snapOrigin,
@@ -31,7 +37,8 @@ export type RingServer = {
   step(): boolean;
   /** Whether a set is in hand. */
   readonly working: boolean;
-  /** Arrays made new since made, for the read-out and the tests: none once warm. */
+  /** Arrays made new since made, for the read-out and the tests: at most 104 until the first stop, while the page
+   * gives back every ring it lets go (the bound in this module's header). */
   readonly made: number;
 };
 
@@ -54,9 +61,10 @@ type KeptGeometry = Omit<RingGeometry, "positions" | "normals">;
 /**
  * The rings requests' logic, apart from the worker's loop. `madeFor` is the seed and variant of the world the worker
  * made, null before any: a set for another world is one `failed`, as is a set asked with no samples held for its id,
- * a paved ground asked of a terrain that paves none, or a step that throws. After a failure the set ends and the
- * samples of its id are forgotten. A newer request replaces the set in hand. A ring's `ms` is the time its building
- * took, `ringsDone`'s the whole set's, its re-centring included.
+ * a paved ground asked of a terrain that paves none, or a step that throws. After a failure the set ends, the
+ * samples of its id are forgotten, and the pools of arrays given back are let go. Any rings request, of any id,
+ * replaces the set in hand, so a worker serves one rings client. A ring's `ms` is the time its building took,
+ * `ringsDone`'s the whole set's, its re-centring included.
  */
 export function createRingServer(
   post: (reply: WorldPrepReply, transfer: ArrayBuffer[]) => void,
@@ -106,6 +114,8 @@ export function createRingServer(
   const fail = (id: number, error: unknown): void => {
     run = null;
     held.delete(id);
+    floats.clear();
+    words.clear();
     post({ id, kind: "failed", message: error instanceof Error ? error.message : String(error) }, []);
   };
   const isMadeFor = (request: WorldRingsRequest): boolean => {

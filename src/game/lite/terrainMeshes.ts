@@ -40,10 +40,10 @@
  * each ring to its hidden mesh as it arrives, waiting at no cost while none
  * has, and shows the set in one step once it is done (`ringJob.ts`). The
  * first such ask hands the worker the rings' samples, and from then the page
- * holds none and prepares no move ahead. A build on this thread (the first,
- * a teleport, the loader's, or a job whose worker failed) stops the worker
- * and samples the rings anew where the page holds none, and the next job
- * hands them over again.
+ * holds none and prepares no move ahead. A build on this thread (a
+ * teleport, the loader's, or a job whose worker failed) stops the worker and
+ * samples the rings anew where the page holds none, and the next job hands
+ * them over again.
  *
  * The patches change when the camera crosses a line of their cells: at a
  * walk as one job, the cells to build placed nearest first, each into a

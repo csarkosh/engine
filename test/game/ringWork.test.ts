@@ -137,6 +137,17 @@ describe("createRingWork", () => {
     expect(worker.posted).toHaveLength(1);
   });
 
+  it("drops a ring of the set out that arrives after its ringsDone, and does not count it", () => {
+    const { work, ask, ring, done } = make();
+    ask();
+    ring(1, 0);
+    done(1);
+    ring(1, 1);
+    expect(work.take()?.level).toBe(0);
+    expect(work.take()).toBeUndefined();
+    expect(work.record().rings).toBe(1);
+  });
+
   it("drops a reply whose set is not the set out", () => {
     const { work, ask, ring, done } = make();
     ask();
@@ -156,13 +167,23 @@ describe("createRingWork", () => {
     const { worker, work, ask, ring, done } = make();
     ask();
     const sent = ring(1, 0);
+    const kept = ring(1, 1);
     done(1);
     const got = work.take();
     work.giveBack(got?.ring as RingSent);
+    expect(work.take()?.ring).toBe(kept);
     ask(false);
     const second = worker.posted[1] as WorldRingsRequest;
     expect(second.spare).toEqual([sent]);
+    // The very arrays given back, and the ring kept is not among them.
+    const spare = second.spare?.[0] as RingSent;
+    for (const name of ["positions", "normals", "plugin", "indices"] as const) {
+      expect(spare[name], name).toBe(sent[name]);
+      expect(spare[name], name).not.toBe(kept[name]);
+    }
     expect(worker.transfers[1]).toHaveLength(4);
+    const buffers = worker.transfers[1] as ArrayBuffer[];
+    [sent.positions, sent.normals, sent.plugin, sent.indices].forEach((array, i) => expect(buffers[i]).toBe(array.buffer));
     done(2);
     ask(false);
     expect((worker.posted[2] as WorldRingsRequest).spare).toBeUndefined();
@@ -234,7 +255,7 @@ describe("createRingWork", () => {
     expect(work.out).toBe(false);
   });
 
-  it("a failed reply of another id does not fail it", () => {
+  it("a failed reply of another id does not fail it: the link routes replies by id, as the client relies on", () => {
     const { work, ask, reply } = make();
     ask();
     reply({ kind: "failed", message: "x" }, 999999);

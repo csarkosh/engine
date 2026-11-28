@@ -8,6 +8,7 @@ import {
 } from "../../src/game/clipmap.js";
 import { PATCH_CELL, PATCH_REACH, facePatchCover, type PatchReach } from "../../src/game/facePatches.js";
 import { ringBuildSlices, ringDrawnOf, ringStale, type RingBuffers, type RingDrawn } from "../../src/game/ringBuild.js";
+import { SAMPLE_ARRAYS } from "../../src/game/ringWire.js";
 import {
   createRingServer, createWorkOrder, ringSentTransfer, ringsRequestTransfer,
   type RingCover, type RingSent, type WorldRingsRequest,
@@ -47,6 +48,20 @@ function startRings(): RingSamples[] {
 }
 
 const NONE: (RingDrawn | null)[] = Array.from({ length: RING_COUNT }, () => null);
+
+/** How many sets after the one that made it the page gives a ring back, for a level made in every set: the ring is
+ * written to one of the level's two meshes, the next set's to the other, and the set after that writes over it, so it
+ * goes back with the request after that. */
+const GIVEN_BACK_AFTER = 3;
+/**
+ * The most arrays the worker makes while every ring comes back that many sets later. As a set is built, the rings of it
+ * and of the two sets before it are away: at most seven rings a set, four arrays a ring (positions, normals, plugin
+ * vertex data, triangles), 3 × 7 × 4 = 84. Then the arrays a shape of ring keeps, of the two shapes (with a hole and
+ * the finest, without): five each (its 16-bit triangles, colours, weights, second weights and cover), 2 × 5 = 10. Then
+ * the one spare set of sample arrays the rings' moves share, ten: 84 + 10 + 10 = 104.
+ */
+const MADE_BOUND = GIVEN_BACK_AFTER * RING_COUNT * 4 + 2 * 5 + SAMPLE_ARRAYS.length;
+
 type RingReply = Extract<WorldPrepReply, { kind: "ring" }>;
 
 /** Every element of `a` and `b` the same by `Object.is`, and the same length. */
@@ -147,7 +162,7 @@ describe("the world's worker serving sets of rings", { timeout: timeLimit(20_000
 
       const page: Page = { rings: startRings(), spare: [], drawn: [...NONE] };
       const { posted, server, ask } = collect();
-      /** The rings each set posted, given back with the request after next. */
+      /** The rings each set posted, given back with the request `GIVEN_BACK_AFTER` sets later, as the page gives them. */
       const out: RingSent[][] = [];
       let leftOut = 0;
       let leftOutAfterNone = 0;
@@ -155,7 +170,8 @@ describe("the world's worker serving sets of rings", { timeout: timeLimit(20_000
         const cover = coverAt(set);
         const drawn = [...page.drawn];
         ask(request(set, x, z, {
-          cover: sent(cover), drawn, ...(set === 0 ? { samples: startRings() } : {}), ...(set >= 2 ? { spare: out[set - 2] } : {}),
+          cover: sent(cover), drawn, ...(set === 0 ? { samples: startRings() } : {}),
+          ...(set >= GIVEN_BACK_AFTER ? { spare: out[set - GIVEN_BACK_AFTER] } : {}),
         }));
         const from = posted.length;
         while (server.step()) { /* the whole set */ }
@@ -180,6 +196,7 @@ describe("the world's worker serving sets of rings", { timeout: timeLimit(20_000
           }
         });
         out.push(rings.map((r) => r.ring));
+        expect(server.made, `set ${set}`).toBeLessThanOrEqual(MADE_BOUND);
       });
       // The covers leave triangles out, the one after none among them, into index arrays a set under none filled.
       expect(leftOut).toBeGreaterThan(0);
@@ -260,6 +277,26 @@ describe("the world's worker serving sets of rings", { timeout: timeLimit(20_000
     expect(made[0]).toBeGreaterThan(0);
     for (let set = 3; set < made.length; set++) expect(made[set], `set ${set}`).toBe(made[2]);
   }, timeLimit(120_000));
+
+  it("a failure lets the pools of arrays given back go", () => {
+    let world: World = { seed: SEED, variant: VARIANT };
+    const { posted, server, ask, run } = collect(() => world);
+    ask(request(1, START_X, START_Z, { samples: startRings() }));
+    run();
+    const first = server.made;
+    const rings = posted.filter((r): r is RingReply => r.kind === "ring");
+    expect(rings).toHaveLength(RING_COUNT);
+    // Given back with a set the worker fails.
+    world = null;
+    ask(request(2, START_X, START_Z, { spare: rings.map((r) => r.ring) }));
+    expect(posted.map((r) => r.kind)).toEqual([...rings.map(() => "ring"), "ringsDone", "failed"]);
+    // A set after it makes every ring's four arrays new, and only those: the arrays a shape of ring keeps stay.
+    world = { seed: SEED, variant: VARIANT };
+    ask(request(3, START_X, START_Z, { samples: startRings() }));
+    run();
+    expect(posted.filter((r) => r.kind === "ring")).toHaveLength(2 * RING_COUNT);
+    expect(server.made - first).toBe(4 * RING_COUNT);
+  });
 
   it("the samples given replace the ones held", () => {
     const { posted, server, ask, run } = collect();

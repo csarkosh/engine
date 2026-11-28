@@ -17,10 +17,12 @@
  * the set of any reply received; a set's own list ends at its `patchesDone`),
  * and what arrived or was taken is limited to the keys the newest set names.
  *
- * The client fails for good when the worker answers `failed` to it, the link fails (the worker errs, sends a
- * message that cannot be read, or a post throws): it holds nothing, posts
- * nothing and `take` gives undefined. A `failed` reply answers one request: it fails this client alone, of the
- * clients on the link. `dispose` releases the client's hold on the link, which ends the worker once no hold is left.
+ * The client fails for good when the worker answers `failed` to it, the link
+ * fails (the worker errs, sends a message that cannot be read, or a post
+ * throws): it holds nothing, posts nothing and `take` gives undefined. A
+ * `failed` reply answers one request: it fails this client alone, of the
+ * clients on the link. `dispose` releases the client's hold on the link, which
+ * ends the worker once no hold is left.
  *
  * This module imports types only, so it reaches no terrain at run time.
  */
