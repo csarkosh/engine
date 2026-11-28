@@ -33,6 +33,18 @@
  * sampled ahead, and a rebuild that finds its move prepared commits it in
  * one step.
  *
+ * Given the world's worker for the rings (`ringWork`), and while it has not
+ * failed, the job is the worker's and is not patient: as its first slice
+ * begins it asks for the camera's place, against what the page has drawn,
+ * and the worker moves the samples and makes each stale ring; the job writes
+ * each ring to its hidden mesh as it arrives, waiting at no cost while none
+ * has, and shows the set in one step once it is done (`ringJob.ts`). The
+ * first such ask hands the worker the rings' samples, and from then the page
+ * holds none and prepares no move ahead. A build on this thread (the first,
+ * a teleport, the loader's, or a job whose worker failed) stops the worker
+ * and samples the rings anew where the page holds none, and the next job
+ * hands them over again.
+ *
  * The patches change when the camera crosses a line of their cells: at a
  * walk as one job, the cells to build placed nearest first, each into a
  * slot of the patches' mesh that no triangle drawn names yet, then in the
@@ -99,12 +111,15 @@ import type { PatchWork } from "../patchWork.js";
 import type { QualityTier } from "../quality.js";
 import { createCrossing, crossingAt, finish, nextCrossing, type Slices, type SyncJobs } from "../syncJobs.js";
 import { ringBuildSlices, ringDrawnOf, ringStale, type RingBuffers, type RingDrawn } from "../ringBuild.js";
+import type { RingCover, RingSent } from "../ringWire.js";
+import type { RingArrived, RingWork } from "../ringWork.js";
 import { facePatchVertices, ringVertices, type TerrainVertices } from "../terrainVertices.js";
 import { activeTerrainVariant } from "../../sim/terrain.js";
 import type { PatchCellAsk } from "../worldWork.js";
 import { DRAW_ORDER, DRAW_PLACES } from "./drawOrder.js";
 import type { FrameUploads } from "./frameUploads.js";
 import { askThenPlace, type PatchPlacing } from "./patchJob.js";
+import { askThenPlaceRings, type RingPlacing } from "./ringJob.js";
 import {
   createMarkedRun, createPatchPool, firstDifference, patchIndexCapacity, patchIndexCount, patchVertexCount, writePatchTriangles,
   type DrawnPatch, type PatchSlot,
@@ -179,6 +194,9 @@ export type TerrainMeshOptions = {
   /** The session's client of the world's worker (`patchWork.ts`): given it, and while it has not failed, a crossing's
    * rock faces are asked of the worker and placed as they arrive. The meshes never end it. */
   patchWork?: PatchWork | null;
+  /** The session's client of the world's worker for the rings (`ringWork.ts`): given it, and while it has not failed, a
+   * crossing's rings are asked of the worker, written as they arrive and shown as a set. The meshes never end it. */
+  ringWork?: RingWork | null;
 };
 
 /** The rings of the terrain in a lake's reflections: the five finest, to the ridges past the fourth's 512 m. */
@@ -200,17 +218,31 @@ export function patchPlace(ci: number, cj: number): number {
 }
 
 /** The bytes a mesh's geometry is: its positions, its normals and its triangles. */
-function geometryBytes(vertices: TerrainVertices, indices: Uint32Array): number {
+function geometryBytes(vertices: Pick<TerrainVertices, "positions" | "normals">, indices: Uint32Array): number {
   return vertices.positions.byteLength + vertices.normals.byteLength + indices.byteLength;
 }
 
-/** One of a ring's two meshes, and what it is written from: the ring's geometry, its triangles at the index buffer's
- * full size, and its plugin vertex data. Null until the ring is first made into it. */
-type RingTwin = RingBuffers & { mesh: Mesh | null; inScene: boolean };
+/** One of a ring's two meshes, written from buffers this thread made: the ring's geometry, its triangles at the index
+ * buffer's full size, and its plugin vertex data, which a build here makes the ring again into. Null until the ring is
+ * first made into it. */
+type PageTwin = RingBuffers & { mesh: Mesh | null; inScene: boolean; sent: null };
+/** One of a ring's two meshes, written from a ring the world's worker sent (`sent`), its plugin vertex data the ring's
+ * own: it goes back to the worker once the mesh is written from another. */
+type WorkerTwin = { mesh: Mesh | null; inScene: boolean; sent: RingSent; geometry: null; indices: null; plugin: Float32Array };
+/** One of a ring's two meshes, and what it is written from: this thread's buffers, or a ring the worker sent. */
+type RingTwin = PageTwin | WorkerTwin;
 
 /** A cell as built: its spacing and stitch, its place among the draws, and its patch's slot in the pool, null for a
  * cell with no steep ground. */
 type PatchEntry = { spacing: number; stitch: number; place: number; slot: PatchSlot | null; pattern: Uint16Array | null };
+
+/** `covered` as it is sent to the world's worker: without its paved-ground function, which the worker makes from the
+ * terrain's own as the page does (`ringServe.ts`). */
+function ringCover(covered: CoveredGround | null): RingCover | null {
+  if (covered === null) return null;
+  const { x, z, reach, fine, cell } = covered;
+  return { x, z, reach, fine, cell, pavedMargin: covered.paved === undefined ? null : (covered.pavedMargin ?? null) };
+}
 
 /** A set for a camera's cell: the cells walked from its centre, their stitches as numbers, and the indices of those
  * the set drawn does not hold as they are wanted, nearest the centre first. */
@@ -236,7 +268,7 @@ export function createTerrainMeshes(
   let disposed = false;
 
   /** A terrain mesh of `vertices`, with its plugin vertex data, in `material`, drawn at `order` among the opaque meshes: not in the scene yet. */
-  function meshOf(name: string, material: Material, vertices: TerrainVertices, drawnIndices: Uint32Array, plugin: Float32Array, order: number): Mesh {
+  function meshOf(name: string, material: Material, vertices: Pick<TerrainVertices, "positions" | "normals">, drawnIndices: Uint32Array, plugin: Float32Array, order: number): Mesh {
     const made = createMeshFromData(engine, name, vertices.positions, vertices.normals, drawnIndices);
     made.pluginVertexData = plugin;
     made.material = material;
@@ -756,6 +788,8 @@ export function createTerrainMeshes(
 
   // ---- The rings -----------------------------------------------------------------------------------------------
 
+  /** The seven rings' samples, while the page holds them: empty from when they go to the world's worker until a build
+   * on this thread samples them anew (`samplesAway`). */
   const rings: RingSamples[] = [];
   /** Each ring's two meshes, and which of them is drawn (-1: neither yet). A rebuild writes the other, which no frame
    * draws, and its last slice shows it in the drawn one's place. */
@@ -776,22 +810,48 @@ export function createTerrainMeshes(
   /** The camera's last move between two frames: its heading. */
   let headingX = 0;
   let headingZ = 0;
-  const twin = (): RingTwin => ({ mesh: null, geometry: null, indices: null, plugin: null, inScene: false });
+  /** The world's worker's client for the rings, the session's: the rings' jobs ask it for their rings while it has not
+   * failed. */
+  const ringWork = options.ringWork ?? null;
+  /** Whether the rings' samples went to the worker, so the page holds none (`rings` is empty). */
+  let samplesAway = false;
+  const twin = (): RingTwin => ({ mesh: null, geometry: null, indices: null, plugin: null, inScene: false, sent: null });
   for (let level = 0; level < RING_COUNT; level++) {
     twins.push([twin(), twin()]);
     shown.push(-1);
     prepared.push(null);
   }
+  /** Which of ring `level`'s two meshes is not drawn. */
+  const hiddenAt = (level: number): 0 | 1 => (shown[level] === 0 ? 1 : 0);
   /** The mesh of ring `level` that is not drawn: the one a rebuild writes. */
-  const hidden = (level: number): RingTwin => (twins[level] as [RingTwin, RingTwin])[shown[level] === 0 ? 1 : 0];
+  const hidden = (level: number): RingTwin => (twins[level] as [RingTwin, RingTwin])[hiddenAt(level)];
+  /** Whether the rings' next moves are prepared ahead: not while the worker is used, nor while the page holds no samples. */
+  const preparesAhead = (): boolean => !samplesAway && (ringWork === null || ringWork.failed);
 
   const coverOf = (level: number): CoveredGround | null => (coversRing(covered, (rings[level] as RingSamples).spacing) ? covered : null);
 
-  function stale(level: number): boolean {
+  /** What ring `level` made from the page's samples as they stand is made against. */
+  function drawnNow(level: number): RingDrawn {
     const ring = rings[level] as RingSamples;
     const finer = level > 0 ? (rings[level - 1] as RingSamples) : null;
     const coarser = level < RING_COUNT - 1 ? (rings[level + 1] as RingSamples) : null;
-    return ringStale(drawn[level], ringDrawnOf(ring, finer, coarser, coverOf(level)));
+    return ringDrawnOf(ring, finer, coarser, coverOf(level));
+  }
+
+  function stale(level: number): boolean {
+    return ringStale(drawn[level], drawnNow(level));
+  }
+
+  /** Ring `level`'s hidden mesh as this thread makes the ring into it: one written from the worker's ring is given
+   * buffers of this thread's, as on first use, and the worker's ring is dropped. */
+  function madeHere(level: number): PageTwin {
+    const pair = twins[level] as [RingTwin, RingTwin];
+    const at = hiddenAt(level);
+    const to = pair[at];
+    if (to.sent === null) return to;
+    const here: PageTwin = { mesh: to.mesh, inScene: to.inScene, geometry: null, indices: null, plugin: null, sent: null };
+    pair[at] = here;
+    return here;
   }
 
   /** Ring `level` made again from its samples, in slices, into the arrays its hidden mesh is written from. */
@@ -800,7 +860,7 @@ export function createTerrainMeshes(
     const finer = level > 0 ? (rings[level - 1] as RingSamples) : null;
     // The border blends to the coarser ring's samples, so every ring has moved before any ring emits.
     const coarser = level < RING_COUNT - 1 ? (rings[level + 1] as RingSamples) : null;
-    const to = hidden(level);
+    const to = madeHere(level);
     yield* ringBuildSlices(ring, finer, coarser, coverOf(level), to);
   }
 
@@ -836,12 +896,38 @@ export function createTerrainMeshes(
     return to.inScene ? 0 : (to.plugin?.byteLength ?? 0);
   }
 
+  /** The bytes writing `arrived`, a ring the worker sent, to its level's hidden mesh sends, as `stageBytes` counts
+   * them: its geometry, and its plugin vertex data where the mesh stands in the scene. */
+  function sentBytes(arrived: RingArrived): number {
+    const { ring } = arrived;
+    return geometryBytes(ring, ring.indices) + (hidden(arrived.level).inScene ? ring.plugin.byteLength : 0);
+  }
+
+  /** `arrived`, a ring the worker sent, written to its level's hidden mesh, or to a mesh made for it, as `stage` writes
+   * one of this thread's. The mesh holds the ring from then; what it held before goes back to the worker if it was the
+   * worker's, and is dropped if it was this thread's. */
+  function writeSent(work: RingWork, arrived: RingArrived): void {
+    const { level, ring } = arrived;
+    const pair = twins[level] as [RingTwin, RingTwin];
+    const at = hiddenAt(level);
+    const to = pair[at];
+    let mesh = to.mesh;
+    if (mesh === null) mesh = meshOf(`clipmap_${level}`, materials.ground, ring, ring.indices, ring.plugin, DRAW_ORDER.rings + level / DRAW_PLACES);
+    else {
+      updateMeshGeometry(engine, mesh, ring.positions, ring.normals, ring.indices);
+      mesh.pluginVertexData = ring.plugin;
+      mesh.pluginVertexVersion = (mesh.pluginVertexVersion ?? 0) + 1;
+      uploads?.stream("geometry", geometryBytes(ring, ring.indices), 3);
+      if (to.inScene) uploads?.stream("pluginVertices", ring.plugin.byteLength);
+    }
+    if (to.sent !== null) work.giveBack(to.sent);
+    pair[at] = { mesh, inScene: to.inScene, sent: ring, geometry: null, indices: null, plugin: ring.plugin };
+  }
+
   /** Ring `level`'s hidden mesh shown in the drawn one's place, and the other hidden for the next rebuild to write. A
-   * mesh that first joins the scene sends its plugin vertex data with the frame. */
-  function show(level: number): void {
-    const ring = rings[level] as RingSamples;
-    const finer = level > 0 ? (rings[level - 1] as RingSamples) : null;
-    const coarser = level < RING_COUNT - 1 ? (rings[level + 1] as RingSamples) : null;
+   * mesh that first joins the scene sends its plugin vertex data with the frame. `made` is what the ring was made
+   * against, where the worker made it; else it is worked out from the page's samples. */
+  function show(level: number, made?: RingDrawn): void {
     const to = hidden(level);
     const mesh = to.mesh as Mesh;
     if (to.inScene) setMeshVisible(mesh, true);
@@ -860,7 +946,7 @@ export function createTerrainMeshes(
       if (old.mesh !== null) setMeshVisible(old.mesh, false);
     }
     shown[level] = was === 0 ? 1 : 0;
-    drawn[level] = ringDrawnOf(ring, finer, coarser, coverOf(level));
+    drawn[level] = made ?? drawnNow(level);
   }
 
   /** Hands back a prepared move that is not for ring `level` as it stands, going to (ox, oz), or, with `onTheWay`,
@@ -916,7 +1002,7 @@ export function createTerrainMeshes(
 
   /** Re-aims the idle work at the camera's next moves, when they changed. */
   function aimRings(camX: number, camZ: number, force: boolean): void {
-    if (jobs === undefined || jobs.pending(ringOwner)) return;
+    if (jobs === undefined || jobs.pending(ringOwner) || !preparesAhead()) return;
     if (expect(camX, camZ) || force) jobs.idle(ringOwner, prepare());
   }
 
@@ -924,6 +1010,10 @@ export function createTerrainMeshes(
    * of its own, and written to its hidden mesh once the frame's upload budget has room for it, then all of them
    * shown in the last slice. Without `uncovered` the rings leave out the ground the patches now drawn cover. */
   function* build(camX: number, camZ: number, uncovered = false): Slices {
+    if (samplesAway) {
+      yield* sampleAnew(camX, camZ);
+      if (disposed) return;
+    }
     covered = uncovered ? null : patchCover;
     for (let level = 0; level < RING_COUNT; level++) {
       const ring = rings[level] as RingSamples;
@@ -964,8 +1054,99 @@ export function createTerrainMeshes(
     if (!Number.isNaN(ringCrossing.lastX)) aimRings(ringCrossing.lastX, ringCrossing.lastZ, true);
   }
 
+  /** The seven rings sampled anew for a camera at (camX, camZ), a ring a slice, where their samples went to the worker:
+   * the worker is stopped first, so it holds them no more, and the page holds the new ones once all seven are. */
+  function* sampleAnew(camX: number, camZ: number): Slices {
+    ringWork?.stop();
+    const fresh: RingSamples[] = [];
+    for (let level = 0; level < RING_COUNT; level++) {
+      if (disposed) return;
+      fresh.push(createRingSamples(seed, level, camX, camZ, base));
+      yield;
+    }
+    rings.push(...fresh);
+    samplesAway = false;
+  }
+
+  /** Asks `work` for the rings for a camera at (camX, camZ), leaving out the ground the patches now drawn cover, against
+   * what the page has drawn; with the page's samples where the worker holds none, after which the page holds none, nor
+   * the moves prepared from them, nor the spare arrays the moves share. */
+  function askRings(work: RingWork, camX: number, camZ: number): void {
+    if (work.failed) return;
+    covered = patchCover;
+    const request = { camX, camZ, cover: ringCover(covered), drawn: Array.from({ length: RING_COUNT }, (_, level) => drawn[level] ?? null) };
+    work.ask(work.holds ? request : { ...request, samples: handOver() });
+  }
+
+  /** The page's samples, taken out of `rings` for the worker: what was prepared from them and ahead of them goes. */
+  function handOver(): RingSamples[] {
+    samplesAway = true;
+    prepared.fill(null);
+    spare.length = 0;
+    jobs?.idle(ringOwner, null);
+    return rings.splice(0);
+  }
+
+  /** What writing and showing the rings `work` sends for a camera at (camX, camZ) takes (`ringJob.ts`). */
+  function ringPlacing(work: RingWork, camX: number, camZ: number): RingPlacing {
+    /** The rings written in this job, and what each was made against. */
+    const written: { level: number; drawn: RingDrawn }[] = [];
+    return {
+      ask: () => askRings(work, camX, camZ),
+      arrived: () => work.take(),
+      done: () => work.done,
+      failed: () => work.failed,
+      disposed: () => disposed,
+      *holdWrite(ring): Slices {
+        if (uploads !== undefined) yield* uploads.hold(sentBytes(ring));
+      },
+      write(ring) {
+        writeSent(work, ring);
+        written.push({ level: ring.level, drawn: ring.drawn });
+      },
+      *holdShow(): Slices {
+        let showing = 0;
+        for (const ring of written) showing += showBytesOf(ring.level);
+        if (uploads !== undefined) yield* uploads.hold(showing);
+      },
+      show() {
+        for (const ring of written) show(ring.level, ring.drawn);
+      },
+      // The rings written are not shown as they are: the build samples anew, and makes again and shows whatever is
+      // stale against what is drawn. A ring it finds fresh stays hidden, and only a build or a job that writes a ring
+      // shows it.
+      finishHere: () => build(camX, camZ),
+    };
+  }
+
+  /**
+   * The rings for a camera at (camX, camZ) with the world's worker: asked of `work` as the job's first slice begins,
+   * never at the crossing, then each written to its hidden mesh as it arrives and all of them shown in one step once
+   * the set is done (`askThenPlaceRings`). Where neither the page nor the worker holds the samples (a build that was to
+   * sample them anew was dropped before it did), the job is this thread's build. A job dropped while its set is out
+   * stops the worker, so the next ask finds none out.
+   */
+  function* ringsAsked(work: RingWork, camX: number, camZ: number): Slices {
+    if (samplesAway && !work.holds) {
+      yield* build(camX, camZ);
+      return;
+    }
+    try {
+      yield* askThenPlaceRings(ringPlacing(work, camX, camZ));
+    } finally {
+      if (work.out) work.stop();
+    }
+  }
+
+  /** Begins the rings' rebuild for a camera at (camX, camZ) as a job that is not patient: asked of the worker where
+   * there is one that has not failed, else built on this thread. */
+  function beginRings(camX: number, camZ: number): void {
+    if (ringWork !== null && !ringWork.failed) (jobs as SyncJobs).begin(ringOwner, ringsAsked(ringWork, camX, camZ), false, "clipmap");
+    else (jobs as SyncJobs).begin(ringOwner, build(camX, camZ), false, "clipmap");
+  }
+
   function* firstBuild(onRing?: (level: number) => void): Slices {
-    if (rings.length === RING_COUNT || disposed) return;
+    if (rings.length === RING_COUNT || samplesAway || disposed) return;
     const at = options.start ?? { x: 0, z: 0 };
     const sampled = options.rings ?? null;
     for (let level = 0; level < RING_COUNT; level++) {
@@ -980,7 +1161,7 @@ export function createTerrainMeshes(
   }
 
   function updateRings(camX: number, camZ: number): void {
-    if (rings.length < RING_COUNT) return;
+    if (rings.length < RING_COUNT && !samplesAway) return;
     const hx = camX - ringCrossing.lastX;
     const hz = camZ - ringCrossing.lastZ;
     if ((hx !== 0 || hz !== 0) && !Number.isNaN(hx) && !Number.isNaN(hz)) {
@@ -997,7 +1178,7 @@ export function createTerrainMeshes(
       if (!(jobs?.pending(ringOwner) ?? false) && patchCover !== covered) {
         // The first cover the rings are built for cannot wait; one that changes after that is the scheduler's.
         if (jobs !== undefined && covered !== null) {
-          jobs.begin(ringOwner, build(camX, camZ), false, "clipmap");
+          beginRings(camX, camZ);
         } else {
           // Nothing is prepared ahead beside a build the loader steps: the build aims it again as it ends.
           jobs?.idle(ringOwner, null);
@@ -1011,7 +1192,7 @@ export function createTerrainMeshes(
     // A new place: a build the loader still holds for the last one is dropped.
     firstBuilds?.cancel(ringOwner);
     if (kind === "later") {
-      (jobs as SyncJobs).begin(ringOwner, build(camX, camZ), false, "clipmap");
+      beginRings(camX, camZ);
       return;
     }
     jobs?.cancel(ringOwner);
@@ -1044,6 +1225,8 @@ export function createTerrainMeshes(
       jobs?.idle(ringOwner, null);
       // The worker stops, and its client, the session's, holds nothing of these meshes: a renderer made next asks anew.
       patchWork?.clear();
+      // And the rings' worker forgets their samples; its client is the session's too.
+      ringWork?.stop();
       for (const entry of cells.values()) dropPatch(entry);
       for (const entry of ready.values()) discardPatch(entry);
       cells.clear();

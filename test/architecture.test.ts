@@ -1132,7 +1132,9 @@ describe("layer boundaries", () => {
     expect(meshes).toContain("  function* rebuildAsked(work: PatchWork, ci: number, cj: number): Slices {\n    const w = yield* askThenPlace(() => askPatches(work, want(ci, cj)), (set) => placing(work, set));");
     expect(meshes).toContain("  function* buildAheadAsked(work: PatchWork, ci: number, cj: number): Slices {\n    yield* askThenPlace(() => askPatches(work, want(ci, cj)), (set) => placing(work, set));\n  }");
     expect([...meshes.matchAll(/\baskPatches\(/g)].length).toBe(3);
-    expect([...meshes.matchAll(/\.ask\(/g)].length).toBe(1);
+    // The one other ask is the rings' job's, as it first runs (`askRings`, below).
+    expect([...meshes.matchAll(/\.ask\(/g)].length).toBe(2);
+    expect(meshes).toContain("    work.ask(work.holds ? request : { ...request, samples: handOver() });\n");
     // A set built at once after the first update stops the worker; the first update's asks nothing of it.
     expect(meshes).toContain("    const first = Number.isNaN(patchCrossing.originX);");
     expect(meshes).toMatch(/ {4}jobs\?\.cancel\(patchOwner\);\s+if \(!first\) patchWork\?\.clear\(\);\n/);
@@ -1141,6 +1143,46 @@ describe("layer boundaries", () => {
     expect(dispose).toContain("      patchWork?.clear();");
     expect([...meshes.matchAll(/\bpatchWork\?\.clear\(\);/g)].length).toBe(2);
     expect(meshes).not.toMatch(/\bpatchWork\??\.dispose\(|\bwork\.dispose\(/);
+  });
+
+  /**
+   * What `ringJob.test.ts` cannot see of the rings' side of the world's worker, since `terrainMeshes.ts` needs a GPU:
+   * how their jobs are begun, when they ask, what a build on this thread does while the page holds no samples, that
+   * nothing is prepared ahead while the worker is used, and what the meshes' end does to the client.
+   */
+  it("asks the world's worker for the rings only as a job runs, samples anew on this thread where the page holds none, and never ends it", () => {
+    const meshes = stripComments(readFileSync(at("game", "lite", "terrainMeshes.ts"), "utf8"));
+    // The worker's job is not patient, and is begun only while the client has not failed; else today's build, also not
+    // patient. Both the crossing judged later and the covered ground that changes under a still camera begin it.
+    expect(meshes).toContain('    if (ringWork !== null && !ringWork.failed) (jobs as SyncJobs).begin(ringOwner, ringsAsked(ringWork, camX, camZ), false, "clipmap");\n    else (jobs as SyncJobs).begin(ringOwner, build(camX, camZ), false, "clipmap");');
+    expect(meshes).toContain("        if (jobs !== undefined && covered !== null) {\n          beginRings(camX, camZ);\n        } else {");
+    expect(meshes).toContain('    if (kind === "later") {\n      beginRings(camX, camZ);\n      return;\n    }');
+    expect([...meshes.matchAll(/\bbeginRings\(/g)].length).toBe(3);
+    expect([...meshes.matchAll(/\bringsAsked\(/g)].length).toBe(2);
+    expect([...meshes.matchAll(/\.begin\(ringOwner, /g)].length).toBe(2);
+    // The job asks as it first runs (`askThenPlaceRings`), through its placing alone; a job dropped with its set out
+    // stops the worker, so no later ask finds one out.
+    expect(meshes).toContain("      yield* askThenPlaceRings(ringPlacing(work, camX, camZ));\n    } finally {\n      if (work.out) work.stop();\n    }");
+    expect(meshes).toContain("      ask: () => askRings(work, camX, camZ),\n");
+    expect([...meshes.matchAll(/\baskRings\(/g)].length).toBe(2);
+    // Handing the samples over lets go of them, of the moves prepared from them and of the idle work.
+    expect(meshes).toContain("  function handOver(): RingSamples[] {\n    samplesAway = true;\n    prepared.fill(null);\n    spare.length = 0;\n    jobs?.idle(ringOwner, null);\n    return rings.splice(0);\n  }");
+    // A build on this thread while the page holds no samples stops the worker and samples the seven anew, a ring a slice.
+    expect(meshes).toContain("    if (samplesAway) {\n      yield* sampleAnew(camX, camZ);\n      if (disposed) return;\n    }\n    covered = uncovered ? null : patchCover;");
+    expect(meshes).toContain("  function* sampleAnew(camX: number, camZ: number): Slices {\n    ringWork?.stop();\n");
+    expect(meshes).toContain("      fresh.push(createRingSamples(seed, level, camX, camZ, base));\n      yield;\n");
+    // The worker failing while the job waits leaves the set to today's build, for the job's place.
+    expect(meshes).toContain("      finishHere: () => build(camX, camZ),\n");
+    // Nothing is prepared ahead while the worker is used, nor while the page holds no samples; the idle work is aimed
+    // in one place.
+    expect(meshes).toContain("  const preparesAhead = (): boolean => !samplesAway && (ringWork === null || ringWork.failed);");
+    expect(meshes).toContain("    if (jobs === undefined || jobs.pending(ringOwner) || !preparesAhead()) return;\n    if (expect(camX, camZ) || force) jobs.idle(ringOwner, prepare());");
+    expect([...meshes.matchAll(/\bprepare\(\)/g)].length).toBe(2);
+    expect([...meshes.matchAll(/\bjobs\.idle\(ringOwner, prepare\(\)\);/g)].length).toBe(1);
+    // The meshes' end stops the worker and leaves the client, which is the session's, to the session.
+    const dispose = meshes.slice(meshes.indexOf("    dispose() {\n      if (disposed) return;"));
+    expect(dispose).toContain("      ringWork?.stop();");
+    expect(meshes).not.toMatch(/\bringWork\??\.dispose\(/);
   });
 
   /**
