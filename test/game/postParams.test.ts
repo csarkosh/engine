@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { HALATION_BASE } from "../../src/game/gradeParams.js";
 import {
-  postFeaturesFor,
+  postFeaturesFor, glowParams, HALATION_THRESHOLD, HALATION_CAP,
   PAINT_JOINT_SHARPNESS, PAINT_RADIUS_HIGH, PAINT_RADIUS_MEDIUM, PAINT_REACH, PAINT_ROWS, PAINT_SCALE, paintRadiusFor, paintTargetSize, paintTexelRadius,
   TAA_BLEND, TAA_BLEND_STILL, TAA_CLIP, TAA_MOVING_PX, TAA_NEAR, TAA_SAMPLES, TAA_SHARPEN, halton, taaBlendFor, taaCameraPixels, taaJitter,
 } from "../../src/game/postParams.js";
@@ -19,6 +20,30 @@ describe("postFeaturesFor", () => {
       expect(postFeaturesFor(tier, false).lens).toBe(false);
       expect(postFeaturesFor(tier, false).taa).toBe(false);
     }
+  });
+});
+
+describe("the glow", () => {
+  const glow = { threshold: 0.8, strength: 1.5, radius: 2, mist: 1 };
+  it("leaves the tiers as they were with no glow, turns halation on for medium with one, and never for low", () => {
+    expect(postFeaturesFor("medium", true).halation).toBe(false);
+    expect(postFeaturesFor("high", true).halation).toBe(true);
+    expect(postFeaturesFor("medium", true, undefined)).toEqual(postFeaturesFor("medium", true));
+    expect(postFeaturesFor("medium", true, glow).halation).toBe(true);
+    expect(postFeaturesFor("high", true, glow).halation).toBe(true);
+    expect(postFeaturesFor("low", true, glow).halation).toBe(false);
+    expect(postFeaturesFor("medium", false, glow).halation).toBe(false);
+  });
+
+  it("hands back today's values for no glow, whatever the mist", () => {
+    expect(glowParams(undefined, 0.5)).toEqual({ threshold: HALATION_THRESHOLD, cap: HALATION_CAP, strength: HALATION_BASE, radius: 1 });
+    expect(glowParams(undefined, 1)).toEqual(glowParams(undefined, 0));
+  });
+
+  it("widens the radius by the weather's mist, and takes the look's threshold and strength", () => {
+    expect(glowParams(glow, 0.5)).toEqual({ threshold: 0.8, cap: HALATION_CAP, strength: 1.5, radius: 3 });
+    expect(glowParams(glow, 0).radius).toBe(2);
+    expect(glowParams({ ...glow, mist: 0 }, 1).radius).toBe(2);
   });
 });
 

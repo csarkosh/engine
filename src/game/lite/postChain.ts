@@ -67,19 +67,19 @@ import {
 import type { AtmosphereUniforms } from "../atmosphereParams.js";
 import { emptyCloudUniforms, type CloudUniforms } from "../cloudParams.js";
 import { ENGINE_LOOK, finishDrawsInGrade, finishDrawsLine, finishDrawsLineThrough, finishGradeUniform, finishLineBandUniform, finishLineFarUniform, finishLineUniform, lookGradeAt, type GameLook } from "../gameLook.js";
-import { gradeRecordUnder, type GradeRecord, type PaintPalette } from "../gradeParams.js";
+import { HALATION_BASE, gradeRecordUnder, type GradeRecord, type PaintPalette } from "../gradeParams.js";
 import { LENS, lensDropletMap } from "../lensParams.js";
 import {
   HALATION_KERNEL, HALATION_RATIO, composeUniforms, createLensGate, createPaletteFade, createTaaFrame, emptyFarSoftUniforms, emptyGradeUniforms,
   emptyTaaUniforms, extractUniforms, farSoftUniforms, gradeUniforms, lensUniforms, paintUniforms, paintUniformsDrawn, sharpenUniforms, type PostView,
 } from "../postFrame.js";
-import { MSAA_SAMPLES, paintTargetSize, type PostFeatures } from "../postParams.js";
+import { MSAA_SAMPLES, glowParams, paintTargetSize, type PostFeatures } from "../postParams.js";
 import type { StareLens } from "../stareLens.js";
 import { WEATHER_PRESETS, type WeatherParams } from "../weather.js";
 import { movedWords } from "./frameBlock.js";
 import type { FrameUploads } from "./frameUploads.js";
 import {
-  HALATION_EXTRACT_WGSL, LENS_WGSL, PAINT_WGSL, POST_VERTEX_WGSL, TAA_SHARPEN_WGSL, TAA_WGSL, blurWgsl, depthResolveWgsl, farSoftWgsl, gradeWgsl, passLayout,
+  HALATION_EXTRACT_WGSL, LENS_WGSL, PAINT_WGSL, POST_VERTEX_WGSL, TAA_SHARPEN_WGSL, TAA_WGSL, blurWgsl, depthResolveWgsl, farSoftWgsl, gradeWgsl, halationExtractWgsl, passLayout,
   writePass, type PassLayout,
 } from "./postWgsl.js";
 import { askRenderPipeline } from "./pipelineAsk.js";
@@ -301,7 +301,7 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
     ask("taaSharpen", TAA_SHARPEN_WGSL, POST_FORMAT),
     ask("paint", PAINT_WGSL, POST_FORMAT),
     ask("grade", gradeWgsl(features.halation, finishDrawsInGrade(look.finish)), surface.format),
-    features.halation ? ask("halationExtract" as SectionName, HALATION_EXTRACT_WGSL, POST_FORMAT) : none,
+    features.halation ? ask("halationExtract" as SectionName, look.glow === undefined ? HALATION_EXTRACT_WGSL : halationExtractWgsl(glowParams(look.glow, 0).threshold, glowParams(look.glow, 0).cap), POST_FORMAT) : none,
     features.halation ? ask("halationBlurX" as SectionName, blurWgsl(HALATION_KERNEL), POST_FORMAT) : none,
     features.halation ? ask("halationBlurY" as SectionName, blurWgsl(HALATION_KERNEL), POST_FORMAT) : none,
   ]).then(([depth, farSoft, taa, taaSharpen, paint, grade, halationExtract, halationBlurX, halationBlurY]) => {
@@ -345,6 +345,8 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
   let record: GradeRecord = gradeRecordUnder(WEATHER_PRESETS.clear, 12, 0, 1);
   /** What the chase's dim leaves of the frame's exposure (`setDim`). */
   let dim = 1;
+  /** The weather's mist as `update` last had it: a look's glow is wider in it. */
+  let mist = 0;
   let ditherSeconds = 0;
   let lensStrength = 0;
   let lensOn = false;
@@ -546,6 +548,10 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
       // A look with grades by the sun's height wears theirs; one with none, the palette of the moment and its one gain.
       const graded = lookGradeAt(look, hour, weather.cloudCover);
       record = gradeRecordUnder(weather, hour, night, unsettle, seconds, stare, chase, graded?.palette ?? paletteFade.now(), graded?.exposure ?? look.exposure);
+      // The weather's mist, which a look's glow widens the halo by (`glowParams`); and the glow's gain in the grade over the engine's own,
+      // so the dread's swell of the halo rides on it. A look with no glow leaves the record as `gradeRecordUnder` made it.
+      mist = weather.mist;
+      if (look.glow !== undefined) record = { ...record, halationStrength: (record.halationStrength * glowParams(look.glow, mist).strength) / HALATION_BASE };
       // The chase's dim (`setDim`): one more factor in the frame's exposure, as the stare's is in the record.
       if (dim !== 1) record = { ...record, exposure: record.exposure * dim };
       ditherSeconds = seconds;
@@ -592,8 +598,10 @@ export function createLitePostChain(engine: EngineContext, scene: SceneContext, 
         // A texel of the quarter-size target along each blur's axis.
         const w = Math.max(1, Math.floor(width * HALATION_RATIO));
         const h = Math.max(1, Math.floor(height * HALATION_RATIO));
-        write("halationBlurX" as SectionName, { delta: [1 / w, 0] });
-        write("halationBlurY" as SectionName, { delta: [0, 1 / h] });
+        // The reach is the step between the taps, so a wider glow costs no tap more (`glowParams`; 1 with no glow).
+        const reach = glowParams(look.glow, mist).radius;
+        write("halationBlurX" as SectionName, { delta: [reach / w, 0] });
+        write("halationBlurY" as SectionName, { delta: [0, reach / h] });
       }
       // The run of the buffer's words that moved, and nothing on a frame none did.
       send();

@@ -26,3 +26,22 @@ describe("the post chain's targets on Babylon Lite", () => {
     expect(renderer).toContain("createEngine(canvas, { msaaSamples: chained ? 1 : FRAME_SAMPLES,");
   });
 });
+
+describe("the post chain's glow", () => {
+  it("takes the halation's threshold, gain and reach from the look's glow, and the engine's own where it has none", () => {
+    // The extract's text is the engine's own constants with no glow; with one, the look's threshold.
+    expect(src).toContain("look.glow === undefined ? HALATION_EXTRACT_WGSL : halationExtractWgsl(glowParams(look.glow, 0).threshold, glowParams(look.glow, 0).cap)");
+    // The gain is changed only for a look that has a glow, from the weather's mist of the frame.
+    expect(src).toContain("mist = weather.mist;\n      if (look.glow !== undefined) record = {");
+    // The reach is the blur's step, not a tap more: the same kernel, a longer delta.
+    expect(src).toContain("write(\"halationBlurX\" as SectionName, { delta: [reach / w, 0] });");
+    expect(src).toContain("write(\"halationBlurY\" as SectionName, { delta: [0, reach / h] });");
+    expect(src).toContain("blurWgsl(HALATION_KERNEL)");
+    // The records are the chain's own: no uniform is added for a glow.
+    expect(src).toContain("halationBlurX: { delta: [0, 0] },");
+  });
+
+  it("is asked for by the renderer from the look, so medium has the three passes when it is set", () => {
+    expect(sourceText("game/lite/renderer.ts")).toContain("postFeaturesFor(tier, true, look.glow)");
+  });
+});

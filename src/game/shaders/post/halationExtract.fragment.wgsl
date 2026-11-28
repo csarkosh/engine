@@ -4,8 +4,8 @@
 @group(0)@binding(2)var sceneSampler:texture_2d<f32>;
 @group(0)@binding(3)var paintSampler:texture_2d<f32>;
 ${compose}
-const HALATION_THRESHOLD:f32=1.0;
-const HALATION_CAP:f32=4.0;
+const HALATION_THRESHOLD:f32=${threshold};
+const HALATION_CAP:f32=${cap};
 const HALATION_TINT:vec3<f32>=vec3<f32>(1.0,0.45,0.2);
 fn halationLuma(c:vec3<f32>)->f32{
   return dot(c,vec3<f32>(0.2126,0.7152,0.0722));

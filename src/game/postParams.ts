@@ -1,3 +1,5 @@
+import type { LookGlow } from "./gameLook.js";
+import { HALATION_BASE } from "./gradeParams.js";
 import type { QualityTier } from "./quality.js";
 
 /**
@@ -22,11 +24,12 @@ export type PostFeatures = {
  * 8-bit chain would band the very frames this restyle exists for. The lens
  * (rain on the glass) rides the pipeline: every tier with the chain has it.
  */
-export function postFeaturesFor(tier: QualityTier, fxSupported: boolean): PostFeatures {
+export function postFeaturesFor(tier: QualityTier, fxSupported: boolean, glow?: LookGlow): PostFeatures {
   if (!fxSupported || tier === "low") return { pipeline: false, halation: false, lens: false, colourPath: "material", paint: 0, taa: false };
   return {
     pipeline: true,
-    halation: tier === "high",
+    // The halation chain is high's; a look that asks for a glow has it on medium too (the same three passes).
+    halation: tier === "high" || glow !== undefined,
     lens: true,
     colourPath: "post",
     paint: tier === "high" ? PAINT_RADIUS_HIGH : PAINT_RADIUS_MEDIUM,
@@ -155,3 +158,13 @@ export const HALATION_THRESHOLD = 1.0;
 /** Luminance excess at which the extract saturates; keeps the response bounded. */
 export const HALATION_CAP = 4.0;
 
+
+/**
+ * The halation's numbers for a frame: today's own where `glow` is absent (the threshold, the cap, the grade's base strength and a blur of
+ * radius 1), else the look's, the blur's radius widened by the weather's `mist` (0 to 1) as `radius * (1 + glow.mist * mist)`.
+ * `radius` scales the blur's step between taps, so the cost of the passes does not change.
+ */
+export function glowParams(glow: LookGlow | undefined, mist: number): { threshold: number; cap: number; strength: number; radius: number } {
+  if (glow === undefined) return { threshold: HALATION_THRESHOLD, cap: HALATION_CAP, strength: HALATION_BASE, radius: 1 };
+  return { threshold: glow.threshold, cap: HALATION_CAP, strength: glow.strength, radius: glow.radius * (1 + glow.mist * mist) };
+}

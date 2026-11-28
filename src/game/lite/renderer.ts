@@ -727,7 +727,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
   let cloud = noCloud();
   // Who owns colour: a tier with a post chain draws its scene in linear light for the chain to grade; the rest end
   // every material with the display curve. Half-float targets are every WebGPU device's, so the tier alone decides.
-  const postFeatures = postFeaturesFor(tier, true);
+  const postFeatures = postFeaturesFor(tier, true, look.glow);
   const chained = postFeatures.pipeline;
   const cloudSteps = forest !== null ? cloudStepsFor(postFeatures) : 0;
   /** The cloud as the chain marches it (`cloudUniforms`): the materials march none where there is a chain. */

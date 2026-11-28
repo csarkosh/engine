@@ -20,6 +20,13 @@ describe("a game's look over the engine's", () => {
     expect(gameLook()).toBe(ENGINE_LOOK);
   });
 
+  it("has no glow of its own: the halation is the tier's, as it always was", () => {
+    expect(gameLook().glow).toBeUndefined();
+    expect(ENGINE_LOOK.glow).toBeUndefined();
+    const glow = { threshold: 0.8, strength: 1.5, radius: 2, mist: 1 };
+    expect(gameLook({ glow }).glow).toBe(glow);
+  });
+
   it("holds the engine's constants as the engine's own look", () => {
     expect(ENGINE_LOOK.paint).toBe(PAINT_STRENGTH);
     expect(ENGINE_LOOK.farSoft).toBe(FAR_SOFT_RADIUS);

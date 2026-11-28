@@ -36,7 +36,7 @@
  *
  * Loads nothing.
  */
-import { PAINT_REACH } from "../postParams.js";
+import { HALATION_CAP, HALATION_THRESHOLD, PAINT_REACH } from "../postParams.js";
 import postVertexSource from "../shaders/post/post.vertex.wgsl?raw";
 import depthResolveFragmentSource from "../shaders/post/depthResolve.fragment.wgsl?raw";
 import farSoftFragmentSource from "../shaders/post/farSoft.fragment.wgsl?raw";
@@ -185,7 +185,17 @@ const COMPOSE_WGSL = wgsl(composeSource);
  * centre, which is the mean of the four composed texels round it; here
  * those four are composed in place (`texel` is the full frame's).
  */
-export const HALATION_EXTRACT_WGSL = fill(wgsl(halationExtractFragmentSource), { compose: COMPOSE_WGSL });
+export function halationExtractWgsl(threshold: number, cap: number): string {
+  return fill(wgsl(halationExtractFragmentSource), { compose: COMPOSE_WGSL, threshold: wgslFloat(threshold), cap: wgslFloat(cap) });
+}
+
+/** A number as a WGSL `f32` literal: a whole number with its `.0`. */
+function wgslFloat(n: number): string {
+  return Number.isInteger(n) ? n.toFixed(1) : String(n);
+}
+
+/** The extract with the engine's own threshold and cap. */
+export const HALATION_EXTRACT_WGSL = halationExtractWgsl(HALATION_THRESHOLD, HALATION_CAP);
 
 /** The kernel Babylon.js's blur pass takes for the one it is asked for: the nearest odd one whose half is even, so its taps pair up either side of the centre. */
 export function blurKernel(ideal: number): number {

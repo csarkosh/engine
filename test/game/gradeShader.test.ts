@@ -6,7 +6,7 @@ import {
   SPLIT_TONE_DENSITY_SCALE, SPLIT_TONE_SATURATION_SCALE, AGX_CONTRAST, type Mat3,
 } from "../../src/game/gradeParams.js";
 import { DITHER_LSB, HALATION_THRESHOLD, HALATION_CAP } from "../../src/game/postParams.js";
-import { HALATION_EXTRACT_WGSL, gradeWgsl } from "../../src/game/lite/postWgsl.js";
+import { HALATION_EXTRACT_WGSL, gradeWgsl, halationExtractWgsl } from "../../src/game/lite/postWgsl.js";
 
 function wgslFloat(n: number): string {
   return Number.isInteger(n) ? `${n}.0` : `${n}`;
@@ -55,5 +55,14 @@ describe("the grade's stage and the halation's extract stay in lockstep with pos
     for (const grade of STAGES) expect(grade).toContain(`const DITHER_LSB:f32=${wgslFloat(DITHER_LSB)};`);
     expect(HALATION_EXTRACT_WGSL).toContain(`const HALATION_THRESHOLD:f32=${wgslFloat(HALATION_THRESHOLD)};`);
     expect(HALATION_EXTRACT_WGSL).toContain(`const HALATION_CAP:f32=${wgslFloat(HALATION_CAP)};`);
+  });
+});
+
+describe("the halation's extract for a glow", () => {
+  it("is the engine's own text with the engine's constants, and the look's threshold with a glow", () => {
+    expect(halationExtractWgsl(HALATION_THRESHOLD, HALATION_CAP)).toBe(HALATION_EXTRACT_WGSL);
+    const glow = halationExtractWgsl(0.8, HALATION_CAP);
+    expect(glow).toContain("const HALATION_THRESHOLD:f32=0.8;");
+    expect(glow).toContain(`const HALATION_CAP:f32=${wgslFloat(HALATION_CAP)};`);
   });
 });

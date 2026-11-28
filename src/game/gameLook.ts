@@ -144,6 +144,24 @@ export type GameLook = {
    * and uniforms are the engine's own and nothing is added to what a sand pixel costs.
    */
   readonly sand?: LookSand;
+  /**
+   * A glow (`LookGlow`): the halation chain made a setting, so that lit windows throw a soft halo. Absent, the default: the halation is the
+   * tier's own (high has it, medium does not) and its threshold, strength and reach are the engine's constants. Set, medium has the same
+   * three passes as high.
+   */
+  readonly glow?: LookGlow;
+};
+
+/** What a game asks of the glow: the halation's numbers, which the engine's constants give when the look has none. */
+export type LookGlow = {
+  /** Exposed linear luminance above which the halo is taken from the frame (the engine's own is 1: brighter than display white). */
+  readonly threshold: number;
+  /** The halo's gain in the grade (the engine's own is 0.04). */
+  readonly strength: number;
+  /** The blur's reach: 1 is the engine's own, 2 twice as far. The blur's step between taps is scaled, so no tap is added. */
+  readonly radius: number;
+  /** How far the weather's mist (0 to 1) widens the reach: the radius is `radius * (1 + mist * weather.mist)`. */
+  readonly mist: number;
 };
 
 /**
