@@ -58,10 +58,10 @@ describe('checkPath', () => {
 
   it('flags turn rate, wrapping yaw', () => {
     const spin: CameraPath = { keys: [
-      { t: 0, at: [0, 10, 0], look: [-1, 10, -0.01] },
-      { t: 0.5, at: [0, 10, 0], look: [-1, 10, 0.01] },
+      { t: 0, at: [0, 10, 0], look: [-0.01, 10, -1] },
+      { t: 0.5, at: [0, 10, 0], look: [0.01, 10, -1] },
     ] };
-    // yaw crosses the +-pi seam by a tiny step: no turn problem
+    // yaw goes from about -pi to about +pi (the seam, looking to -z) by a tiny real step: no turn problem
     expect(checkPath(spin, 24, COMFORT, flat(0)).some((p) => p.includes('turn'))).toBe(false);
     const swing: CameraPath = { keys: [
       { t: 0, at: [0, 10, 0], look: [0, 10, 5] },
