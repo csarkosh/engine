@@ -173,7 +173,7 @@ describe("layer boundaries", () => {
     expect([...main.matchAll(/\bstartSession</g)].length).toBe(1);
     // A hike's canvas carries no engine: its renderer makes its own from it, at the start and for every switch after.
     expect(main).toContain("      engine: () => sessionCanvas(),");
-    expect(main).toContain("launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled, patchWork, ringWork);");
+    expect(main).toContain("launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled, patchWork, ringWork, clutterWork, worldRead);");
     // The scene route is drawn by the same renderer, on a canvas of the same kind: the one other caller.
     expect(main).toContain("      void sessionCanvas().then(");
     expect(main).toContain("page.scene({ canvas, container, tier }, parseSceneSearch(location.search), route.name);");
@@ -1092,25 +1092,41 @@ describe("layer boundaries", () => {
     const dispose = app.slice(app.lastIndexOf("    dispose() {\n      disposed = true;"));
     expect(dispose).toMatch(/unwatchCompiles\?\.\(\);\s+renderer\.dispose\(\);\s+\}/);
     // The world's worker goes with the session, after the renderer that asked it: its one end once the session runs.
-    expect(dispose).toMatch(/renderer\.dispose\(\);\s+\}\s+options\.patchWork\?\.dispose\(\);\s+options\.ringWork\?\.dispose\(\);\n/);
+    expect(dispose).toMatch(/renderer\.dispose\(\);\s+\}\s+options\.patchWork\?\.dispose\(\);\s+options\.ringWork\?\.dispose\(\);\s+options\.clutterWork\?\.dispose\(\);\n/);
     // The page makes a canvas and nothing more, and the swap holds it as that.
     // A switch is handed its canvas at once, and one the page refuses is a throw; a start's chain takes the same canvas as a promise.
     const main = code("shell.ts");
     expect(main).toContain('  function sessionCanvasNow(): EngineOnCanvas {\n    if (verdict !== null && !verdict.play) throw new Error(`this browser cannot draw a ${page.identity.session} (${verdict.reason})`);\n    return { canvas: document.createElement("canvas") };\n  }');
     expect(main).toContain("    return new Promise((resolve) => resolve(sessionCanvasNow()));");
-    expect(main).toContain("        launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled, patchWork, ringWork);");
+    expect(main).toContain("        launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled, patchWork, ringWork, clutterWork, worldRead);");
     // The session's worker is the one that made the scene the build takes, else the prep's; a start that fails before
     // the session holds it ends it.
-    expect(main).toContain("        const worker = (again !== null && sampled !== null ? again.handOver() : null) ?? prep.handOver();\n        const link = worker === null ? null : createWorldLink(worker);\n        const patchWork = link === null ? null : createPatchWork(link, madeFrom);\n        const ringWork = link === null ? null : createRingWork(link, madeFrom);\n        unlaunched = link;\n");
+    expect(main).toContain("        const worker = (again !== null && sampled !== null ? again.handOver() : null) ?? prep.handOver();\n        const link = worker === null ? null : createWorldLink(worker);\n        startSecond();\n        secondHeld = true;\n        const links = [link, ...(second === null ? [] : [second.link])];\n        unlaunched = links;\n");
+    expect(main).toContain('        const patchWork = on("patches", createPatchWork);\n        const ringWork = on("rings", createRingWork);\n        const clutterWork = on("clutter", createClutterWork);\n');
+    // The second worker is started in one place (`startSecond`), past the wait, and ended with the first's: by
+    // `endPrep` until the build, then by its clients or, where no kind is on it, at once.
+    expect([...main.matchAll(/\bstartSecondWorld\(/g)].length).toBe(1);
+    expect(main).toContain("      second = startSecondWorld(page.worldWorker, madeFrom);");
+    expect(main).toContain("      if (secondStarted || prepEnded || (page.worldWorkers ?? 1) < 2) return;");
+    expect(main).toContain("      if (!secondHeld) second?.link.dispose();");
+    expect(main).toContain("    void prep.ready.then((outcome) => {\n      if (outcome.why !== \"disposed\") startSecond();\n    });");
+    const sessionBody = main.slice(main.indexOf("function render(container: HTMLDivElement): void {"), main.indexOf("\n  function launch("));
+    expect(sessionBody.indexOf("const startSecond = ")).toBeGreaterThan(sessionBody.indexOf("    if (!isLandingRoute(route) && signals === null) {"));
+    expect([...main.matchAll(/\bstartSecond\(\)/g)].length).toBe(2);
+    expect(main).toContain("        if (second !== null && !([\"rings\", \"clutter\", \"patches\"] as const).some((kind) => linkFor(kind, links) === second?.link)) second.link.dispose();");
+    expect(main).toContain("        for (const made of unlaunched) made?.dispose();\n        unlaunched = [];");
     expect(app).toContain("  ringWork?: RingWork | null;");
-    expect(app).toContain("patchWork: options.patchWork, ringWork: options.ringWork,");
-    expect(main).toContain("    ringWork: RingWork | null,\n  ): void {");
-    expect(main).toContain("      patchWork,\n      ringWork,\n");
+    expect(app).toContain("patchWork: options.patchWork, ringWork: options.ringWork, clutterWork: options.clutterWork, worldRead: options.worldRead,");
+    expect(main).toContain("    ringWork: RingWork | null,\n    clutterWork: ClutterWork | null,\n    worldRead: () => WorldWorkRead,\n  ): void {");
+    expect(main).toContain("      patchWork,\n      ringWork,\n      clutterWork,\n      worldRead,\n");
     expect(code("game/rendererTypes.ts")).toContain("  ringWork?: RingWork | null;");
     expect(code("game/lite/renderer.ts")).toContain("    measured.__ringWork = () => options.ringWork?.record() ?? null;");
     expect(code("game/lite/renderer.ts")).toContain("        if (measured.__ringWork !== undefined) delete measured.__ringWork;");
+    expect(code("game/lite/renderer.ts")).toContain("    measured.__worldWork = () => options.worldRead?.() ?? null;");
+    expect(code("game/lite/renderer.ts")).toContain("        if (measured.__clutterWork !== undefined) delete measured.__clutterWork;\n        if (measured.__worldWork !== undefined) delete measured.__worldWork;");
+    expect(code("game/lite/renderer.ts")).toContain("        clutterWork: options.clutterWork,\n      });");
     expect(code("game/lite/renderer.ts")).toContain("          ringWork: options.ringWork,\n");
-    expect(main).toContain("        endPrep();\n        unlaunched?.dispose();\n        unlaunched = null;\n");
+    expect(main).toContain("        endPrep();\n        for (const made of unlaunched) made?.dispose();\n        unlaunched = [];\n");
     expect(app).toContain("  engineFor(tier: QualityTier): EngineOnCanvas;");
     const swap = code("game/rendererSwap.ts");
     expect(swap).toContain("export type EngineOnCanvas = { canvas: HTMLCanvasElement };");

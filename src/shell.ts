@@ -26,7 +26,10 @@ import { sceneLine, startWorldPrep, worldPrepLine, type WorldPrep, type WorldPre
 import { createWorldAhead, type WorldMadeFrom } from "./game/worldAhead.js";
 import { createPatchWork, type PatchWork } from "./game/patchWork.js";
 import { createRingWork, type RingWork } from "./game/ringWork.js";
+import { createClutterWork, type ClutterWork } from "./game/clutterWork.js";
 import { createWorldLink, type WorldLink } from "./game/worldLink.js";
+import { linkFor, type WorldKind, type WorldWorkRead } from "./game/worldRoutes.js";
+import { startSecondWorld, type SecondWorld } from "./game/worldSecond.js";
 import { loadNet, timedProgress, type TimedProgress } from "./game/loadTimes.js";
 import { ENGINE_WORKER_SCRIPTS } from "./game/engineWorkerScripts.js";
 import { warmWorkerScripts } from "./game/workerScripts.js";
@@ -1107,14 +1110,29 @@ export function startShell<
     /** A second worker, for the scene alone, where the one made ahead is of another tier than the start came to. */
     let again: WorldPrep | null = null;
     let prepEnded = false;
+    /** The second world worker, for a game that asks for two (`worldSecond.ts`): started once, in `startSecond`. From the
+     * build on its link belongs to the session's clients (`secondHeld`), and `endPrep` leaves it. */
+    let second: SecondWorld | null = null;
+    let secondStarted = false;
+    let secondHeld = false;
+    const startSecond = (): void => {
+      if (secondStarted || prepEnded || (page.worldWorkers ?? 1) < 2) return;
+      secondStarted = true;
+      second = startSecondWorld(page.worldWorker, madeFrom);
+    };
     const endPrep = (): void => {
       prepEnded = true;
       prep.dispose();
       again?.dispose();
+      if (!secondHeld) second?.link.dispose();
     };
     // The game's code, once this world's worker has done its work (see `codeAhead` above): a session reached by its
     // address, or one whose Play came before the landing page's world was made, has not asked for it yet.
     void prep.ready.then(codeAhead, codeAhead);
+    // The second worker starts when this world's prep has settled, or at the build where that comes first.
+    void prep.ready.then((outcome) => {
+      if (outcome.why !== "disposed") startSecond();
+    });
     let prepOutcome: WorldPrepOutcome | null = null;
     // The session's first scene (`preparedScene.ts`): asked of the same worker
     // once the tier is decided, waited for before the build, and taken by the
@@ -1132,10 +1150,11 @@ export function startShell<
       sampled = null;
       return scene;
     };
-    /** The session's link to the world's worker (`worldLink.ts`), from the build until `launch` has returned: a start
-     * that throws in between ends the worker here; after, the session's two clients of the link (for its rock
-     * faces and its rings, `patchWork.ts`, `ringWork.ts`) release their holds on dispose, which ends it. */
-    let unlaunched: WorldLink | null = null;
+    /** The session's links to the world's workers (`worldLink.ts`), from the build until `launch` has returned: a start
+     * that throws in between ends the workers here; after, the session's clients of them (for its rock faces, its
+     * rings and its clutter, `patchWork.ts`, `ringWork.ts`, `clutterWork.ts`) release their holds on dispose, which
+     * ends each link with its last. */
+    let unlaunched: (WorldLink | null)[] = [];
     // Each probe step is measured on the session's own renderer, which makes its
     // engine from the step's own canvas and lets both go with the step
     // (`runLiteProbeStep`): the page makes no engine for it. A step whose
@@ -1230,11 +1249,30 @@ export function startShell<
         // and the rock faces and rings are built on this thread.
         const worker = (again !== null && sampled !== null ? again.handOver() : null) ?? prep.handOver();
         const link = worker === null ? null : createWorldLink(worker);
-        const patchWork = link === null ? null : createPatchWork(link, madeFrom);
-        const ringWork = link === null ? null : createRingWork(link, madeFrom);
-        unlaunched = link;
-        launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled, patchWork, ringWork);
-        unlaunched = null;
+        startSecond();
+        secondHeld = true;
+        const links = [link, ...(second === null ? [] : [second.link])];
+        unlaunched = links;
+        const on = <T>(kind: WorldKind, make: (at: WorldLink, from: WorldMadeFrom) => T): T | null => {
+          const at = linkFor(kind, links);
+          return at === null ? null : make(at, madeFrom);
+        };
+        const patchWork = on("patches", createPatchWork);
+        const ringWork = on("rings", createRingWork);
+        const clutterWork = on("clutter", createClutterWork);
+        // A second worker no kind is on has no client to end it: it ends here.
+        if (second !== null && !(["rings", "clutter", "patches"] as const).some((kind) => linkFor(kind, links) === second?.link)) second.link.dispose();
+        const worldRead = (): WorldWorkRead => ({
+          workers: links.filter((made) => made !== null).length,
+          routes: {
+            rings: Math.max(0, links.indexOf(linkFor("rings", links))),
+            clutter: Math.max(0, links.indexOf(linkFor("clutter", links))),
+            patches: Math.max(0, links.indexOf(linkFor("patches", links))),
+          },
+          second: second?.record() ?? null,
+        });
+        launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled, patchWork, ringWork, clutterWork, worldRead);
+        unlaunched = [];
         lap("build");
         // The build has what it wanted of the workers: one not handed over ends, and the scene is let go of.
         endPrep();
@@ -1258,8 +1296,8 @@ export function startShell<
         pageFilesAhead.drop();
         console.error("The game could not start.", error);
         endPrep();
-        unlaunched?.dispose();
-        unlaunched = null;
+        for (const made of unlaunched) made?.dispose();
+        unlaunched = [];
         opening?.failed();
         // Whichever canvas the start left: a renderer that fell back to a lower
         // tier builds on a fresh one in the first one's place.
@@ -1279,8 +1317,9 @@ export function startShell<
    * or a rebuild later builds on. `takeSampled` gives up the session's first
    * scene from the world's worker, once: the first renderer made takes its
    * arrays, and one made after it samples the ground for itself. `patchWork`
-   * is the session's client of that worker for its rock faces, and `ringWork` its client for its rings, each or
-   * null: the session's every renderer is handed them, and the session ends them.
+   * is the session's client of that worker for its rock faces, `ringWork` its client for its rings and `clutterWork`
+   * its client for the clutter's cells, each or null: the session's every renderer is handed them, and the session
+   * ends them. `worldRead` is what the measurement mode reads of the session's workers.
    */
   function launch(
     onCanvas: EngineOnCanvas,
@@ -1291,6 +1330,8 @@ export function startShell<
     takeSampled: () => PreparedScene | null,
     patchWork: PatchWork | null,
     ringWork: RingWork | null,
+    clutterWork: ClutterWork | null,
+    worldRead: () => WorldWorkRead,
   ): void {
     const handle = startGame(onCanvas.canvas, worldToken, {
       lobby,
@@ -1308,6 +1349,8 @@ export function startShell<
       takePrepared: takeSampled,
       patchWork,
       ringWork,
+      clutterWork,
+      worldRead,
       engineFor: engineForGame,
       engineFailed,
       losses,

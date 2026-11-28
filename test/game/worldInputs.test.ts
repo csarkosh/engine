@@ -20,8 +20,9 @@ describe("the seed and the terrain a hike's world is made from", () => {
     expect(main).toContain("const madeFrom = worldInputs(route.token, location.search);\n    const early = ahead.take(route.token, madeFrom);\n    const prep = early?.prep ?? startPrep(madeFrom);");
     expect(main).toContain("prepOutcome = await prep.ready;");
     // A render that moves on, and a start that fails, end the worker; a start that built lets go of it and its scene.
-    // With it goes the second worker, where a scene of another tier than the one made ahead was asked for.
-    expect(main).toContain("const endPrep = (): void => {\n      prepEnded = true;\n      prep.dispose();\n      again?.dispose();\n    };");
+    // With it goes the second worker, where a scene of another tier than the one made ahead was asked for, and the
+    // second world worker (`startSecond`) until the build has handed its link to the session's clients.
+    expect(main).toContain("const endPrep = (): void => {\n      prepEnded = true;\n      prep.dispose();\n      again?.dispose();\n      if (!secondHeld) second?.link.dispose();\n    };");
     expect(main.match(/prep\.dispose\(\);/g)).toHaveLength(1);
     expect(main.match(/\bendPrep\(\);/g)).toHaveLength(3);
   });

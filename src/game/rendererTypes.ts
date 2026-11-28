@@ -20,6 +20,8 @@ import type { GpuTimeReport } from "./gpuTimeReport.js";
 import type { PaintPaletteName } from "./gradeParams.js";
 import type { ImpostorBake } from "./impostorBake.js";
 import type { PatchWork } from "./patchWork.js";
+import type { ClutterWork } from "./clutterWork.js";
+import type { WorldWorkRead } from "./worldRoutes.js";
 import type { RingWork } from "./ringWork.js";
 import type { PreparedScene } from "./preparedScene.js";
 import type { QualityTier } from "./quality.js";
@@ -283,6 +285,12 @@ export type RendererOptions = {
    * null, they are built on the page's thread. In the measurement mode its record is read out as
    * `window.__ringWork()`. */
   ringWork?: RingWork | null;
+  /** The session's client of the world's worker for the clutter's cells (`clutterWork.ts`): given it, and while it has
+   * not failed, the clutter's rebuilds ask it for their cells (`ClutterMeshOptions.clutterWork`). The session's,
+   * handed and ended as `patchWork` is. In the measurement mode its record is read out as `window.__clutterWork()`. */
+  clutterWork?: ClutterWork | null;
+  /** What the measurement mode reads of the session's workers, as `window.__worldWork()`: the shell's, handed to each renderer. */
+  worldRead?: () => WorldWorkRead;
   /** The loader of first builds, for a start whose intro's film covers the
    * hike (`firstBuilds.ts`): the forest, the ground cover, the blades, the
    * duff and the props hand it the builds that cannot wait, and it steps
