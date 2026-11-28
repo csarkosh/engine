@@ -19,7 +19,8 @@ import type { FadeBands } from "./distanceFade.js";
 import {
   clutterInCell, clutterCell, CLUTTER_CLASS_COUNT, CLUTTER_GRASS_CELL, CLUTTER_MEADOW, type ClutterInstance, CLUTTER_GRASS, CLUTTER_BUSH, CLUTTER_FLOWER, CLUTTER_LITTER, CLUTTER_FERN, CLUTTER_SHRUB, CLUTTER_WETPLANT, CLUTTER_HIGHPLANT,
 } from "../sim/clutter.js";
-import { CLUTTER_STRIP_INTS, instanceAt, type ClutterAnswer } from "./clutterWire.js";
+import { CLUTTER_STRIP_INTS, CLUTTER_WIRE_VALUES, instanceAt, type ClutterAnswer } from "./clutterWire.js";
+import { KEPT_STRIDE } from "./instanceLists.js";
 import { finish, nextCrossing, sliceDue, type Slices } from "./syncJobs.js";
 import {
   createCellWindow, inWindow, moveWindow, prefetchWindow, walkEveryCell, type CellRows, type CellWindow,
@@ -610,7 +611,8 @@ export type ClutterCollector = {
    * not remember and that `asked` (by `clutterCellKey`) says nothing has been asked for, as strips
    * (`CLUTTER_STRIP_INTS` ints each: `cls, x0, x1, z0, z1`): rows that hold the same run of cells are merged into
    * one rectangle, and every such cell is in exactly one strip. Walks only those cells, never the whole window.
-   * Nothing for a class whose window was never built, or that shares no cell with the one held.
+   * A cell out of reach of the place (`evictRadius`) is left out: `take` would drop it. Nothing for a class whose window
+   * was never built, or that shares no cell with the one held.
    */
   unknown(camX: number, camZ: number, radiusScale: number, asked: (key: number) => boolean): Int32Array;
   /**
@@ -618,11 +620,13 @@ export type ClutterCollector = {
    * then `cz`), in slices. A cell is skipped if the collector already remembers it, or if it lies out of reach of a
    * camera at (camX, camZ) (`evictRadius`, measured as the sweep measures it); every other is remembered, as the
    * answer's instance or as holding nothing. `found` is told of each instance newly remembered, with its index in
-   * the answer, in the same step.
+   * the answer, in the same step. An answer that does not fit its strips (its arrays too short, or an instance
+   * whose cell is in no strip or out of the strips' order) is dropped whole: nothing is remembered, `found` is never
+   * called and the result is false; true where the answer was taken.
    */
   take(
     strips: Int32Array, answer: ClutterAnswer, camX: number, camZ: number, found?: (inst: ClutterInstance, i: number) => void,
-  ): Slices;
+  ): Slices<boolean>;
 };
 
 // Numeric cell key, class-prefixed since fourteen grids share one cache: exact
@@ -763,7 +767,7 @@ export function createClutterCollector(seed: number, release?: (inst: ClutterIns
       for (let cls = 0; cls < CLUTTER_CLASS_COUNT; cls++) {
         originByClass.push(clutterOrigin(camX, camZ, clutterCell(cls)));
       }
-      let looked = 0;
+      let swept = 0;
       for (const [key, inst] of cache) {
         const cls = Math.floor(key / CELL_KEY_CLASS_SPAN);
         const rest = key - cls * CELL_KEY_CLASS_SPAN;
@@ -779,7 +783,7 @@ export function createClutterCollector(seed: number, release?: (inst: ClutterIns
           const w = windows[cls] as CellWindow<ClutterInstance>;
           if (inWindow(w, cx, cz)) w.refresh.push(cx, cz);
         }
-        if (++looked % SWEEP_SLICE === 0) yield;
+        if (++swept % SWEEP_SLICE === 0) yield;
       }
     }
     return bands;
@@ -795,50 +799,103 @@ export function createClutterCollector(seed: number, release?: (inst: ClutterIns
     }
   }
   function unknown(camX: number, camZ: number, radiusScale: number, asked: (key: number) => boolean): Int32Array {
+    // Strips as `cls, x0, x1, z0, z1` runs of ints; a strip is extended in place while the next row holds the same run.
     const out: number[] = [];
+    // The offsets in `out` of the strips the previous row's runs belong to, and this row's: swapped, never reallocated.
+    let prev: number[] = [];
+    let cur: number[] = [];
     for (let cls = 0; cls < CLUTTER_CLASS_COUNT; cls++) {
       const w = windows[cls] as CellWindow<ClutterInstance>;
       if (Number.isNaN(w.x0)) continue;
       const sq = clutterWindowAt(cls, camX, camZ, radiusScale);
       if (sq.x0 > w.x1 || sq.x1 < w.x0 || sq.z0 > w.z1 || sq.z1 < w.z0) continue;
-      // Rows of runs, ascending in cz; a run that repeats the last row's, directly above it, grows that rectangle.
-      let open: { x0: number; x1: number; z0: number; z1: number }[] = [];
+      const { x: ax, z: az } = clutterOrigin(camX, camZ, clutterCell(cls));
+      prev.length = 0;
       for (let cz = sq.z0; cz <= sq.z1; cz++) {
         const heldRow = cz >= w.z0 && cz <= w.z1;
-        const next: typeof open = [];
+        cur.length = 0;
+        let p = 0;
         // The cells of the row outside the held window: all of it, or the stretch each side of the held span.
         for (let side = 0; side < 2; side++) {
           const from = heldRow ? (side === 0 ? sq.x0 : Math.max(sq.x0, w.x1 + 1)) : side === 0 ? sq.x0 : sq.x1 + 1;
           const to = heldRow ? (side === 0 ? Math.min(sq.x1, w.x0 - 1) : sq.x1) : sq.x1;
-          let start = NaN;
+          let open = false;
+          let start = 0;
           for (let cx = from; cx <= to + 1; cx++) {
-            const lacking = cx <= to && !cache.has(clutterCellKey(cls, cx, cz)) && !asked(clutterCellKey(cls, cx, cz));
+            let lacking = false;
+            if (cx <= to) {
+              const key = clutterCellKey(cls, cx, cz);
+              lacking = !cache.has(key) && !outOfReach(cls, cx, cz, ax, az) && !asked(key);
+            }
             if (lacking) {
-              if (Number.isNaN(start)) start = cx;
-            } else if (!Number.isNaN(start)) {
-              const run = open.find((r) => r.x0 === start && r.x1 === cx - 1 && r.z1 === cz - 1);
-              if (run !== undefined) {
-                run.z1 = cz;
-                next.push(run);
-              } else {
-                next.push({ x0: start, x1: cx - 1, z0: cz, z1: cz });
+              if (!open) {
+                open = true;
+                start = cx;
               }
-              start = NaN;
+            } else if (open) {
+              open = false;
+              // The previous row's runs are in cx order as this row's are: one pass finds a run that repeats.
+              while (p < prev.length && (out[(prev[p] as number) + 1] as number) < start) p++;
+              const at = p < prev.length ? (prev[p] as number) : -1;
+              if (at >= 0 && out[at + 1] === start && out[at + 2] === cx - 1) {
+                out[at + 4] = cz;
+                cur.push(at);
+              } else {
+                cur.push(out.length);
+                out.push(cls, start, cx - 1, cz, cz);
+              }
             }
           }
         }
-        for (const r of open) if (r.z1 < cz) out.push(cls, r.x0, r.x1, r.z0, r.z1);
-        open = next;
+        const swap = prev;
+        prev = cur;
+        cur = swap;
       }
-      for (const r of open) out.push(cls, r.x0, r.x1, r.z0, r.z1);
     }
     return Int32Array.from(out);
   }
-  /** Cells' worth of an answer a slice of `take` remembers before it yields. */
+  /**
+   * Whether `answer` is what `strips` asked: its arrays are long enough for its instances, and the instances' cells
+   * are in the strips, in strictly increasing (strip, cx, cz) order, one pass over both.
+   */
+  function fits(strips: Int32Array, answer: ClutterAnswer): boolean {
+    const { cells } = answer;
+    if (cells.length % 3 !== 0) return false;
+    const count = cells.length / 3;
+    if (answer.values.length < count * CLUTTER_WIRE_VALUES || answer.frames.length < count * KEPT_STRIDE || answer.framed.length < count) return false;
+    const strip = Math.floor(strips.length / CLUTTER_STRIP_INTS);
+    let s = 0;
+    let lastX = 0;
+    let lastZ = 0;
+    // Whether the cursor stands on a cell of strip `s` already (the instance before it was in that strip).
+    let within = false;
+    for (let i = 0; i < count; i++) {
+      const cls = cells[i * 3] as number;
+      const cx = cells[i * 3 + 1] as number;
+      const cz = cells[i * 3 + 2] as number;
+      for (;;) {
+        if (s >= strip) return false;
+        const o = s * CLUTTER_STRIP_INTS;
+        const inside = strips[o] === cls && cx >= (strips[o + 1] as number) && cx <= (strips[o + 2] as number) &&
+          cz >= (strips[o + 3] as number) && cz <= (strips[o + 4] as number);
+        if (inside && (!within || cx > lastX || (cx === lastX && cz > lastZ))) break;
+        s++;
+        within = false;
+      }
+      within = true;
+      lastX = cx;
+      lastZ = cz;
+    }
+    return true;
+  }
+  /** Cells' worth of an answer a slice of `take` remembers before it yields, and the cells that count as one unit of the scheduler's clock (`sliceDue`). */
   const TAKE_SLICE = 512;
+  const TAKE_CLOCK_CELLS = 64;
   function* take(
     strips: Int32Array, answer: ClutterAnswer, camX: number, camZ: number, found?: (inst: ClutterInstance, i: number) => void,
-  ): Slices {
+  ): Slices<boolean> {
+    // An answer that does not fit its strips is dropped whole: a cell it does not name would be remembered as empty.
+    if (!fits(strips, answer)) return false;
     const origins: ({ x: number; z: number } | undefined)[] = [];
     const count = answer.cells.length / 3;
     const { cells } = answer;
@@ -867,10 +924,12 @@ export function createClutterCollector(seed: number, release?: (inst: ClutterIns
               cache.set(key, null);
             }
           }
-          if (++done % TAKE_SLICE === 0) yield;
+          const ended = sliceDue(1 / TAKE_CLOCK_CELLS);
+          if (++done % TAKE_SLICE === 0 || ended) yield;
         }
       }
     }
+    return true;
   }
   return {
     collectSlices,

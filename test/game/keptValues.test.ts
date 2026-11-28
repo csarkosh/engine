@@ -53,6 +53,7 @@ describe("keptValues.put", () => {
     const b = { id: 2 };
     expect(kept.put(b, Float32Array.from([5, 5, 5, 5]), 0)).toBe(true);
     expect(kept.offsetOf(b)).toBe(at);
+    expect(Array.from(kept.data.subarray(at, at + STRIDE))).toEqual([5, 5, 5, 5]);
   });
 
   it("grows the slab for put keys as for computed ones", () => {

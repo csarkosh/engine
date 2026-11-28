@@ -131,11 +131,15 @@ export type ClutterLists = {
   /**
    * Remembers an answer to those strips (`ClutterCollector.take`), as slices; each instance's frame and tint the
    * answer carries is put in the store as the instance is remembered, so the fill copies it. The lists are what they
-   * are without the answer.
+   * are without the answer. The result is false for an answer that does not fit its strips, dropped whole.
    */
-  take(strips: Int32Array, answer: ClutterAnswer, x: number, z: number): Slices;
+  take(strips: Int32Array, answer: ClutterAnswer, x: number, z: number): Slices<boolean>;
   /** Cells the page looked up itself (`ClutterCollector.looked`). */
   readonly looked: number;
+  /** Frames and tints the lists computed themselves, at an instance's first listing: not the ones an answer carried. */
+  readonly framedHere: number;
+  /** Cells the collector remembers (`ClutterCollector.size`). */
+  readonly cells: number;
   /** The camera position the buffers were last built for. */
   readonly view: { readonly x: number; readonly z: number };
   /** Instances whose matrix and tint are kept (`keptValues.ts`). */
@@ -154,7 +158,9 @@ export function createClutterLists(seed: number, options: ClutterListsOptions): 
    * each. Nothing here depends on the eye, the tier's radius, the time or
    * the wind.
    */
+  let framedHere = 0;
   function computeInstance(inst: ClutterInstance, out: Float32Array, offset: number): void {
+    framedHere++;
     clutterFrameInto(seed, inst, out, offset);
   }
   const kept = createKeptValues<ClutterInstance>(KEPT_STRIDE, computeInstance);
@@ -282,6 +288,12 @@ export function createClutterLists(seed: number, options: ClutterListsOptions): 
     },
     get looked() {
       return collector.looked;
+    },
+    get framedHere() {
+      return framedHere;
+    },
+    get cells() {
+      return collector.size;
     },
     cut(pose, changed) {
       if (culledBuckets.length === 0) return;

@@ -3,10 +3,10 @@ import "../../src/sim/montane.js";
 import { registerOlympic } from "../../src/sim/olympic.js";
 import { activeTerrainVariant, type TerrainVariant } from "../../src/sim/terrain.js";
 import {
-  CLUTTER_CLASS_COUNT, CLUTTER_DRIFTLOG, clutterInCell, type ClutterInstance,
+  CLUTTER_CLASS_COUNT, CLUTTER_DRIFTLOG, clutterCell, clutterInCell, type ClutterInstance,
 } from "../../src/sim/clutter.js";
 import {
-  clutterCellKey, clutterWindowAt, createClutterCollector,
+  CLUTTER_RADII, clutterCellKey, clutterWindowAt, createClutterCollector,
 } from "../../src/game/clutterField.js";
 import { clutterFrameInto } from "../../src/game/clutterFrame.js";
 import { createClutterLists, type ClutterLists } from "../../src/game/clutterLists.js";
@@ -14,6 +14,7 @@ import { cutsFor, seatDriftLogs } from "../../src/game/clutterInstances.js";
 import { CLUTTER_STRIP_INTS, type ClutterAnswer } from "../../src/game/clutterWire.js";
 import { KEPT_STRIDE } from "../../src/game/instanceLists.js";
 import { finish } from "../../src/game/syncJobs.js";
+import { timeLimit } from "../../testing/timeLimit.js";
 
 /**
  * The page's memory taking the worker's answers. Whatever it is answered, whenever, in whatever order, or never, what
@@ -61,11 +62,17 @@ function path(): Pos[] {
   go(1, 300, 0);
   go(8, -3.1, -3.1);
   go(4, 3.05, -0.5);
+  // Further jumps of 300 m, each into ground the collector has not seen, so that its memory passes `COLLECTOR_SWEEP_SIZE`.
+  const hops: [number, number][] = [[0, 300], [-300, 0], [0, -300], [300, 300], [-300, 300]];
+  hops.forEach(([jx, jz], k) => {
+    go(1, jx, jz);
+    go(5, k % 2 === 0 ? 3.1 : -2.9, k % 2 === 0 ? 0.7 : 3.2);
+  });
   return out;
 }
 
 /** What the worker would send for `strips`: each cell looked up and framed as the page would, drift logs unframed. */
-function answerFor(strips: Int32Array): ClutterAnswer {
+function answerFor(strips: Int32Array, order: "server" | "czMajor" = "server"): ClutterAnswer {
   const found: { cls: number; cx: number; cz: number; inst: ClutterInstance }[] = [];
   for (let s = 0; s < strips.length; s += CLUTTER_STRIP_INTS) {
     const [cls, x0, x1, z0, z1] = Array.from(strips.subarray(s, s + CLUTTER_STRIP_INTS)) as [number, number, number, number, number];
@@ -76,6 +83,7 @@ function answerFor(strips: Int32Array): ClutterAnswer {
       }
     }
   }
+  if (order === "czMajor") found.sort((p, q) => p.cls - q.cls || p.cz - q.cz || p.cx - q.cx);
   const cells = new Int32Array(found.length * 3);
   const values = new Float64Array(found.length * 8);
   const frames = new Float32Array(found.length * KEPT_STRIDE);
@@ -133,27 +141,41 @@ type Way = "before" | "late" | "twice" | "never" | "first ten";
 /**
  * Drives a lists object along `positions`, answering each crossing's unknown strips the way `way` says, and the
  * reference with none, comparing after every rebuild. `keptEqual` says whether the store's size is held to the
- * reference's at every step.
+ * reference's at every step. `fell` says the collector's memory shrank at some rebuild: its sweep ran.
  */
-function drive(way: Way, positions: Pos[], keptEqual: boolean): { lists: ClutterLists; ref: ClutterLists } {
+function drive(way: Way, positions: Pos[], keptEqual: boolean): { lists: ClutterLists; ref: ClutterLists; fell: boolean; peak: number } {
   const lists = createClutterLists(SEED, OPTIONS);
   const ref = createClutterLists(SEED, OPTIONS);
   // A second take of the same answer changes nothing: a lists object that took each once keeps as many frames.
   const once = way === "twice" ? createClutterLists(SEED, OPTIONS) : null;
   let pending: { strips: Int32Array } | null = null;
+  let fell = false;
+  let peak = 0;
+  let framedAhead = 0;
   positions.forEach((p, i) => {
     const strips = way === "never" ? new Int32Array(0) : lists.unknown(p.x, p.z, () => false);
     if (way === "before" || way === "twice" || (way === "first ten" && i < 10)) {
       const answer = answerFor(strips);
-      finish(lists.take(strips, answer, p.x, p.z));
+      const keptBefore = lists.kept;
+      expect(finish(lists.take(strips, answer, p.x, p.z))).toBe(true);
+      // Every cell asked is fresh and in reach: each framed instance of the answer takes one slot, no other does.
+      const framed = answer.framed.reduce((n, f) => n + f, 0);
+      expect(lists.kept - keptBefore, `${way}, crossing ${i} frames put`).toBe(framed);
+      framedAhead += framed;
       if (once !== null) finish(once.take(strips, answer, p.x, p.z));
-      if (way === "twice") finish(lists.take(strips, answer, p.x, p.z));
+      if (way === "twice") {
+        expect(finish(lists.take(strips, answer, p.x, p.z))).toBe(true);
+        expect(lists.kept, `${way}, crossing ${i} second take`).toBe(keptBefore + framed);
+      }
     }
+    const before = lists.cells;
     finish(lists.rebuild(p.x, p.z));
+    if (lists.cells < before) fell = true;
+    peak = Math.max(peak, lists.cells);
     if (once !== null) finish(once.rebuild(p.x, p.z));
     finish(ref.rebuild(p.x, p.z));
     if (way === "late") {
-      if (pending !== null) finish(lists.take(pending.strips, answerFor(pending.strips), p.x, p.z));
+      if (pending !== null) expect(finish(lists.take(pending.strips, answerFor(pending.strips), p.x, p.z))).toBe(true);
       pending = { strips };
     }
     expectDrawnSame(lists, ref, `${way}, crossing ${i}`, keptEqual);
@@ -163,7 +185,8 @@ function drive(way: Way, positions: Pos[], keptEqual: boolean): { lists: Clutter
       expect(lists.kept).toBeGreaterThanOrEqual(ref.kept);
     }
   });
-  return { lists, ref };
+  if (way === "before" || way === "twice" || way === "first ten") expect(framedAhead).toBeGreaterThan(0);
+  return { lists, ref, fell, peak };
 }
 
 function drivenOn(name: string, place: TerrainVariant["clutterStands"]): void {
@@ -185,25 +208,31 @@ function drivenOn(name: string, place: TerrainVariant["clutterStands"]): void {
     });
 
     it("draws the same when each crossing's unknown cells are answered and taken before the rebuild", () => {
-      const { lists, ref } = drive("before", positions, false);
+      const { lists, ref, fell, peak } = drive("before", positions, false);
       expect(lists.kept).toBeGreaterThanOrEqual(ref.kept);
-    });
+      expect(peak).toBeGreaterThan(0);
+      expect(fell, "the sweep ran").toBe(true);
+    }, timeLimit(240_000));
 
     it("draws the same, and keeps as many frames, when the answers come after the page has rebuilt without them", () => {
-      drive("late", positions, true);
-    });
+      const { fell } = drive("late", positions, true);
+      expect(fell, "the sweep ran").toBe(true);
+    }, timeLimit(240_000));
 
     it("draws the same, and keeps what one take keeps, when each answer is taken twice", () => {
-      drive("twice", positions, false);
-    });
+      const { fell } = drive("twice", positions, false);
+      expect(fell, "the sweep ran").toBe(true);
+    }, timeLimit(240_000));
 
     it("draws the same when nothing is ever answered", () => {
-      drive("never", positions, true);
-    });
+      const { fell } = drive("never", positions, true);
+      expect(fell, "the sweep ran").toBe(true);
+    }, timeLimit(240_000));
 
     it("draws the same when only the first ten crossings are answered", () => {
-      drive("first ten", positions, false);
-    });
+      const { fell } = drive("first ten", positions, false);
+      expect(fell, "the sweep ran").toBe(true);
+    }, timeLimit(240_000));
   });
 }
 
@@ -305,6 +334,7 @@ describe("the collector's unknown and take", () => {
     const collector = createClutterCollector(SEED);
     collector.collect(0, 0, SCALE);
     const strips = collector.unknown(3.2, 0.2, SCALE, () => false);
+    const lookedBefore = collector.looked;
     const answer = answerFor(strips);
     const given: ClutterInstance[] = [];
     finish(collector.take(strips, answer, 3.2, 0.2, (inst) => given.push(inst)));
@@ -312,6 +342,172 @@ describe("the collector's unknown and take", () => {
     const ref = createClutterCollector(SEED).collect(3.2, 0.2, SCALE);
     expect(walked).toEqual(ref);
     expect(given.length).toBeGreaterThan(0);
-    expect(collector.looked).toBeGreaterThan(0);
+    // Every cell the collect added was taken from the answer: the page looked up none of them.
+    expect(collector.looked).toBe(lookedBefore);
+  });
+});
+
+describe("an answer that does not fit its strips", () => {
+  beforeAll(() => { seatDriftLogs(trunk()); });
+
+  const here = { x: 3.2, z: 0.2 };
+  const elsewhere = { x: 0, z: 6.5 };
+
+  /** A collector built at the origin, the strips it would ask at `here` and at `elsewhere`. */
+  function warm() {
+    const collector = createClutterCollector(SEED);
+    collector.collect(0, 0, SCALE);
+    const mine = collector.unknown(here.x, here.z, SCALE, () => false);
+    const other = collector.unknown(elsewhere.x, elsewhere.z, SCALE, () => false);
+    expect(mine.length).toBeGreaterThan(0);
+    expect(other.length).toBeGreaterThan(0);
+    return { collector, mine, other };
+  }
+
+  const bad: [string, (mine: Int32Array, other: Int32Array) => { strips: Int32Array; answer: ClutterAnswer }][] = [
+    ["an answer for other strips", (mine, other) => ({ strips: other, answer: answerFor(mine) })],
+    ["a reordered answer (cz first)", (mine) => ({ strips: mine, answer: answerFor(mine, "czMajor") })],
+    ["a cells array cut short", (mine) => {
+      const answer = answerFor(mine);
+      return { strips: mine, answer: { ...answer, cells: answer.cells.subarray(0, answer.cells.length - 1) } };
+    }],
+    ["a frames array cut short", (mine) => {
+      const answer = answerFor(mine);
+      return { strips: mine, answer: { ...answer, frames: answer.frames.subarray(0, answer.frames.length - 1) } };
+    }],
+    ["a values array cut short", (mine) => {
+      const answer = answerFor(mine);
+      return { strips: mine, answer: { ...answer, values: answer.values.subarray(0, answer.values.length - 1) } };
+    }],
+    ["a framed array cut short", (mine) => {
+      const answer = answerFor(mine);
+      return { strips: mine, answer: { ...answer, framed: answer.framed.subarray(0, answer.framed.length - 1) } };
+    }],
+  ];
+
+  for (const [name, make] of bad) {
+    it(`${name} is dropped whole: nothing remembered, found never told, false`, () => {
+      const { collector, mine, other } = warm();
+      const { strips, answer } = make(mine, other);
+      expect(answer.cells.length).toBeGreaterThan(0);
+      const size = collector.size;
+      let told = 0;
+      expect(finish(collector.take(strips, answer, here.x, here.z, () => { told++; }))).toBe(false);
+      expect(collector.size).toBe(size);
+      expect(told).toBe(0);
+    });
+
+    it(`${name} leaves the next rebuild drawing exactly what the reference draws`, () => {
+      const lists = createClutterLists(SEED, OPTIONS);
+      const ref = createClutterLists(SEED, OPTIONS);
+      finish(lists.rebuild(0, 0));
+      finish(ref.rebuild(0, 0));
+      const mine = lists.unknown(here.x, here.z, () => false);
+      const other = lists.unknown(elsewhere.x, elsewhere.z, () => false);
+      const { strips, answer } = make(mine, other);
+      const cells = lists.cells;
+      const kept = lists.kept;
+      expect(finish(lists.take(strips, answer, here.x, here.z))).toBe(false);
+      expect(lists.cells).toBe(cells);
+      expect(lists.kept).toBe(kept);
+      finish(lists.rebuild(here.x, here.z));
+      finish(ref.rebuild(here.x, here.z));
+      expectDrawnSame(lists, ref, name, true);
+    });
+  }
+
+  it("an answer that fits, with no instances for strips that hold none, is taken", () => {
+    const { collector } = warm();
+    expect(finish(collector.take(new Int32Array(0), answerFor(new Int32Array(0)), here.x, here.z))).toBe(true);
+  });
+});
+
+describe("the frames an answer carries", () => {
+  beforeAll(() => { seatDriftLogs(trunk()); });
+
+  it("are the lists' own: a rebuild computes none for an instance that arrived framed, only the drift logs'", () => {
+    const lists = createClutterLists(SEED, OPTIONS);
+    const ref = createClutterLists(SEED, OPTIONS);
+    // The first window is answered whole too, so that nothing of it waits for a frame of the page's own.
+    const first: number[] = [];
+    for (let cls = 0; cls < CLUTTER_CLASS_COUNT; cls++) {
+      const w = clutterWindowAt(cls, 0, 0, SCALE);
+      first.push(cls, w.x0, w.x1, w.z0, w.z1);
+    }
+    const all = Int32Array.from(first);
+    expect(finish(lists.take(all, answerFor(all), 0, 0))).toBe(true);
+    let logs = 0;
+    const countLogs = (): number => lists.all.reduce((n, bucket) => n + (bucket.cls === CLUTTER_DRIFTLOG ? bucket.list.count : 0), 0);
+    const positions: Pos[] = [{ x: 0, z: 0 }];
+    for (let i = 1; i <= 14; i++) positions.push({ x: i * 3.1, z: i < 8 ? 0.3 * i : i * 3.1 - 21 });
+    positions.forEach((p, i) => {
+      const strips = lists.unknown(p.x, p.z, () => false);
+      expect(finish(lists.take(strips, answerFor(strips), p.x, p.z))).toBe(true);
+      finish(lists.rebuild(p.x, p.z));
+      finish(ref.rebuild(p.x, p.z));
+      logs += countLogs();
+      expectDrawnSame(lists, ref, `ahead, crossing ${i}`, false);
+    });
+    expect(lists.framedHere, "frames computed by the page").toBeLessThanOrEqual(logs);
+    expect(ref.framedHere, "frames the unanswered reference computes").toBeGreaterThan(logs + 1000);
+  }, timeLimit(120_000));
+
+  it("are taken once: the same answer again, and one taken 1,000 m away, change nothing", () => {
+    const lists = createClutterLists(SEED, OPTIONS);
+    finish(lists.rebuild(0, 0));
+    const strips = lists.unknown(3.2, 0.2, () => false);
+    const answer = answerFor(strips);
+    const framed = answer.framed.reduce((n, f) => n + f, 0);
+    expect(framed).toBeGreaterThan(0);
+    const kept = lists.kept;
+    const cells = lists.cells;
+    expect(finish(lists.take(strips, answer, 1003.2, 0.2))).toBe(true);
+    expect(lists.kept).toBe(kept);
+    expect(lists.cells).toBe(cells);
+    expect(finish(lists.take(strips, answer, 3.2, 0.2))).toBe(true);
+    expect(lists.kept).toBe(kept + framed);
+    const cellsAfter = lists.cells;
+    expect(finish(lists.take(strips, answer, 3.2, 0.2))).toBe(true);
+    expect(lists.kept).toBe(kept + framed);
+    expect(lists.cells).toBe(cellsAfter);
+  });
+});
+
+describe("unknown leaves out cells that are out of reach", () => {
+  beforeAll(() => { seatDriftLogs(trunk()); });
+
+  it("at the full radius every cell of its strips is within the forgetting distance, and it is empty after taking them", () => {
+    const collector = createClutterCollector(SEED);
+    collector.collect(0, 0, 1);
+    const place = { x: 3.2, z: 0.2 };
+    const strips = collector.unknown(place.x, place.z, 1, () => false);
+    expect(strips.length).toBeGreaterThan(0);
+    let corners = 0;
+    for (let cls = 0; cls < CLUTTER_CLASS_COUNT; cls++) {
+      // What `unknown` would hold if it ignored reach: the window's new cells, against what it holds.
+      const now = clutterWindowAt(cls, place.x, place.z, 1);
+      const old = clutterWindowAt(cls, 0, 0, 1);
+      const cell = clutterCell(cls);
+      const ax = Math.floor(place.x / cell) * cell;
+      const az = Math.floor(place.z / cell) * cell;
+      const far = CLUTTER_RADII[cls] as number + 8 * cell;
+      const reach = (cx: number, cz: number): number => Math.hypot(
+        Math.max(cx * cell - ax, 0, ax - (cx + 1) * cell), Math.max(cz * cell - az, 0, az - (cz + 1) * cell),
+      ) - far;
+      for (let cx = now.x0; cx <= now.x1; cx++) {
+        for (let cz = now.z0; cz <= now.z1; cz++) {
+          if (cx >= old.x0 && cx <= old.x1 && cz >= old.z0 && cz <= old.z1) continue;
+          if (reach(cx, cz) >= 0) corners++;
+        }
+      }
+      for (const key of expand(strips)) {
+        const [c, cx, cz] = key.split(",").map(Number) as [number, number, number];
+        if (c === cls) expect(reach(cx, cz), `${key} within reach`).toBeLessThan(0);
+      }
+    }
+    // The cells the page would look up that no answer is asked for: the leading corners of the meadow and its like.
+    expect(corners).toBeGreaterThan(0);
+    finish(collector.take(strips, answerFor(strips), place.x, place.z));
+    expect(collector.unknown(place.x, place.z, 1, () => false).length).toBe(0);
   });
 });
