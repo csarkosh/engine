@@ -13,9 +13,9 @@ export const WORLD_ROUTES: Readonly<Record<WorldKind, 0 | 1>> = { rings: 0, clut
 
 /** What the measurement mode reads out of the session's workers (`window.__worldWork()`). */
 export type WorldWorkRead = {
-  /** The links made. */
+  /** The links made that have not failed. */
   workers: number;
-  /** The index of the link each kind is on. */
+  /** The index of the link each kind's client is on, -1 where it has none (its link is null: it is built on the page's thread). */
   routes: Record<WorldKind, number>;
   /** The second worker's preparation, or null where none was started. */
   second: { preparedMs: number | null; failed: boolean } | null;

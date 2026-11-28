@@ -31,3 +31,12 @@ describe("the routes of the world's work", () => {
     expect(linkFor("patches", [null])).toBeNull();
   });
 });
+
+describe("the links of a game that asked for two workers", () => {
+  it("leaves a kind without a link where the second worker could not be made", () => {
+    const first = link("first");
+    expect(linkFor("patches", [first, null])).toBeNull();
+    expect(linkFor("rings", [first, null])).toBe(first);
+    expect(linkFor("clutter", [first, null])).toBe(first);
+  });
+});

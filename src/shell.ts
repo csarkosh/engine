@@ -1251,7 +1251,7 @@ export function startShell<
         const link = worker === null ? null : createWorldLink(worker);
         startSecond();
         secondHeld = true;
-        const links = [link, ...(second === null ? [] : [second.link])];
+        const links = (page.worldWorkers ?? 1) >= 2 ? [link, second?.link ?? null] : [link];
         unlaunched = links;
         const on = <T>(kind: WorldKind, make: (at: WorldLink, from: WorldMadeFrom) => T): T | null => {
           const at = linkFor(kind, links);
@@ -1260,14 +1260,18 @@ export function startShell<
         const patchWork = on("patches", createPatchWork);
         const ringWork = on("rings", createRingWork);
         const clutterWork = on("clutter", createClutterWork);
-        // A second worker no kind is on has no client to end it: it ends here.
-        if (second !== null && !(["rings", "clutter", "patches"] as const).some((kind) => linkFor(kind, links) === second?.link)) second.link.dispose();
+        // A worker no kind is on has no client to end it: it ends here.
+        for (const made of links) if (made !== null && !(["rings", "clutter", "patches"] as const).some((kind) => linkFor(kind, links) === made)) made.dispose();
+        const routeOf = (kind: WorldKind): number => {
+          const at = linkFor(kind, links);
+          return at === null ? -1 : links.indexOf(at);
+        };
         const worldRead = (): WorldWorkRead => ({
-          workers: links.filter((made) => made !== null).length,
+          workers: links.filter((made) => made !== null && !made.failed).length,
           routes: {
-            rings: Math.max(0, links.indexOf(linkFor("rings", links))),
-            clutter: Math.max(0, links.indexOf(linkFor("clutter", links))),
-            patches: Math.max(0, links.indexOf(linkFor("patches", links))),
+            rings: routeOf("rings"),
+            clutter: routeOf("clutter"),
+            patches: routeOf("patches"),
           },
           second: second?.record() ?? null,
         });

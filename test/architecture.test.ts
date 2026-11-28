@@ -1101,7 +1101,10 @@ describe("layer boundaries", () => {
     expect(main).toContain("        launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled, patchWork, ringWork, clutterWork, worldRead);");
     // The session's worker is the one that made the scene the build takes, else the prep's; a start that fails before
     // the session holds it ends it.
-    expect(main).toContain("        const worker = (again !== null && sampled !== null ? again.handOver() : null) ?? prep.handOver();\n        const link = worker === null ? null : createWorldLink(worker);\n        startSecond();\n        secondHeld = true;\n        const links = [link, ...(second === null ? [] : [second.link])];\n        unlaunched = links;\n");
+    expect(main).toContain("        const worker = (again !== null && sampled !== null ? again.handOver() : null) ?? prep.handOver();\n        const link = worker === null ? null : createWorldLink(worker);\n        startSecond();\n        secondHeld = true;\n        const links = (page.worldWorkers ?? 1) >= 2 ? [link, second?.link ?? null] : [link];\n        unlaunched = links;\n");
+    // No link, no client: a kind whose link is null (a second worker that could not be made included) has none.
+    expect(main).toContain("        const on = <T>(kind: WorldKind, make: (at: WorldLink, from: WorldMadeFrom) => T): T | null => {\n          const at = linkFor(kind, links);\n          return at === null ? null : make(at, madeFrom);\n        };\n");
+    expect(main).toContain("        const routeOf = (kind: WorldKind): number => {\n          const at = linkFor(kind, links);\n          return at === null ? -1 : links.indexOf(at);\n        };\n");
     expect(main).toContain('        const patchWork = on("patches", createPatchWork);\n        const ringWork = on("rings", createRingWork);\n        const clutterWork = on("clutter", createClutterWork);\n');
     // The second worker is started in one place (`startSecond`), past the wait, and ended with the first's: by
     // `endPrep` until the build, then by its clients or, where no kind is on it, at once.
@@ -1113,7 +1116,7 @@ describe("layer boundaries", () => {
     const sessionBody = main.slice(main.indexOf("function render(container: HTMLDivElement): void {"), main.indexOf("\n  function launch("));
     expect(sessionBody.indexOf("const startSecond = ")).toBeGreaterThan(sessionBody.indexOf("    if (!isLandingRoute(route) && signals === null) {"));
     expect([...main.matchAll(/\bstartSecond\(\)/g)].length).toBe(2);
-    expect(main).toContain("        if (second !== null && !([\"rings\", \"clutter\", \"patches\"] as const).some((kind) => linkFor(kind, links) === second?.link)) second.link.dispose();");
+    expect(main).toContain("        for (const made of links) if (made !== null && !([\"rings\", \"clutter\", \"patches\"] as const).some((kind) => linkFor(kind, links) === made)) made.dispose();");
     expect(main).toContain("        for (const made of unlaunched) made?.dispose();\n        unlaunched = [];");
     expect(app).toContain("  ringWork?: RingWork | null;");
     expect(app).toContain("patchWork: options.patchWork, ringWork: options.ringWork, clutterWork: options.clutterWork, worldRead: options.worldRead,");

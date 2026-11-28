@@ -837,6 +837,7 @@ export function createLiteRenderer<S extends RenderState<P>, P extends RenderPla
   // `__patchWork()` beside them: the counts of the rock faces asked of the world's worker (`PatchWork.record`), or
   // null where the session has no client of it. `__ringWork()` likewise for the rings (`RingWork.record`), and
   // `__clutterWork()` for the clutter's cells (`ClutterWork.record` with the clutter's own counts, `clutterRecord`).
+  // Before the clutter's meshes stand `__clutterWork()` is the client's record alone.
   // `__worldWork()` reads the session's workers: how many, which kind is on which, and the second's preparation.
   const measured = globalThis as {
     __syncJobs?: () => SyncJobsLast; __syncJobsReset?: () => void; __frameUploads?: () => FrameUploadCounts;
