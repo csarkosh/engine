@@ -2,14 +2,15 @@
 //
 //   node tools/recording/encode.mjs --frames <dir> --out <file.mp4> --still <file.webp> [--crf 18]
 //
-// Reads <dir>/film.json (written by record.mjs). H.264, yuv420p, faststart, no audio, a key frame every 2 s. The still
+// Reads <dir>/film.json (written by record.mjs) and checks every frame of the recording is there at the film's size
+// first. H.264, yuv420p, faststart, no audio, a key frame every 2 s. The still
 // is the video's first frame as WebP, quality lowered until it is under 200 KB. A film with a loop is checked: the
 // jump from its last frame to its first must be no bigger than its biggest frame-to-frame step; otherwise exit 1.
 import { spawnSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { encodeArgs } from "./lib/encodeArgs.mjs";
-import { writeAtomic } from "./lib/frames.mjs";
+import { framesProblems, writeAtomic } from "./lib/frames.mjs";
 import { seamReport } from "./lib/seam.mjs";
 
 const STILL_LIMIT = 200 * 1024;
@@ -72,7 +73,10 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   const frames = resolve(options.frames);
   const out = resolve(options.out);
+  if (!existsSync(`${frames}/film.json`)) throw new Error(`${frames} has no film.json: record.mjs writes it as it records, so --frames must be a recording's directory`);
   const { def } = JSON.parse(readFileSync(`${frames}/film.json`, "utf8"));
+  const problems = framesProblems(frames, def);
+  if (problems.length > 0) throw new Error(`the frames cannot be encoded:\n${problems.map((p) => `  ${p}`).join("\n")}`);
   ffmpeg(encodeArgs(def, { frames, out }, options.crf), "encode");
   const { bytes, quality } = await still(out);
   writeAtomic(resolve(options.still), bytes);
@@ -80,7 +84,9 @@ async function main() {
   if (!def.loop) return;
   const [gray, width, height] = grayFrames(out, def);
   const report = seamReport(gray, width, height);
-  console.log(`seam ${report.seam.toFixed(2)}, median step ${report.medianStep.toFixed(2)}, max step ${report.maxStep.toFixed(2)}: ${report.ok ? "ok" : "the loop jumps"}`);
+  console.log(
+    `seam ${report.seam.toFixed(2)} (${report.seamToMedian.toFixed(2)} x the median step), median step ${report.medianStep.toFixed(2)}, max step ${report.maxStep.toFixed(2)}: ${report.ok ? "ok" : "the loop jumps"}`,
+  );
   if (!report.ok) process.exitCode = 1;
 }
 
