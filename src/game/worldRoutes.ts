@@ -8,8 +8,13 @@ import type { WorldLink } from "./worldLink.js";
 
 export type WorldKind = "rings" | "clutter" | "patches";
 
-/** The index of the link each kind is on, where there are two. */
-export const WORLD_ROUTES: Readonly<Record<WorldKind, 0 | 1>> = { rings: 0, clutter: 0, patches: 1 };
+/**
+ * The index of the link each kind is on, where there are two: the rings and the rock faces on the first, as with one
+ * worker, and the clutter alone on the second. Measured against the other split (the clutter with the rings, the rock
+ * faces alone): a clutter request that waits behind a set of rings is answered too late to be of use at speed, and the
+ * page then looks the cells up itself.
+ */
+export const WORLD_ROUTES: Readonly<Record<WorldKind, 0 | 1>> = { rings: 0, clutter: 1, patches: 0 };
 
 /** What the measurement mode reads out of the session's workers (`window.__worldWork()`). */
 export type WorldWorkRead = {
