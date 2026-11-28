@@ -272,7 +272,8 @@ describe("the rings asked of the worker, written as they arrive and shown as a s
 describe("the rings' job under the scheduler, with the real client", () => {
   /**
    * The real client on a worker that only records: `log` has a line for each set posted (its camera's x) and for each
-   * ring written and set shown; `deliver` answers the newest set with a ring of each of `levels`, then `ringsDone`.
+   * ring written and set shown; `deliver` answers the newest set with a ring of each of `levels`, then `ringsDone`
+   * unless `done` is false.
    */
   function rig() {
     const log: string[] = [];
@@ -288,12 +289,12 @@ describe("the rings' job under the scheduler, with the real client", () => {
       terminate() {},
     };
     const work: RingWork = createRingWork(createWorldLink(worker as unknown as Worker), { seed: 7, variant: "v" });
-    const deliver = (levels: number[]): void => {
+    const deliver = (levels: number[], done = true): void => {
       const request = posted[posted.length - 1] as WorldRingsRequest;
       for (const level of levels) {
         worker.onmessage?.({ data: { id: request.id, kind: "ring", set: request.set, level, drawn: drawnOf(request.camX), ring: sentOf(), ms: 1 } });
       }
-      worker.onmessage?.({ data: { id: request.id, kind: "ringsDone", set: request.set, ms: 1 } });
+      if (done) worker.onmessage?.({ data: { id: request.id, kind: "ringsDone", set: request.set, ms: 1 } });
     };
     const fail = (): void => {
       const request = posted[posted.length - 1] as WorldRingsRequest;
@@ -304,22 +305,29 @@ describe("the rings' job under the scheduler, with the real client", () => {
       return { h: a(), hh: a(), dx: a(), dz: a(), colors: a(), weights: a(), weights2: a(), cover: a(), normals: a(), lift: a() } as unknown as RingSamples;
     };
     const samples = (): RingSamples[] => Array.from({ length: 7 }, sampleOf);
-    /** The job for a camera at x: asks with the samples where the worker holds none, writes and shows to the log. */
-    const job = (x: number): Slices => askThenPlaceRings({
-      ask: () => work.ask({ camX: x, camZ: 0, cover: null, drawn: [], ...(work.holds ? {} : { samples: samples() }) }),
-      arrived: () => work.take(),
-      done: () => work.done,
-      failed: () => work.failed,
-      disposed: () => false,
-      *holdWrite() {},
-      write: (ring) => log.push(`write ${ring.level} at ${ring.drawn.x}`),
-      *holdShow() {},
-      show: () => log.push(`show ${x}`),
-      *finishHere() {
-        log.push(`here ${x}`);
-      },
-    });
-    return { log, posted, deliver, fail, job };
+    /** The job for a camera at x: asks with the samples where the worker holds none, writes and shows to the log. Once
+     * it has asked, a client that holds no samples and has no set out has lost the set, as `terrainMeshes.ts` reads it. */
+    const job = (x: number): Slices => {
+      let asked = false;
+      return askThenPlaceRings({
+        ask: () => {
+          asked = true;
+          work.ask({ camX: x, camZ: 0, cover: null, drawn: [], ...(work.holds ? {} : { samples: samples() }) });
+        },
+        arrived: () => work.take(),
+        done: () => work.done,
+        failed: () => work.failed || (asked && !work.holds && !work.out),
+        disposed: () => false,
+        *holdWrite() {},
+        write: (ring) => log.push(`write ${ring.level} at ${ring.drawn.x}`),
+        *holdShow() {},
+        show: () => log.push(`show ${x}`),
+        *finishHere() {
+          log.push(`here ${x}`);
+        },
+      });
+    };
+    return { log, posted, work, deliver, fail, job };
   }
 
   it("a request held behind a started job asks nothing until that job has shown", () => {
@@ -372,6 +380,25 @@ describe("the rings' job under the scheduler, with the real client", () => {
     frame();
     expect([jobs.last.slices, jobs.last.waits]).toEqual([1, 0]);
     expect(r.log).toEqual(["post 5", "here 5"]);
+    expect(jobs.pending(owner)).toBe(false);
+  });
+
+  it("a stop from outside the job while its set is out leaves the set to this thread, and shows none of it", () => {
+    const { jobs, frame } = scheduler();
+    const r = rig();
+    const owner = {};
+    jobs.begin(owner, r.job(6), false, "clipmap");
+    frame();
+    // One ring of the set arrives and is written; the set is still out.
+    r.deliver([0], false);
+    frame();
+    expect(r.log).toEqual(["post 6", "write 0 at 6"]);
+    expect(r.work.out).toBe(true);
+    // Stopped by another than this job: the set is no longer out, and the worker holds no samples.
+    r.work.stop();
+    expect([r.work.out, r.work.holds, r.work.failed]).toEqual([false, false, false]);
+    frame();
+    expect(r.log).toEqual(["post 6", "write 0 at 6", "stop", "here 6"]);
     expect(jobs.pending(owner)).toBe(false);
   });
 });

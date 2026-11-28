@@ -1171,8 +1171,14 @@ describe("layer boundaries", () => {
     // The job asks as it first runs (`askThenPlaceRings`), through its placing alone; a job dropped with its set out
     // stops the worker, so no later ask finds one out.
     expect(meshes).toContain("      yield* askThenPlaceRings(ringPlacing(work, camX, camZ));\n    } finally {\n      if (work.out) work.stop();\n    }");
-    expect(meshes).toContain("      ask: () => askRings(work, camX, camZ),\n");
+    expect(meshes).toContain("      ask: () => {\n        asked = true;\n        askRings(work, camX, camZ);\n      },\n");
     expect([...meshes.matchAll(/\baskRings\(/g)].length).toBe(2);
+    // Once the job has asked, a client stopped from outside it (no samples held, no set out) has lost the set, as a
+    // failed one has: the job finishes it here and shows none of it.
+    expect(meshes).toContain("      failed: () => work.failed || (asked && !work.holds && !work.out),\n");
+    expect([...meshes.matchAll(/\basked = true;/g)].length).toBe(1);
+    // The covered ground sent: a paved ground with no margin goes with 0, as the page reads it; none with null.
+    expect(meshes).toContain("  return { x, z, reach, fine, cell, pavedMargin: covered.paved === undefined ? null : (covered.pavedMargin ?? 0) };");
     // Handing the samples over lets go of them, of the moves prepared from them and of the idle work.
     expect(meshes).toContain("  function handOver(): RingSamples[] {\n    samplesAway = true;\n    prepared.fill(null);\n    spare.length = 0;\n    jobs?.idle(ringOwner, null);\n    return rings.splice(0);\n  }");
     // A build on this thread while the page holds no samples stops the worker and samples the seven anew: a build at

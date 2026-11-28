@@ -63,7 +63,7 @@ function sameDrawn(a: RingDrawn, b: RingDrawn): boolean {
 /** A covered ground as the page sends it. */
 function sent(cover: CoveredGround | null): RingCover | null {
   if (cover === null) return null;
-  return { x: cover.x, z: cover.z, reach: cover.reach, fine: cover.fine, cell: cover.cell, pavedMargin: cover.pavedMargin ?? null };
+  return { x: cover.x, z: cover.z, reach: cover.reach, fine: cover.fine, cell: cover.cell, pavedMargin: cover.paved === undefined ? null : (cover.pavedMargin ?? 0) };
 }
 
 function request(set: number, camX: number, camZ: number, over: Partial<WorldRingsRequest> = {}): WorldRingsRequest {

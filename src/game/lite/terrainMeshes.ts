@@ -237,11 +237,12 @@ type RingTwin = PageTwin | WorkerTwin;
 type PatchEntry = { spacing: number; stitch: number; place: number; slot: PatchSlot | null; pattern: Uint16Array | null };
 
 /** `covered` as it is sent to the world's worker: without its paved-ground function, which the worker makes from the
- * terrain's own as the page does (`ringServe.ts`). */
+ * terrain's own as the page does (`ringServe.ts`). Its margin is null where it has no paved ground, and where it has one
+ * with no margin, 0, as the page reads a missing one (`writeRingIndicesSlices`). */
 function ringCover(covered: CoveredGround | null): RingCover | null {
   if (covered === null) return null;
   const { x, z, reach, fine, cell } = covered;
-  return { x, z, reach, fine, cell, pavedMargin: covered.paved === undefined ? null : (covered.pavedMargin ?? null) };
+  return { x, z, reach, fine, cell, pavedMargin: covered.paved === undefined ? null : (covered.pavedMargin ?? 0) };
 }
 
 /** A set for a camera's cell: the cells walked from its centre, their stitches as numbers, and the indices of those
@@ -1091,15 +1092,22 @@ export function createTerrainMeshes(
     return rings.splice(0);
   }
 
-  /** What writing and showing the rings `work` sends for a camera at (camX, camZ) takes (`ringJob.ts`). */
+  /** What writing and showing the rings `work` sends for a camera at (camX, camZ) takes (`ringJob.ts`). Once the job
+   * has asked, a client that holds no samples and has no set out was stopped from outside the job, and the set is lost
+   * as a failed one is: finished here, none of it shown as it was written. */
   function ringPlacing(work: RingWork, camX: number, camZ: number): RingPlacing {
     /** The rings written in this job, and what each was made against. */
     const written: { level: number; drawn: RingDrawn }[] = [];
+    /** Whether the job has asked: before it, a client that is to be handed the samples holds none. */
+    let asked = false;
     return {
-      ask: () => askRings(work, camX, camZ),
+      ask: () => {
+        asked = true;
+        askRings(work, camX, camZ);
+      },
       arrived: () => work.take(),
       done: () => work.done,
-      failed: () => work.failed,
+      failed: () => work.failed || (asked && !work.holds && !work.out),
       disposed: () => disposed,
       // A ring's write is one step, and a long one, as `build`'s.
       *holdWrite(ring): Slices {
