@@ -8,10 +8,10 @@
 // so a stopped run resumes. --stills writes `still-<t>.png` at those times only. `film.json` records the
 // definition, the page URL, the build's tag and when the run started.
 // Without --out, frames go to $ENGINE_LAB/film/<name> (the external disk); with no ENGINE_LAB either, the run is refused.
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { attachChrome, evaluate, launchChrome, openPage } from "../frame-budget/lib/cdp.mjs";
-import { frameTimes, missing, runs } from "./lib/frames.mjs";
+import { existingFrames, frameTimes, missing, runs, writeAtomic } from "./lib/frames.mjs";
 
 const READY_TIMEOUT_MS = 10 * 60 * 1000;
 const pad = (n) => String(n).padStart(6, "0");
@@ -86,20 +86,20 @@ async function main() {
 
     mkdirSync(dir, { recursive: true });
     const build = await evaluate(page, "(globalThis.VITE_BUILD_SHA ?? document.documentElement.dataset.build ?? null)").catch(() => null);
-    writeFileSync(`${dir}/film.json`, `${JSON.stringify({ def, url: options.url, build, started }, null, 2)}\n`);
+    writeAtomic(`${dir}/film.json`, `${JSON.stringify({ def, url: options.url, build, started }, null, 2)}\n`);
 
     if (options.stills.length > 0) {
       for (const t of options.stills) {
         await evaluate(page, `window.engineFilm.seek(${t})`);
         await evaluate(page, "window.engineFilm.frame()");
-        writeFileSync(`${dir}/still-${t}.png`, await capture(page));
+        writeAtomic(`${dir}/still-${t}.png`, await capture(page));
         process.stdout.write(`still-${t}.png\n`);
       }
       return;
     }
 
     const times = frameTimes(def);
-    const existing = new Set(readdirSync(dir).flatMap((f) => (/^frame-(\d{6})\.png$/.test(f) ? [Number(f.slice(6, 12))] : [])));
+    const existing = existingFrames(dir);
     const todo = missing(times, existing);
     process.stdout.write(`${def.name}: ${times.length} frames, ${existing.size} present, ${todo.length} to record\n`);
     let done = 0;
@@ -107,7 +107,7 @@ async function main() {
       await evaluate(page, `window.engineFilm.seek(${run[0].t})`);
       for (const { index } of run) {
         await evaluate(page, "window.engineFilm.frame()");
-        writeFileSync(`${dir}/frame-${pad(index)}.png`, await capture(page));
+        writeAtomic(`${dir}/frame-${pad(index)}.png`, await capture(page));
         if (++done % 100 === 0) process.stdout.write(`  ${done}/${todo.length}\n`);
       }
     }

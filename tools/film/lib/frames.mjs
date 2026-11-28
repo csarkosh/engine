@@ -1,3 +1,5 @@
+import { readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+
 // Which frames a film recording needs, and in what runs: pure, so a resumed run is testable.
 
 /** Every frame time `i/fps`, for `i` in `0 .. recordSeconds*fps - 1`. */
@@ -25,4 +27,20 @@ export function runs(list) {
     else out.push([frame]);
   }
   return out;
+}
+
+/** Writes `data` to `path` through `path.tmp` and a rename, so a killed run leaves no truncated file under the real name. */
+export function writeAtomic(path, data) {
+  writeFileSync(`${path}.tmp`, data);
+  renameSync(`${path}.tmp`, path);
+}
+
+/** The indexes of the `frame-NNNNNN.png` files in `dir`; leftover `*.tmp` files (a killed write) are deleted and not counted. */
+export function existingFrames(dir) {
+  const found = new Set();
+  for (const f of readdirSync(dir)) {
+    if (f.endsWith(".tmp")) rmSync(`${dir}/${f}`, { force: true });
+    else if (/^frame-(\d{6})\.png$/.test(f)) found.add(Number(f.slice(6, 12)));
+  }
+  return found;
 }

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { frameTimes, missing, runs } from "../lib/frames.mjs";
+import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { existingFrames, frameTimes, missing, runs, writeAtomic } from "../lib/frames.mjs";
 
 describe("frameTimes", () => {
   it("covers the film and its loop blend at i/fps", () => {
@@ -34,4 +37,16 @@ describe("runs", () => {
     expect(got[1]).toHaveLength(11);
   });
   it("is empty for nothing", () => expect(runs([])).toEqual([]));
+});
+
+describe("resume scan", () => {
+  it("counts finished frames, deletes leftover .tmp files and leaves no .tmp after an atomic write", () => {
+    const dir = mkdtempSync(join(tmpdir(), "film-frames-"));
+    writeFileSync(join(dir, "frame-000000.png"), "x");
+    writeFileSync(join(dir, "frame-000001.png.tmp"), "half");
+    writeAtomic(join(dir, "frame-000002.png"), "y");
+    expect(existingFrames(dir)).toEqual(new Set([0, 2]));
+    expect(readdirSync(dir).sort()).toEqual(["frame-000000.png", "frame-000002.png"]);
+    expect(existsSync(join(dir, "frame-000001.png.tmp"))).toBe(false);
+  });
 });
