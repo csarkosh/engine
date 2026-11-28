@@ -2,9 +2,10 @@
  * A terrain ring made from its samples: its geometry, its triangles and its plugin vertex data, written into
  * the arrays a mesh is made from. The page's thread and a worker both call `ringBuildSlices`, so a ring is the
  * same to the bit whichever made it. This module loads nothing of the renderer. `ringDrawnOf` and `ringStale`
- * are the record of what a ring was made against and the test of whether it must be made again.
+ * are the record of what a ring was made against and the test of whether it must be made again, and
+ * `insideDrawnRing` whether the finest ring drawn still covers the camera.
  */
-import { holeCellsFor, ringGeometryBuffers, ringGeometrySlices, type CoveredGround, type RingGeometry, type RingSamples } from "./clipmap.js";
+import { RING_CELLS, holeCellsFor, ringGeometryBuffers, ringGeometrySlices, type CoveredGround, type RingGeometry, type RingSamples } from "./clipmap.js";
 import type { Slices } from "./syncJobs.js";
 import { terrainVertexDataSlices } from "./terrainVertexData.js";
 import { ringVertices } from "./terrainVertices.js";
@@ -30,6 +31,13 @@ export function ringStale(drawn: RingDrawn | null | undefined, now: RingDrawn): 
     !Object.is(drawn.cx, now.cx) || !Object.is(drawn.cz, now.cz) ||
     !Object.is(drawn.kx, now.kx) || !Object.is(drawn.kz, now.kz) ||
     !Object.is(drawn.kr, now.kr) || !Object.is(drawn.kf, now.kf);
+}
+
+/** Whether (camX, camZ) lies inside the finest ring drawn as `drawn` at `spacing`: a build judged at once there can wait for the worker's set, since every ring drawn still covers the camera. */
+export function insideDrawnRing(drawn: RingDrawn | null | undefined, spacing: number, camX: number, camZ: number): boolean {
+  if (drawn === null || drawn === undefined) return false;
+  const side = RING_CELLS * spacing;
+  return camX >= drawn.x && camX <= drawn.x + side && camZ >= drawn.z && camZ <= drawn.z + side;
 }
 
 /** What a ring is written from. `geometry` is made on first use; `indices` is the ring's triangles at the index buffer's full size; `plugin` its plugin vertex data. */

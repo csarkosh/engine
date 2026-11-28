@@ -40,8 +40,11 @@
  * each ring to its hidden mesh as it arrives, waiting at no cost while none
  * has, and shows the set in one step once it is done (`ringJob.ts`). The
  * first such ask hands the worker the rings' samples, and from then the page
- * holds none and prepares no move ahead. A build on this thread (a
- * teleport, the loader's, or a job whose worker failed) stops the worker and
+ * holds none and prepares no move ahead. A crossing judged at once while the
+ * camera is still inside the finest ring as drawn is the worker's job too,
+ * begun as a crossing judged later begins it, since every ring drawn still
+ * covers the camera. A build on this thread (a jump out of the finest ring
+ * drawn, the loader's, or a job whose worker failed) stops the worker and
  * samples the rings anew where the page holds none, and the next job hands
  * them over again.
  *
@@ -98,7 +101,7 @@ import {
 import type { TrailGraph } from "../../sim/trail.js";
 import {
   BASE_SPACING_BY_TIER, RING_COUNT, commitRingMove, coversRing, createRingSamples, createRingSamplesSlices, prepareRingMove,
-  ringSampleSlices, snapOrigin,
+  ringSampleSlices, ringSpacing, snapOrigin,
   type CoveredGround, type RingArrays, type RingGeometry, type RingMove, type RingSamples,
 } from "../clipmap.js";
 import {
@@ -110,7 +113,7 @@ import { buildAtOnce, type FirstBuilds } from "../firstBuilds.js";
 import type { PatchWork } from "../patchWork.js";
 import type { QualityTier } from "../quality.js";
 import { createCrossing, crossingAt, finish, nextCrossing, type Slices, type SyncJobs } from "../syncJobs.js";
-import { ringBuildSlices, ringDrawnOf, ringStale, type RingBuffers, type RingDrawn } from "../ringBuild.js";
+import { insideDrawnRing, ringBuildSlices, ringDrawnOf, ringStale, type RingBuffers, type RingDrawn } from "../ringBuild.js";
 import type { RingCover, RingSent } from "../ringWire.js";
 import type { RingArrived, RingWork } from "../ringWork.js";
 import { facePatchVertices, ringVertices, type TerrainVertices } from "../terrainVertices.js";
@@ -1206,6 +1209,15 @@ export function createTerrainMeshes(
     // A new place: a build the loader still holds for the last one is dropped.
     firstBuilds?.cancel(ringOwner);
     if (kind === "later") {
+      beginRings(camX, camZ);
+      return;
+    }
+    // Judged at once while the worker holds the samples and the camera is still inside the finest ring as drawn: every
+    // ring drawn still covers it, so the worker's job is begun as for a crossing judged later, a started job going on
+    // to be shown with this request held behind it, rather than the seven sampled anew here. A camera outside it has
+    // jumped, and is built at once.
+    const waits = jobs !== undefined && firstBuilds?.open !== true && ringWork !== null && !ringWork.failed && samplesAway;
+    if (waits && insideDrawnRing(drawn[0], ringSpacing(0, base), camX, camZ)) {
       beginRings(camX, camZ);
       return;
     }

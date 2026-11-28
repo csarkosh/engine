@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import "../../src/sim/montane.js";
 import { registerOlympic } from "../../src/sim/olympic.js";
 import {
-  RING_COUNT, createRingSamples, createRingSamplesSlices, holeCellsFor, ringGeometryBuffers, ringGeometrySlices,
+  RING_CELLS, RING_COUNT, createRingSamples, createRingSamplesSlices, holeCellsFor, ringGeometryBuffers, ringGeometrySlices,
   type CoveredGround, type RingSamples,
 } from "../../src/game/clipmap.js";
 import { PATCH_CELL, PATCH_REACH, facePatchCover } from "../../src/game/facePatches.js";
-import { ringBuildSlices, ringDrawnOf, ringStale, type RingBuffers, type RingDrawn } from "../../src/game/ringBuild.js";
+import { insideDrawnRing, ringBuildSlices, ringDrawnOf, ringStale, type RingBuffers, type RingDrawn } from "../../src/game/ringBuild.js";
 import { SLICE_READ_UNITS, SLICE_TARGET_MS, createSyncJobs, finish, type Slices } from "../../src/game/syncJobs.js";
 import { activeTerrainVariant } from "../../src/sim/terrain.js";
 import { terrainVertexData as fromPlugins } from "../../src/game/lite/terrainPlugins.js";
@@ -169,6 +169,39 @@ describe("ringDrawnOf", () => {
     const d = ringDrawnOf(rings[2] as RingSamples, finer, coarser, cover);
     expect([d.fx, d.fz, d.cx, d.cz]).toEqual([finer.originX, finer.originZ, coarser.originX, coarser.originZ]);
     expect([d.kx, d.kz, d.kr, d.kf]).toEqual([cover.x, cover.z, cover.reach, cover.fine]);
+  });
+});
+
+describe("insideDrawnRing", () => {
+  /** A finest ring drawn with its corner at (x, z). */
+  const at = (x: number, z: number): RingDrawn => ({ x, z, fx: Number.NaN, fz: Number.NaN, cx: 0, cz: 0, kx: Number.NaN, kz: Number.NaN, kr: Number.NaN, kf: Number.NaN });
+  const drawnAt = at(-40, 24);
+  const side = RING_CELLS * 1;
+
+  it("is false with nothing drawn", () => {
+    expect(insideDrawnRing(null, 1, 0, 0)).toBe(false);
+    expect(insideDrawnRing(undefined, 1, 0, 0)).toBe(false);
+  });
+
+  it("is true at the ring's centre and just inside each of its edges", () => {
+    expect(insideDrawnRing(drawnAt, 1, -40 + side / 2, 24 + side / 2)).toBe(true);
+    expect(insideDrawnRing(drawnAt, 1, -40 + 0.01, 24 + side / 2)).toBe(true);
+    expect(insideDrawnRing(drawnAt, 1, -40 + side - 0.01, 24 + side / 2)).toBe(true);
+    expect(insideDrawnRing(drawnAt, 1, -40 + side / 2, 24 + 0.01)).toBe(true);
+    expect(insideDrawnRing(drawnAt, 1, -40 + side / 2, 24 + side - 0.01)).toBe(true);
+  });
+
+  it("is false just outside each of its edges", () => {
+    expect(insideDrawnRing(drawnAt, 1, -40 - 0.01, 24 + side / 2)).toBe(false);
+    expect(insideDrawnRing(drawnAt, 1, -40 + side + 0.01, 24 + side / 2)).toBe(false);
+    expect(insideDrawnRing(drawnAt, 1, -40 + side / 2, 24 - 0.01)).toBe(false);
+    expect(insideDrawnRing(drawnAt, 1, -40 + side / 2, 24 + side + 0.01)).toBe(false);
+  });
+
+  it("uses the spacing given", () => {
+    const camX = -40 + side * 1.5;
+    expect(insideDrawnRing(drawnAt, 2, camX, 24 + side / 2)).toBe(true);
+    expect(insideDrawnRing(drawnAt, 1, camX, 24 + side / 2)).toBe(false);
   });
 });
 

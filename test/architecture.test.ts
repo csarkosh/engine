@@ -1165,7 +1165,17 @@ describe("layer boundaries", () => {
     expect(meshes).toContain('    if (ringWork !== null && !ringWork.failed) (jobs as SyncJobs).begin(ringOwner, ringsAsked(ringWork, camX, camZ), false, "clipmap");\n    else (jobs as SyncJobs).begin(ringOwner, build(camX, camZ), false, "clipmap");');
     expect(meshes).toContain("        if (jobs !== undefined && covered !== null) {\n          beginRings(camX, camZ);\n        } else {");
     expect(meshes).toContain('    if (kind === "later") {\n      beginRings(camX, camZ);\n      return;\n    }');
-    expect([...meshes.matchAll(/\bbeginRings\(/g)].length).toBe(3);
+    // A crossing judged at once, while the client is live, the page holds no samples and the camera is still inside the
+    // finest ring as drawn, begins the worker's job as a crossing judged later does, before anything is cancelled or
+    // built at once; only a camera outside it (or the loader's build, or no scheduler) builds at once on this thread.
+    expect(meshes).toMatch(new RegExp(
+      / {4}if \(kind === "later"\) \{\n {6}beginRings\(camX, camZ\);\n {6}return;\n {4}\}\s+/.source +
+      / {4}const waits = jobs !== undefined && firstBuilds\?\.open !== true && ringWork !== null && !ringWork\.failed && samplesAway;\s+/.source +
+      / {4}if \(waits && insideDrawnRing\(drawn\[0\], ringSpacing\(0, base\), camX, camZ\)\) \{\n {6}beginRings\(camX, camZ\);\n {6}return;\n {4}\}\s+/.source +
+      / {4}jobs\?\.cancel\(ringOwner\);\s+buildAtOnce\(firstBuilds, ringOwner, build\(camX, camZ, false, true\), "clipmap", jobs\);\n {2}\}\n/.source,
+    ));
+    expect([...meshes.matchAll(/\binsideDrawnRing\(/g)].length).toBe(1);
+    expect([...meshes.matchAll(/\bbeginRings\(/g)].length).toBe(4);
     expect([...meshes.matchAll(/\bringsAsked\(/g)].length).toBe(2);
     expect([...meshes.matchAll(/\.begin\(ringOwner, /g)].length).toBe(2);
     // The job asks as it first runs (`askThenPlaceRings`), through its placing alone; a job dropped with its set out
