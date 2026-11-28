@@ -1,6 +1,6 @@
 // Encodes a recorded film's frames into its MP4 and still, then checks the loop's seam.
 //
-//   node tools/film/encode.mjs --frames <dir> --out <file.mp4> --still <file.webp> [--crf 18]
+//   node tools/recording/encode.mjs --frames <dir> --out <file.mp4> --still <file.webp> [--crf 18]
 //
 // Reads <dir>/film.json (written by record.mjs). H.264, yuv420p, faststart, no audio, a key frame every 2 s. The still
 // is the video's first frame as WebP, quality lowered until it is under 200 KB. A film with a loop is checked: the

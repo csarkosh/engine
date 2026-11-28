@@ -1,11 +1,11 @@
-# tools/film
+# tools/recording
 
 `record.mjs` records a film page's frames over the Chrome DevTools Protocol. The page exposes
 `window.engineFilm` (`src/game/film/filmApi.ts`).
 
 ```
 ENGINE_LAB=/Volumes/CyrusExtSSD/engine-lab \
-node tools/film/record.mjs --url <film page> [--out <dir>] [--remote <port>] [--stills 0,12.5]
+node tools/recording/record.mjs --url <film page> [--out <dir>] [--remote <port>] [--stills 0,12.5]
 ```
 
 - Without `--out`, frames go to `$ENGINE_LAB/film/<name>`; with neither, the run is refused.
@@ -32,7 +32,7 @@ Start the rig with Day Hike's `tools/rig/session.sh up` (the owner's go-ahead is
 forward its DevTools port on 9333, then:
 
 ```
-node tools/film/record.mjs --url <film page> --remote 9333
+node tools/recording/record.mjs --url <film page> --remote 9333
 ```
 
 The tools never start a rig. Stop it when the run is done.

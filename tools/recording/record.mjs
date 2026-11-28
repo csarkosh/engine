@@ -1,6 +1,6 @@
 // Records a film page's frames over the Chrome DevTools Protocol.
 //
-//   node tools/film/record.mjs --url <film page> --out <dir> [--remote <port>] [--stills t1,t2,...]
+//   node tools/recording/record.mjs --url <film page> --out <dir> [--remote <port>] [--stills t1,t2,...]
 //
 // The page exposes `window.engineFilm` (`src/game/film/filmApi.ts`). The viewport is set to the film's size at
 // device scale 1; once `ready` resolves (and `problems` is empty) each missing frame is drawn with `frame()`

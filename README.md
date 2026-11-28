@@ -131,7 +131,7 @@ A film is a camera path through a world, recorded a frame at a time. A game desc
 
 The game adds a development-only page (not part of its build) that makes the canvas and calls `startFilm(canvas, def, game, workers)`, where `game` and `workers` are what the game's own page hands the shell (`PageGame`, `PageGame.worldWorker`). It starts a host session with no lobby, sets `window.engineFilm` and resolves once the world is in. `window.engineFilm` holds the film's `def` (with `recordSeconds`), `ready`, `seek(t)`, `frame()`, `time()` and `problems`, what breaks the camera's comfort limits along the path; `body.film-ready` is set when the world is in.
 
-`tools/film/record.mjs` drives that page over the Chrome DevTools Protocol, on this Mac or through a rig's forwarded DevTools port, and writes the frames; `tools/film/encode.mjs` makes the video and a still from them. `tools/film/README.md` has the flags and what each needs (`ffmpeg`, `sharp`).
+`tools/recording/record.mjs` drives that page over the Chrome DevTools Protocol, on this Mac or through a rig's forwarded DevTools port, and writes the frames; `tools/recording/encode.mjs` makes the video and a still from them. `tools/recording/README.md` has the flags and what each needs (`ffmpeg`, `sharp`).
 
 A film's look is the game's `GameLook`; `GameLook.glow` (`LookGlow`: `threshold`, `strength`, `radius`, `mist`) turns on the halation chain so that lit windows throw a soft halo, at the medium tier too.
 
