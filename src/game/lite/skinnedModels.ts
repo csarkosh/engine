@@ -253,7 +253,11 @@ async function makeSkinnedModel(
   for (let i = 0; i < capacity; i++) matrices[i * 16] = matrices[i * 16 + 5] = matrices[i * 16 + 10] = matrices[i * 16 + 15] = 1;
   const clipParams = new Float32Array(capacity * CLIP_FLOATS);
   const held = new Set<Texture2D>();
-  const parts: SkinnedPart[] = [];
+  const made: SkinnedPart[] = [];
+  /** Shows or hides primitives with their bodies: never one that only a pass of its owner's draws (`elsewhere`), whoever's bodies it has. */
+  const seen = (parts: readonly SkinnedPart[], next: number): void => {
+    for (const part of parts) if (part.drawn && !part.elsewhere) setMeshVisible(part.mesh, next > 0);
+  };
   // The first primitive that draws the model's bodies: the others like it read its clips.
   const shared: { mesh: Mesh | null; handle: VatHandle | null } = { mesh: null, handle: null };
   let disposed = false;
@@ -283,7 +287,7 @@ async function makeSkinnedModel(
           setThinInstanceCount(mesh, next);
           if (next > 0) options.uploads?.count("instances", next * MATRIX_BYTES);
         }
-        if ((next > 0) !== (shown > 0) && part.drawn && !part.elsewhere) setMeshVisible(mesh, next > 0);
+        if ((next > 0) !== (shown > 0)) seen([part], next);
         shown = next;
       },
     };
@@ -300,37 +304,38 @@ async function makeSkinnedModel(
     const name = (material as { name?: string }).name ?? "";
     const part: SkinnedPart = { mesh, material, name, emissive: emissive.get(name) ?? [0, 0, 0], drawn: true, elsewhere: false, own: null };
     part.drawn = options.dress(part, index);
-    parts.push(part);
+    made.push(part);
     if (options.own?.(part, index) === true) {
       // Bodies of its own: nothing of the model's matrices or of the first primitive's clips.
       part.own = ownBodies(mesh, handle, part);
-      setMeshVisible(mesh, false);
-      return;
-    }
-    // Every other primitive draws the same bodies, from the same array of matrices, and reads the first such one's clips.
-    setThinInstances(mesh, matrices, capacity);
-    setThinInstanceCount(mesh, 0);
-    handle.setInstancesBlend(clipParams);
-    if (shared.mesh === null) {
-      shared.mesh = mesh;
-      shared.handle = handle;
     } else {
-      const own = (mesh as unknown as BakedMesh).vat;
-      const first = (shared.mesh as unknown as BakedMesh).vat;
-      if (own !== undefined && own !== null && first !== undefined && first !== null) {
-        own.instanceTexture?.destroy();
-        own.instanceTexture = first.instanceTexture;
+      // Every other primitive draws the same bodies, from the same array of matrices, and reads the first such one's clips.
+      setThinInstances(mesh, matrices, capacity);
+      setThinInstanceCount(mesh, 0);
+      handle.setInstancesBlend(clipParams);
+      if (shared.mesh === null) {
+        shared.mesh = mesh;
+        shared.handle = handle;
+      } else {
+        const own = (mesh as unknown as BakedMesh).vat;
+        const first = (shared.mesh as unknown as BakedMesh).vat;
+        if (own !== undefined && own !== null && first !== undefined && first !== null) {
+          own.instanceTexture?.destroy();
+          own.instanceTexture = first.instanceTexture;
+        }
       }
     }
     setMeshVisible(mesh, false);
   });
+  /** The primitives that draw the model's bodies. */
+  const common = made.filter((part) => part.own === null);
   const roots = container.entities as SceneNode[];
   for (const root of roots) addToScene(scene, root);
   options.uploads?.made(meshes.length);
 
   let count = 0;
   return {
-    parts,
+    parts: made,
     clips,
     capacity,
     matrices,
@@ -346,13 +351,13 @@ async function makeSkinnedModel(
         options.uploads?.count("textures", clipParams.byteLength);
       }
       if (moved || next !== count) {
-        for (const part of parts) {
-          if (!part.drawn || part.own !== null) continue;
+        for (const part of common) {
+          if (!part.drawn) continue;
           setThinInstanceCount(part.mesh, next);
           if (next > 0) options.uploads?.count("instances", next * MATRIX_BYTES);
         }
       }
-      if ((next > 0) !== (count > 0)) for (const part of parts) if (part.drawn && !part.elsewhere && part.own === null) setMeshVisible(part.mesh, next > 0);
+      if ((next > 0) !== (count > 0)) seen(common, next);
       count = next;
     },
     dispose() {

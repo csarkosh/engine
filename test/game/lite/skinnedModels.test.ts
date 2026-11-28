@@ -40,6 +40,7 @@ describe("a primitive with bodies of its own", () => {
     expect(src.indexOf("part.drawn = options.dress(part, index);")).toBeLessThan(src.indexOf("if (options.own?.(part, index) === true) {"));
     // A part is made with none, and only the loader gives it any.
     expect(src).toContain("drawn: true, elsewhere: false, own: null };");
+    expect(src).toContain("parts: made,");
     expect(src.split("part.own = ").length).toBe(2);
   });
 
@@ -52,18 +53,25 @@ describe("a primitive with bodies of its own", () => {
     // It is not handed the model's arrays, and its texture is not swapped for another's.
     expect(own).not.toContain("setThinInstances(mesh, matrices, capacity)");
     expect(own).not.toContain("instanceTexture");
-    // The branch that makes it leaves before the sharing is done.
+    // The branch that makes it is not the one that does the sharing.
     const branch = src.slice(src.indexOf("if (options.own?.(part, index) === true) {"), src.indexOf("// Every other primitive draws the same bodies"));
-    expect(branch).toContain("return;");
+    expect(branch).toContain("part.own = ownBodies(mesh, handle, part);");
+    expect(branch).toContain("} else {");
+    expect(branch).not.toContain("setThinInstances(");
   });
 
   it("is not the model's to draw: the model's show passes it by, for the count and for being seen, and its own show draws it", () => {
-    expect(src).toContain("if (!part.drawn || part.own !== null) continue;");
-    expect(src).toContain("if (part.drawn && !part.elsewhere && part.own === null) setMeshVisible(part.mesh, next > 0);");
+    // The model's show counts and shows only the primitives that draw its bodies.
+    expect(src).toContain("const common = made.filter((part) => part.own === null);");
+    expect(src).toContain("for (const part of common) {");
+    expect(src).toContain("if ((next > 0) !== (count > 0)) seen(common, next);");
     const own = src.slice(src.indexOf("const ownBodies = "), src.indexOf("meshes.forEach((mesh, index) => {"));
     expect(own).toContain("if ((moved || next !== shown) && part.drawn) {");
-    expect(own).toContain("if ((next > 0) !== (shown > 0) && part.drawn && !part.elsewhere) setMeshVisible(mesh, next > 0);");
+    expect(own).toContain("if ((next > 0) !== (shown > 0)) seen([part], next);");
     expect(own).toContain("if (disposed) return;");
+    // Whoever's bodies a primitive has, it is shown by the one rule: never one that only a pass of its owner's draws.
+    expect(src).toContain("for (const part of parts) if (part.drawn && !part.elsewhere) setMeshVisible(part.mesh, next > 0);");
+    expect(src.split("setMeshVisible(").length).toBe(3);
   });
 
   it("leaves the clips the others read with the first primitive that draws the model's bodies, whichever that is", () => {
