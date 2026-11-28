@@ -17,9 +17,10 @@ describe("the routes of the world's work", () => {
     expect(linkFor("patches", [first, second])).toBe(first);
   });
 
-  it("gives every kind the one link when there is one worker", () => {
+  it("gives the rings and the rock faces the one link when there is one worker, and the clutter none", () => {
     const first = link("first");
-    for (const kind of ["rings", "clutter", "patches"] as const) expect(linkFor(kind, [first])).toBe(first);
+    for (const kind of ["rings", "patches"] as const) expect(linkFor(kind, [first])).toBe(first);
+    expect(linkFor("clutter", [first])).toBeNull();
     expect(linkFor("clutter", [first, null])).toBeNull();
   });
 

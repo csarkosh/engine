@@ -157,7 +157,7 @@ export type PageGame<
   statusLine(container: HTMLElement): { setStatus(line: string | null): void; dispose(): void };
   /** Starts the worker that makes a session's world off the page's thread (`worldPrep.ts`). */
   worldWorker(): Worker;
-  /** How many world workers the page runs: 2 starts a second, made from `worldWorker` too, that takes the work `WORLD_ROUTES` (`worldRoutes.ts`) puts on it; absent is 1. */
+  /** How many world workers the page runs: 2 starts a second, made from `worldWorker` too, that takes the work `WORLD_ROUTES` (`worldRoutes.ts`) puts on it (the clutter's cells, which with one worker the page's thread looks up itself); absent is 1. */
   worldWorkers?: 1 | 2;
   /** The addresses of the scripts of the game's own workers (the world's), for the page to fetch ahead of them (`workerScripts.ts`); none where it names none. */
   workerScripts?: readonly string[];

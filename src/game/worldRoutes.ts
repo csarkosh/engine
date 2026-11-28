@@ -1,6 +1,8 @@
 /**
- * Which of the page's world workers each kind of work is on. A worker serves every kind it is asked, so this table
- * alone decides who does what; a game that runs one worker has every kind on it.
+ * Which of the page's world workers each kind of work is on. A worker serves every kind it is asked, so this module
+ * alone decides who does what. A game that runs one worker has the rings and the rock faces on it and the clutter on
+ * the page's thread, as before there was a second: measured with a car, the clutter beside them on one worker makes
+ * the rock faces later (and at speed the rings too).
  *
  * This module imports types only.
  */
@@ -26,8 +28,8 @@ export type WorldWorkRead = {
   second: { preparedMs: number | null; failed: boolean } | null;
 };
 
-/** The link the table names for `kind`, or the first where there is one worker; null where that link is null. */
+/** The link the table names for `kind` where there are two; with one worker, that worker for the rings and the rock faces and none for the clutter; null where the link is null. */
 export function linkFor(kind: WorldKind, links: readonly (WorldLink | null)[]): WorldLink | null {
-  if (links.length <= 1) return links[0] ?? null;
+  if (links.length <= 1) return kind === "clutter" ? null : (links[0] ?? null);
   return links[WORLD_ROUTES[kind]] ?? null;
 }
