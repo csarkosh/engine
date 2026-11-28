@@ -47,7 +47,7 @@
     "pack": "npm pack"
   },
   "dependencies": {
-    "@babylonjs/lite": "github:csarkosh/babylon-lite#v1.39.3-dayhike.10"
+    "@babylonjs/lite": "github:csarkosh/babylon-lite#v1.39.3-dayhike.11"
   },
   "devDependencies": {
     "@babylonjs/ktx2decoder": "9.18.0",
