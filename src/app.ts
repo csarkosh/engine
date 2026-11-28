@@ -69,6 +69,7 @@ import { isMode } from "./game/modeList.js";
 import { PLAYER_EYE_OFFSET, PLAYER_HALF } from "./sim/constants.js";
 import { loadBirdBed } from "./game/birdBed.js";
 import { sessionNow as filmSessionNow, type FilmSession } from "./game/film/filmClock.js";
+import { createFilmDriver, showFilmOnly, type FilmDriver } from "./game/film/filmDriver.js";
 import type { Lobby } from "./net/lobby.js";
 import { worldVersionOf, type Fields, type Telemetry } from "./net/telemetry.js";
 /** A frame longer than this counts as a stall in the heartbeat. */
@@ -103,10 +104,13 @@ export type GameHandle = {
    * false a second later when they could not be (`whenEngaged`), which is
    * when a cover lifted beside it shows no pause menu between. */
   engage(): Promise<boolean>;
+  /** A film's session (`GameOptions.film`): its frames, drawn one at a time (`filmDriver.ts`). Absent in play. */
+  film?: { seek: (t: number) => void; frame: () => Promise<void>; time: () => number };
 };
 
 export type GameOptions = {
-  /** Film mode: the session runs on this clock, not the page's. Absent, play is as it always was. */
+  /** Film mode: the session runs on this clock, not the page's, at the high tier, with no one's input, no
+   * overlay and no render loop: `GameHandle.film` draws its frames. Absent, play is as it always was. */
   film?: FilmSession;
   lobby: Lobby | null;
   /**
@@ -407,7 +411,7 @@ function buildGame<
   // ground for itself.
   const first = buildFirstRenderer(
     canvas,
-    [options.tier, ...options.fallbackTiers],
+    options.film ? ["high"] : [options.tier, ...options.fallbackTiers],
     {
       build: (next, at) =>
         game.renderer(next, level, forest, { tier: at, look, deferClipmap: options.deferClipmap, start, prepared: options.takePrepared?.() ?? null, patchWork: options.patchWork, ringWork: options.ringWork, clutterWork: options.clutterWork, worldRead: options.worldRead, firstBuilds, skyTable: skySource.table, gpuTime: parseGpuTime(location.search), paced: isMobile(navigator), ...(options.film ? { clock: sessionClock } : {}) }),
@@ -531,6 +535,9 @@ function buildGame<
   // it from the seed, as the sim does, so a follower starts facing the trail too.
   const input = createInputSampler(canvas, { touch: touchModel, touchMode: touchStart, startYaw: start?.yaw ?? 0, actions: game.actions });
   made(() => input.dispose());
+  // A film is no one's to play: the pointer is never locked, and nothing but the frame shows (and, below, the gate holds the controls).
+  const unshowFilm = options.film ? showFilmOnly(canvas) : null;
+  made(() => unshowFilm?.());
   const accumulator = new FixedStepAccumulator();
   /** The local player's pose as the frame's last tick began, for the eye's blend (`eyeBlend.ts`); null until a tick has run. */
   let eyeBefore: EyePose | null = null;
@@ -1057,14 +1064,17 @@ function buildGame<
     if (!engaged) touchModel.stopCoast();
     gate.engagedChanged(engaged);
   });
+  // A film's controls are held for good: no input is read, and no pause menu is shown.
+  if (options.film) gate.cover();
 
   // Restoring from the URL on load, not a live edit: every view command
   // applies instantly, weather included — see `applyView`'s `instant` doc.
   // A look named there (`summit`, `escape`) waits for the world (`ready`, below): its hand is the
   // host's, installed with the host session, and its scene is for a world already in.
-  for (const entry of view) if (!isLook(entry.name)) applyView(entry.name, entry.args, { instant: true });
+  // A film's camera is its path's alone: no free camera is made.
+  for (const entry of view) if (!isLook(entry.name) && !(options.film && entry.name === "freecam")) applyView(entry.name, entry.args, { instant: true });
   // The free camera mode: the camera freed from the start, unless the address says otherwise.
-  if (mode === "freecam" && lastEntry(view, "freecam") === undefined) applyView("freecam", [], { instant: true });
+  if (!options.film && mode === "freecam" && lastEntry(view, "freecam") === undefined) applyView("freecam", [], { instant: true });
   if (errors.length > 0) bar.showError(errors.join("  •  "));
 
   const degradation = parseNetConditions(location.search);
@@ -1089,6 +1099,8 @@ function buildGame<
   let seq = 0;
   // Populated once we know whether we host or join.
   let stepAndRender: (() => void) | null = null;
+  /** A film's frames (`GameOptions.film`), made with the host's session; null in play. */
+  let film = null as FilmDriver | null;
   // The live host or client session, so dispose() can close its transports.
   // Left open, a finished game's per-connection `onSignal` handler (registered
   // inside `peer.ts`, not tracked in `unsubscribe` below) stays live on the
@@ -1332,6 +1344,38 @@ function buildGame<
         predictionError: 0,
       });
     };
+    if (options.film) film = filmFrames(host, options.film);
+  }
+
+  /**
+   * A film's frames on the host's session: each frame steps the film's clock, runs its ticks and
+   * draws, with the camera on the path; the frames that settle it draw the same moment again.
+   */
+  function filmFrames(host: HostS, session: FilmSession): FilmDriver {
+    const frameDt = 1 / session.clock.fps;
+    let cmd: InputCommand | null = null;
+    /** The duration the next draw steps the frame's views by: the frame's for its first draw, none for the rest. */
+    let dt = 0;
+    return createFilmDriver({
+      clock: session.clock,
+      def: session.def,
+      step: () => {
+        dt = frameDt;
+        side.beforeTicks();
+        cmd = stepTicks(host, accumulator.advance(frameDt));
+      },
+      view: {
+        setView: (hour, weather) => renderer.setView(hour, weather),
+        setFreecam: (at) => renderer.setFreecam(at),
+        waitingItems: () => renderer.waitingItems(),
+        streaming: () => renderer.streaming(),
+      },
+      draw: () => {
+        frame(host, host.world.state, cmd, dt);
+        dt = 0;
+      },
+      nextFrame: () => new Promise((resolve) => requestAnimationFrame(() => resolve())),
+    });
   }
 
   async function runAsClient(active: Lobby): Promise<void> {
@@ -1525,7 +1569,8 @@ function buildGame<
   // renderer swapped in meanwhile takes the wait over (`whenStandingSkyHeld`),
   // since the one it replaced never resolves its own, and starts its own loop.
   const firstBuild = Promise.all([clipmapBuilt, whenStandingSkyHeld(() => renderer, nextSwap)]).then(() => {
-    if (!disposed && !broken && renderer === built) built.runLoop(loop);
+    // A film draws when its recorder asks (`GameHandle.film`), never on the page's frames.
+    if (!disposed && !broken && renderer === built && !options.film) built.runLoop(loop);
   });
   progress?.start("world", "bakes");
   void renderer.forestReady.then(
@@ -1536,8 +1581,8 @@ function buildGame<
     progress?.start("world", "fills");
     void Promise.all([built.firstSynced, built.forestReady.catch(() => undefined)]).then(() => firstBuilds.drained()).then(() => progress?.done("world", "fills"));
   }
-  const ready = firstBuild.then(() =>
-    startReady({
+  const ready = firstBuild.then(() => {
+    const worldReady = startReady({
       renderer,
       progress,
       maxMs: READY_MAX_MS,
@@ -1545,8 +1590,23 @@ function buildGame<
       // loader has drained. Asked once the scene is ready: a fill queued as its models landed,
       // after that first frame, is waited for too.
       firstBuilds: firstBuilds === undefined ? null : () => built.firstSynced.then(() => firstBuilds.drained()),
-    }),
-  );
+    });
+    // A film has no render loop: its world is drawn in from the path's place, the clock unmoved, until it is in.
+    if (film !== null) void drawFilmIn(film, worldReady);
+    return worldReady;
+  });
+  /** Draws `at`'s still, a frame of the page at a time, until `until` settles. */
+  async function drawFilmIn(at: FilmDriver, until: Promise<void>): Promise<void> {
+    let done = false;
+    until.then(
+      () => void (done = true),
+      () => void (done = true),
+    );
+    while (!done && !disposed && !broken) {
+      at.still();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    }
+  }
   // A look named in the URL (`?cmd=seed hollow;time 22;escape`) is called once the world is in,
   // so a link opens on its scene; on a client it says whose it is to call, as the typed one does.
   void ready.then(() => {
@@ -1852,6 +1912,7 @@ function buildGame<
 
   return {
     ready,
+    ...(film === null ? {} : { film: { seek: film.seek, frame: film.frame, time: film.time } }),
     cover(film) {
       const release = gate.cover();
       // The intro's film is over the session: drawn until the cut at the pace the film's own frames
@@ -1937,6 +1998,7 @@ function buildGame<
       side.dispose();
       touchLayer.dispose();
       input.dispose();
+      unshowFilm?.();
       if (!broken) {
         unwatchCompiles?.();
         // The renderer goes with its engine: none is kept for the next session.

@@ -52,7 +52,9 @@ describe("a session's frame", () => {
     // The host draws its own state; a follower the one blended between snapshots at this frame's time.
     expect(bodyOf("runAsHost")).toMatch(/const state: S = host\.world\.state;\s+frame\(host, state, cmd, dt\);/);
     expect(app).toMatch(/const state = client\.renderState\(performance\.now\(\)\);\s+frame\(client, state, cmd, dt\);/);
-    expect(calls(app, "frame")).toBe(2);
+    // A film's frames draw the host's state through it too (`GameHandle.film`).
+    expect(bodyOf("filmFrames")).toContain("        frame(host, host.world.state, cmd, dt);");
+    expect(calls(app, "frame")).toBe(3);
   });
 
   it("steps a frame's ticks in one place: each command sampled, filtered by the hike and handed to the session: the engine's half", () => {

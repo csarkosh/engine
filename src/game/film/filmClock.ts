@@ -1,3 +1,5 @@
+import type { FilmDefinition } from "./filmMode.js";
+
 /**
  * The film's clock: time that moves only when `step` is called, one frame of the film at a time.
  *
@@ -16,8 +18,8 @@ export type FilmClock = {
   readonly fps: number;
 };
 
-/** What a session is handed to run on a film's clock (Task 5 of the film tool adds fields). */
-export type FilmSession = { clock: FilmClock };
+/** What a session is handed to be a film: the clock it runs on and the film it draws (`filmMode.ts`). */
+export type FilmSession = { clock: FilmClock; def: FilmDefinition };
 
 export function createFilmClock(fps: number, start = 0): FilmClock {
   let offset = start;
@@ -38,6 +40,6 @@ export function createFilmClock(fps: number, start = 0): FilmClock {
 }
 
 /** The clock a session reads (ms): the film's when one is given, `performance.now` otherwise. */
-export function sessionNow(film: FilmSession | undefined): () => number {
+export function sessionNow(film: Pick<FilmSession, "clock"> | undefined): () => number {
   return film === undefined ? () => performance.now() : film.clock.now;
 }

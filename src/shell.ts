@@ -24,11 +24,12 @@ import { createRouteAnnouncer } from "./game/routeAnnounce.js";
 import { worldInputs } from "./game/worldInputs.js";
 import { sceneLine, startWorldPrep, worldPrepLine, type WorldPrep, type WorldPrepOutcome } from "./game/worldPrep.js";
 import { createWorldAhead, type WorldMadeFrom } from "./game/worldAhead.js";
-import { createPatchWork, type PatchWork } from "./game/patchWork.js";
-import { createRingWork, type RingWork } from "./game/ringWork.js";
-import { createClutterWork, type ClutterWork } from "./game/clutterWork.js";
+import type { PatchWork } from "./game/patchWork.js";
+import type { RingWork } from "./game/ringWork.js";
+import type { ClutterWork } from "./game/clutterWork.js";
+import { sessionWorkers } from "./game/sessionWorkers.js";
 import { createWorldLink, type WorldLink } from "./game/worldLink.js";
-import { linkFor, type WorldKind, type WorldWorkRead } from "./game/worldRoutes.js";
+import type { WorldWorkRead } from "./game/worldRoutes.js";
 import { startSecondWorld, type SecondWorld } from "./game/worldSecond.js";
 import { loadNet, timedProgress, type TimedProgress } from "./game/loadTimes.js";
 import { ENGINE_WORKER_SCRIPTS } from "./game/engineWorkerScripts.js";
@@ -1253,28 +1254,7 @@ export function startShell<
         secondHeld = true;
         const links = (page.worldWorkers ?? 1) >= 2 ? [link, second?.link ?? null] : [link];
         unlaunched = links;
-        const on = <T>(kind: WorldKind, make: (at: WorldLink, from: WorldMadeFrom) => T): T | null => {
-          const at = linkFor(kind, links);
-          return at === null ? null : make(at, madeFrom);
-        };
-        const patchWork = on("patches", createPatchWork);
-        const ringWork = on("rings", createRingWork);
-        const clutterWork = on("clutter", createClutterWork);
-        // A worker no kind is on has no client to end it: it ends here.
-        for (const made of links) if (made !== null && !(["rings", "clutter", "patches"] as const).some((kind) => linkFor(kind, links) === made)) made.dispose();
-        const routeOf = (kind: WorldKind): number => {
-          const at = linkFor(kind, links);
-          return at === null ? -1 : links.indexOf(at);
-        };
-        const worldRead = (): WorldWorkRead => ({
-          workers: links.filter((made) => made !== null && !made.failed).length,
-          routes: {
-            rings: routeOf("rings"),
-            clutter: routeOf("clutter"),
-            patches: routeOf("patches"),
-          },
-          second: second?.record() ?? null,
-        });
+        const { patchWork, ringWork, clutterWork, worldRead } = sessionWorkers(links, madeFrom, () => second);
         launch(onCanvas, route.token, decided, () => sessionCanvasNow(), opening, takeSampled, patchWork, ringWork, clutterWork, worldRead);
         unlaunched = [];
         lap("build");
